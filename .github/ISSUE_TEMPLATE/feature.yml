@@ -1,0 +1,45 @@
+name: Feature
+description: Track a feature from spec to merge
+title: "[Feature]: "
+labels:
+  - feature
+body:
+  - type: input
+    id: spec
+    attributes:
+      label: Spec link
+      description: Link the spec file or PR that contains it.
+    validations:
+      required: true
+  - type: input
+    id: plan
+    attributes:
+      label: Plan link
+      description: Link the implementation plan file or PR that contains it.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Define the bounded scope of this work.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Concrete outcomes that must be true before this work is done.
+    validations:
+      required: true
+  - type: textarea
+    id: tasks
+    attributes:
+      label: Task checklist
+      description: Break the work into reviewable units.
+      value: |
+        - [ ] Task 1
+        - [ ] Task 2
+        - [ ] Task 3
+    validations:
+      required: true

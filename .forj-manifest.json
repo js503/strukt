@@ -1,0 +1,13 @@
+{
+  "forj_repo": "js503/forj",
+  "forj_version": "f2e4ba7",
+  "managed_files": [
+    ".github/ISSUE_TEMPLATE/feature.yml",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/process/development-lifecycle.md",
+    "docs/process/merge-policy.md",
+    "docs/process/review-standard.md"
+  ]
+}

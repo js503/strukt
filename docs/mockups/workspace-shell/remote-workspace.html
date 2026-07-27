@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>strukt — Active Remote Workspace</title>
+<!-- Approved strukt remote-workspace mockup. -->
+<style>
+  * { box-sizing: border-box; }
+  body {
+    max-width: 1500px;
+    margin: 0 auto;
+    padding: 40px;
+    background: #f6f7f9;
+    color: #1b2330;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  h2 { margin: 0 0 8px; font-size: 26px; }
+  .subtitle { margin: 0; color: #5f6877; line-height: 1.55; }
+  .workspace-frame {
+    margin-top: 22px;
+    overflow: hidden;
+    border: 1px solid #cfd5df;
+    background: #0d1117;
+    box-shadow: 0 18px 45px rgba(27, 35, 48, .13);
+    color: #c9d1d9;
+    font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .titlebar {
+    height: 34px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 12px;
+    border-bottom: 1px solid #30363d;
+    background: #20242b;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #57606a; }
+  .workspace-name { margin-left: 7px; color: #f0f6fc; }
+  .remote {
+    margin-left: 7px;
+    padding: 3px 6px;
+    background: #163a2a;
+    color: #7ee787;
+  }
+  .title-actions { margin-left: auto; display: flex; gap: 13px; color: #8b949e; }
+  .session-strip {
+    height: 30px;
+    display: flex;
+    align-items: center;
+    padding: 0 9px 0 47px;
+    border-bottom: 1px solid #30363d;
+    background: #161b22;
+  }
+  .session {
+    height: 30px;
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    border-right: 1px solid #30363d;
+    color: #8b949e;
+  }
+  .session.active { background: #0d1117; color: #f0f6fc; box-shadow: inset 0 -2px #58a6ff; }
+  .status-dot { width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: #7ee787; }
+  .workspace-body { height: 520px; display: flex; }
+  .activity {
+    width: 45px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 17px;
+    padding-top: 15px;
+    border-right: 1px solid #30363d;
+    background: #161b22;
+  }
+  .activity i {
+    position: relative;
+    width: 15px;
+    height: 15px;
+    border: 1px solid #768390;
+  }
+  .activity i.active { border-color: #58a6ff; background: rgba(88,166,255,.16); }
+  .activity i.active:before {
+    content: "";
+    position: absolute;
+    left: -15px;
+    top: -4px;
+    width: 2px;
+    height: 23px;
+    background: #58a6ff;
+  }
+  .explorer {
+    width: 235px;
+    border-right: 1px solid #30363d;
+    background: #161b22;
+  }
+  .explorer-head {
+    display: flex;
+    align-items: center;
+    height: 38px;
+    padding: 0 11px;
+    border-bottom: 1px solid #30363d;
+  }
+  .eyebrow { color: #8b949e; font-size: 9px; letter-spacing: .09em; }
+  .explorer-actions { margin-left: auto; color: #8b949e; letter-spacing: 5px; }
+  .root {
+    padding: 9px 10px 6px;
+    color: #f0f6fc;
+    border-bottom: 1px solid #21262d;
+  }
+  .root small { display: block; margin-top: 3px; color: #7ee787; }
+  .tree { padding: 7px 0; color: #b1bac4; }
+  .tree-row { height: 23px; display: flex; align-items: center; padding: 0 9px; }
+  .tree-row:hover { background: #21262d; }
+  .tree-row.active { background: #1f2937; color: #f0f6fc; }
+  .indent-1 { padding-left: 22px; }
+  .indent-2 { padding-left: 37px; }
+  .folder { color: #79c0ff; margin-right: 6px; }
+  .file { color: #8b949e; margin-right: 6px; }
+  .modified { margin-left: auto; color: #d2a8ff; }
+  .resizer { width: 3px; margin-left: -3px; cursor: col-resize; background: transparent; }
+  .resizer:hover { background: #58a6ff; }
+  .center { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .tabs { height: 35px; display: flex; border-bottom: 1px solid #30363d; background: #161b22; }
+  .tab { padding: 10px 13px 0; border-right: 1px solid #30363d; color: #8b949e; }
+  .tab.active { color: #f0f6fc; background: #0d1117; }
+  .editor { flex: 1; padding: 19px 18px; }
+  .line { display: flex; min-height: 22px; }
+  .number { width: 30px; color: #484f58; text-align: right; margin-right: 17px; user-select: none; }
+  .purple { color: #d2a8ff; } .blue { color: #79c0ff; } .green { color: #7ee787; } .orange { color: #ffa657; }
+  .terminal {
+    height: 122px;
+    padding: 9px 13px;
+    border-top: 1px solid #30363d;
+    background: #090c10;
+  }
+  .terminal-head { display: flex; margin-bottom: 9px; color: #8b949e; }
+  .terminal-head strong { color: #f0f6fc; font-weight: 500; }
+  .terminal-head span { margin-left: auto; }
+  .prompt { color: #7ee787; }
+  .assistant {
+    width: 230px;
+    border-left: 1px solid #30363d;
+    background: #161b22;
+  }
+  .assistant-head { height: 38px; padding: 11px; border-bottom: 1px solid #30363d; box-sizing: border-box; }
+  .context { padding: 11px; }
+  .context-card { margin-bottom: 8px; padding: 9px; border: 1px solid #30363d; background: #21262d; }
+  .context-card b { color: #f0f6fc; display: block; margin-bottom: 4px; font-weight: 500; }
+  .assistant-input { margin: 12px 11px; padding: 9px; border: 1px solid #484f58; color: #8b949e; background: #0d1117; }
+  .statusbar {
+    height: 25px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 0 10px;
+    border-top: 1px solid #30363d;
+    background: #163a2a;
+    color: #aff5b4;
+  }
+  .statusbar .right { margin-left: auto; display: flex; gap: 14px; }
+  .notes {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-top: 18px;
+  }
+  .note { padding: 13px; border: 1px solid #d9dde5; background: #fff; }
+  .note b { display: block; margin-bottom: 5px; }
+  .note p { margin: 0; color: #5f6877; font-size: 13px; line-height: 1.4; }
+  @media (max-width: 1000px) {
+    .assistant { display: none; }
+    .notes { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<h2>Active remote workspace: file access stays immediate</h2>
+<p class="subtitle">The file browser is pinned by default, clearly scoped to the EC2 host, and backed by Quick Open for keyboard navigation. Review whether this feels like the right working state.</p>
+
+<div class="workspace-frame">
+  <div class="titlebar">
+    <i class="dot"></i><i class="dot"></i><i class="dot"></i>
+    <span class="workspace-name">strukt</span>
+    <span class="remote">↯ ec2-development</span>
+    <div class="title-actions"><span>⌘P Quick Open</span><span>⌘⇧P Commands</span></div>
+  </div>
+  <div class="session-strip">
+    <div class="session active"><i class="status-dot"></i>editor</div>
+    <div class="session"><i class="status-dot"></i>api-server</div>
+    <div class="session"><i class="status-dot"></i>tests</div>
+    <div class="session">＋</div>
+  </div>
+  <div class="workspace-body">
+    <div class="activity">
+      <i class="active" title="Files"></i><i title="Search"></i><i title="Git"></i><i title="Sessions"></i><i title="Tasks"></i><i title="Connections"></i>
+    </div>
+    <aside class="explorer">
+      <div class="explorer-head"><span class="eyebrow">REMOTE EXPLORER</span><span class="explorer-actions">＋⋯</span></div>
+      <div class="root">STRUKT <small>ec2-development · ~/Development/strukt</small></div>
+      <div class="tree">
+        <div class="tree-row"><span class="folder">⌄</span> src</div>
+        <div class="tree-row indent-1"><span class="folder">⌄</span> remote</div>
+        <div class="tree-row indent-2 active"><span class="file">◇</span> connection.rs <span class="modified">M</span></div>
+        <div class="tree-row indent-2"><span class="file">◇</span> runtime.rs</div>
+        <div class="tree-row indent-1"><span class="file">◇</span> main.rs</div>
+        <div class="tree-row"><span class="folder">›</span> tests</div>
+        <div class="tree-row"><span class="folder">›</span> docs</div>
+        <div class="tree-row"><span class="file">◇</span> Cargo.toml</div>
+        <div class="tree-row"><span class="file">◇</span> README.md</div>
+      </div>
+    </aside>
+    <div class="resizer"></div>
+    <main class="center">
+      <div class="tabs"><div class="tab active">connection.rs&nbsp; M</div><div class="tab">runtime.rs</div></div>
+      <div class="editor">
+        <div class="line"><span class="number">18</span><span><span class="purple">pub async fn</span> <span class="blue">connect</span>(target: <span class="orange">RemoteTarget</span>) {</span></div>
+        <div class="line"><span class="number">19</span><span>&nbsp;&nbsp;<span class="purple">let</span> channel = ssh.<span class="blue">open</span>(target).<span class="purple">await</span>?;</span></div>
+        <div class="line"><span class="number">20</span><span>&nbsp;&nbsp;<span class="purple">let</span> runtime = channel.<span class="blue">bootstrap</span>().<span class="purple">await</span>?;</span></div>
+        <div class="line"><span class="number">21</span><span>&nbsp;&nbsp;runtime.<span class="blue">restore_workspace</span>().<span class="purple">await</span>?;</span></div>
+        <div class="line"><span class="number">22</span><span>}</span></div>
+      </div>
+      <div class="terminal">
+        <div class="terminal-head"><strong>TERMINAL · api-server</strong><span>ec2-development · bash</span></div>
+        <div><span class="prompt">ubuntu@ec2-development</span>:~/Development/strukt$ cargo test</div>
+        <div style="color:#8b949e">running 24 tests</div>
+        <div class="green">test result: ok. 24 passed; 0 failed</div>
+      </div>
+    </main>
+    <aside class="assistant">
+      <div class="assistant-head"><span class="eyebrow">AI · REMOTE CONTEXT</span></div>
+      <div class="context">
+        <div class="context-card"><b>Current file</b>src/remote/connection.rs</div>
+        <div class="context-card"><b>Remote diagnostics</b><span class="green">No errors</span></div>
+        <div class="context-card"><b>Workspace</b>3 sessions · 2 changed files</div>
+      </div>
+      <div class="assistant-input">Ask about this workspace…</div>
+    </aside>
+  </div>
+  <div class="statusbar">
+    <span>↯ ec2-development</span><span>main*</span><span>SSH 24ms</span>
+    <div class="right"><span>Remote runtime 0.1</span><span>UTF-8</span></div>
+  </div>
+</div>
+
+<div class="notes">
+  <div class="note"><b>Always reachable</b><p>Files are the first activity item and pinned open by default.</p></div>
+  <div class="note"><b>Keyboard first</b><p>Quick Open reaches any remote path without navigating the tree.</p></div>
+  <div class="note"><b>Clear boundary</b><p>Header, explorer root, terminal, AI context, and status bar all identify the EC2 host.</p></div>
+  <div class="note"><b>Flexible</b><p>The explorer resizes, collapses, and restores without disturbing the primary canvas.</p></div>
+</div>
+</body>
+</html>

@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>strukt — Remote Multiplexer</title>
+<!-- Approved strukt remote-multiplexer mockup. -->
+<style>
+  * { box-sizing: border-box; }
+  body {
+    max-width: 1500px;
+    margin: 0 auto;
+    padding: 40px;
+    background: #f6f7f9;
+    color: #1b2330;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  h2 { margin: 0 0 8px; font-size: 26px; }
+  .subtitle { margin: 0; color: #5f6877; line-height: 1.55; }
+  .frame {
+    margin-top: 22px;
+    overflow: hidden;
+    border: 1px solid #cfd5df;
+    background: #0d1117;
+    box-shadow: 0 18px 45px rgba(27,35,48,.13);
+    color: #c9d1d9;
+    font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .top {
+    height: 34px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 12px;
+    border-bottom: 1px solid #30363d;
+    background: #20242b;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #57606a; }
+  .project { margin-left: 7px; color: #f0f6fc; }
+  .remote { margin-left: 7px; padding: 3px 6px; background: #163a2a; color: #7ee787; }
+  .latency { margin-left: auto; color: #8b949e; }
+  .sessions {
+    height: 38px;
+    display: flex;
+    align-items: stretch;
+    padding-left: 46px;
+    border-bottom: 1px solid #30363d;
+    background: #161b22;
+  }
+  .session-label {
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    border-right: 1px solid #30363d;
+    color: #8b949e;
+    font-size: 9px;
+    letter-spacing: .08em;
+  }
+  .session {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 100px;
+    padding: 0 12px;
+    border-right: 1px solid #30363d;
+    color: #8b949e;
+  }
+  .session.active { background: #0d1117; color: #f0f6fc; box-shadow: inset 0 -2px #58a6ff; }
+  .live { width: 6px; height: 6px; border-radius: 50%; background: #7ee787; }
+  .attention { width: 6px; height: 6px; border-radius: 50%; background: #d29922; }
+  .count { margin-left: auto; color: #57606a; }
+  .body { height: 480px; display: flex; }
+  .rail {
+    width: 45px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 17px;
+    padding-top: 15px;
+    border-right: 1px solid #30363d;
+    background: #161b22;
+  }
+  .rail i { width: 15px; height: 15px; border: 1px solid #768390; }
+  .rail i.active { border-color: #58a6ff; background: rgba(88,166,255,.16); }
+  .explorer { width: 205px; border-right: 1px solid #30363d; background: #161b22; }
+  .panel-head {
+    height: 37px;
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    border-bottom: 1px solid #30363d;
+    color: #8b949e;
+    font-size: 9px;
+    letter-spacing: .08em;
+  }
+  .panel-head span { margin-left: auto; letter-spacing: 5px; }
+  .root { padding: 9px 10px; border-bottom: 1px solid #21262d; color: #f0f6fc; }
+  .root small { display: block; margin-top: 3px; color: #7ee787; }
+  .row { display: flex; align-items: center; height: 24px; padding: 0 10px; color: #b1bac4; }
+  .row.indent { padding-left: 24px; }
+  .row.active { background: #1f2937; color: #f0f6fc; }
+  .folder { margin-right: 6px; color: #79c0ff; }
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .windows {
+    height: 37px;
+    display: flex;
+    border-bottom: 1px solid #30363d;
+    background: #161b22;
+  }
+  .window {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 110px;
+    padding: 0 11px;
+    border-right: 1px solid #30363d;
+    color: #8b949e;
+  }
+  .window.active { color: #f0f6fc; background: #0d1117; }
+  .panes { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: #30363d; }
+  .pane { min-width: 0; padding: 10px 12px; background: #090c10; }
+  .pane.active { box-shadow: inset 0 0 0 1px #58a6ff; }
+  .pane-head { display: flex; margin-bottom: 14px; color: #8b949e; }
+  .pane-head b { color: #f0f6fc; font-weight: 500; }
+  .pane-head span { margin-left: auto; }
+  .prompt { color: #7ee787; }
+  .muted { color: #8b949e; }
+  .blue { color: #79c0ff; } .green { color: #7ee787; } .yellow { color: #e3b341; }
+  .side {
+    width: 205px;
+    border-left: 1px solid #30363d;
+    background: #161b22;
+  }
+  .detail { padding: 11px; }
+  .detail-card { margin-bottom: 8px; padding: 8px; border: 1px solid #30363d; background: #21262d; }
+  .detail-card b { display: block; margin-bottom: 4px; color: #f0f6fc; font-weight: 500; }
+  .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+  .action { padding: 6px; border: 1px solid #484f58; text-align: center; color: #b1bac4; }
+  .status {
+    height: 25px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 10px;
+    border-top: 1px solid #30363d;
+    background: #163a2a;
+    color: #aff5b4;
+  }
+  .status .right { margin-left: auto; }
+  .legend {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-top: 18px;
+  }
+  .legend div { padding: 13px; border: 1px solid #d9dde5; background: #fff; }
+  .legend b { display: block; margin-bottom: 5px; }
+  .legend p { margin: 0; color: #5f6877; font-size: 13px; line-height: 1.4; }
+  @media (max-width: 1050px) {
+    .side { display: none; }
+    .legend { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<h2>One remote server, multiple persistent terminal sessions</h2>
+<p class="subtitle">The EC2 host is the workspace target. Named sessions behave like tmux sessions; each owns windows and split panes that keep running when the local app disconnects.</p>
+
+<div class="frame">
+  <div class="top">
+    <i class="dot"></i><i class="dot"></i><i class="dot"></i>
+    <span class="project">strukt</span>
+    <span class="remote">↯ ec2-development</span>
+    <span class="latency">SSH 24ms · remote helper connected</span>
+  </div>
+  <div class="sessions">
+    <div class="session-label">REMOTE SESSIONS</div>
+    <div class="session active"><i class="live"></i>backend <span class="count">3</span></div>
+    <div class="session"><i class="attention"></i>operations <span class="count">2</span></div>
+    <div class="session"><i class="live"></i>scratch <span class="count">1</span></div>
+    <div class="session">＋ New session</div>
+  </div>
+  <div class="body">
+    <div class="rail"><i class="active"></i><i></i><i></i><i></i><i></i><i></i></div>
+    <aside class="explorer">
+      <div class="panel-head">REMOTE EXPLORER <span>＋⋯</span></div>
+      <div class="root">STRUKT <small>ec2-development · ~/strukt</small></div>
+      <div style="padding-top:7px">
+        <div class="row"><span class="folder">⌄</span> src</div>
+        <div class="row indent active">◇ remote.rs</div>
+        <div class="row indent">◇ session.rs</div>
+        <div class="row"><span class="folder">›</span> tests</div>
+        <div class="row"><span class="folder">›</span> docs</div>
+        <div class="row">◇ Cargo.toml</div>
+      </div>
+    </aside>
+    <main class="main">
+      <div class="windows">
+        <div class="window active"><i class="live"></i>1: services</div>
+        <div class="window">2: tests</div>
+        <div class="window">3: shell</div>
+        <div class="window">＋</div>
+      </div>
+      <div class="panes">
+        <section class="pane active">
+          <div class="pane-head"><b>api-server</b><span>bash · pid 1842</span></div>
+          <div><span class="prompt">ubuntu@ec2</span>:~/strukt$ cargo run --bin api</div>
+          <div class="muted">Compiling strukt-api v0.1.0</div>
+          <div class="green">Listening on 0.0.0.0:8080</div>
+          <br>
+          <div class="blue">GET /health 200 2ms</div>
+          <div class="blue">GET /api/workspaces 200 8ms</div>
+          <div class="blue">POST /api/session 201 14ms</div>
+        </section>
+        <section class="pane">
+          <div class="pane-head"><b>worker</b><span>bash · pid 1914</span></div>
+          <div><span class="prompt">ubuntu@ec2</span>:~/strukt$ cargo run --bin worker</div>
+          <div class="muted">Starting background worker…</div>
+          <div class="green">Connected to queue</div>
+          <br>
+          <div class="yellow">job 93f1 · processing</div>
+          <div class="green">job 93f1 · complete</div>
+          <div class="yellow">job a84c · processing</div>
+        </section>
+      </div>
+    </main>
+    <aside class="side">
+      <div class="panel-head">SESSION DETAILS</div>
+      <div class="detail">
+        <div class="detail-card"><b>backend</b>Created 3h ago<br><span class="green">● attached</span></div>
+        <div class="detail-card"><b>Persistence</b>Remote helper<br>Survives disconnect</div>
+        <div class="detail-card"><b>Layout</b>3 windows · 4 panes</div>
+        <div class="actions">
+          <div class="action">Rename</div><div class="action">Detach</div>
+          <div class="action">Duplicate</div><div class="action">Stop</div>
+        </div>
+      </div>
+    </aside>
+  </div>
+  <div class="status">
+    <span>↯ ec2-development</span><span>session: backend</span><span>window: services</span>
+    <span class="right">⌃B command mode · UTF-8</span>
+  </div>
+</div>
+
+<div class="legend">
+  <div><b>Remote target</b><p>The EC2 server owns the workspace, filesystem, and session service.</p></div>
+  <div><b>Named sessions</b><p>Backend, operations, and scratch keep running independently.</p></div>
+  <div><b>Windows and panes</b><p>Each session restores its own tabs, splits, processes, and scrollback.</p></div>
+  <div><b>tmux compatibility</b><p>Existing tmux sessions can appear beside native sessions through a provider.</p></div>
+</div>
+</body>
+</html>

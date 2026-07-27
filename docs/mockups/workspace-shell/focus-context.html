@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>strukt — Workspace Shell Directions</title>
+<!-- Approved strukt workspace-shell mockup. -->
+<style>
+  * { box-sizing: border-box; }
+  body {
+    max-width: 1500px;
+    margin: 0 auto;
+    padding: 40px;
+    background: #f6f7f9;
+    color: #1b2330;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  h2 { margin: 0 0 8px; font-size: 26px; }
+  .subtitle { margin: 0; color: #5f6877; line-height: 1.55; }
+  .shell-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+    margin-top: 24px;
+  }
+  .shell-card {
+    cursor: pointer;
+    border: 1px solid #d9dde5;
+    background: #fff;
+    transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+  }
+  .shell-card:hover {
+    border-color: #7d8798;
+    box-shadow: 0 8px 24px rgba(27, 35, 48, 0.08);
+    transform: translateY(-2px);
+  }
+  .shell-card.selected {
+    border-color: #1f6feb;
+    box-shadow: 0 0 0 2px rgba(31, 111, 235, 0.16);
+  }
+  .shell-preview {
+    height: 278px;
+    background: #15181d;
+    color: #c9d1d9;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    font: 10px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .titlebar {
+    height: 24px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0 9px;
+    background: #20242b;
+    border-bottom: 1px solid #30363d;
+  }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: #57606a; }
+  .project { margin-left: 6px; color: #8b949e; }
+  .body { display: flex; flex: 1; min-height: 0; }
+  .rail {
+    width: 30px;
+    padding: 8px 0;
+    background: #1b1f24;
+    border-right: 1px solid #30363d;
+    display: flex;
+    align-items: center;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .rail i { width: 10px; height: 10px; border: 1px solid #768390; }
+  .rail i.active { background: #58a6ff; border-color: #58a6ff; }
+  .files {
+    width: 72px;
+    padding: 8px 6px;
+    border-right: 1px solid #30363d;
+    color: #8b949e;
+  }
+  .files b { color: #c9d1d9; font-weight: 500; }
+  .primary { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .tabs { height: 24px; display: flex; border-bottom: 1px solid #30363d; }
+  .tab { padding: 6px 9px; color: #8b949e; border-right: 1px solid #30363d; }
+  .tab.active { color: #f0f6fc; background: #0d1117; }
+  .code {
+    flex: 1;
+    padding: 12px;
+    background: #0d1117;
+  }
+  .code span { display: block; margin-bottom: 5px; }
+  .blue { color: #79c0ff; } .purple { color: #d2a8ff; } .green { color: #7ee787; }
+  .right {
+    width: 86px;
+    padding: 9px;
+    border-left: 1px solid #30363d;
+    background: #161b22;
+  }
+  .right strong { color: #f0f6fc; display: block; margin-bottom: 8px; }
+  .bubble { padding: 6px; background: #21262d; margin-bottom: 6px; color: #b1bac4; }
+  .drawer {
+    height: 64px;
+    border-top: 1px solid #30363d;
+    background: #0d1117;
+    padding: 7px 10px;
+  }
+  .prompt { color: #7ee787; }
+  .tiles { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; flex: 1; gap: 1px; background: #30363d; }
+  .tile { padding: 10px; background: #0d1117; }
+  .tile strong { color: #f0f6fc; display: block; margin-bottom: 7px; font-weight: 500; }
+  .flow { flex: 1; padding: 12px; overflow: hidden; background: #0d1117; }
+  .flow-lane { display: flex; gap: 8px; width: 430px; }
+  .flow-card { width: 92px; min-height: 172px; padding: 9px; border: 1px solid #30363d; background: #161b22; }
+  .flow-card.active { border-color: #58a6ff; }
+  .flow-card strong { color: #f0f6fc; display: block; margin-bottom: 9px; }
+  .flow-line { height: 4px; background: #30363d; margin: 6px 0; }
+  .card-copy { padding: 14px 15px 16px; }
+  .card-copy .choice { color: #1f6feb; font: 600 11px/1 ui-monospace, monospace; letter-spacing: .08em; }
+  .card-copy h3 { margin: 7px 0 6px; }
+  .card-copy p { margin: 0; color: #5f6877; font-size: 13px; line-height: 1.45; }
+  .recommended {
+    display: inline-block;
+    margin-left: 7px;
+    padding: 3px 5px;
+    background: #eaf2ff;
+    color: #1756a9;
+    font-size: 10px;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+  }
+  @media (max-width: 980px) {
+    .shell-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<h2>How should the workspace organize itself?</h2>
+<p class="subtitle">Choose the spatial model that best expresses “the interface is the center, and every tool is a first-class citizen.” Focus on hierarchy, not colors or polish.</p>
+
+<div class="shell-grid">
+  <div class="shell-card" data-choice="focus-context" onclick="toggleSelect(this)">
+    <div class="shell-preview">
+      <div class="titlebar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="project">strukt / workspace</span></div>
+      <div class="body">
+        <div class="rail"><i class="active"></i><i></i><i></i><i></i><i></i></div>
+        <div class="files"><b>EXPLORER</b><br><br>src<br>docs<br>tests<br><br>README</div>
+        <div class="primary">
+          <div class="tabs"><span class="tab active">main.rs</span><span class="tab">README</span></div>
+          <div class="code">
+            <span><span class="purple">fn</span> <span class="blue">main</span>() {</span>
+            <span>&nbsp;&nbsp;<span class="green">workspace</span>.run();</span>
+            <span>}</span>
+          </div>
+        </div>
+        <div class="right"><strong>AI CONTEXT</strong><div class="bubble">I found 3 relevant files.</div><div class="bubble">Ready to edit.</div></div>
+      </div>
+      <div class="drawer"><span class="prompt">❯</span> cargo test<br><span style="color:#8b949e">24 passed · 0 failed</span></div>
+    </div>
+    <div class="card-copy">
+      <span class="choice">A</span><span class="recommended">Recommended</span>
+      <h3>Focus + Context</h3>
+      <p>One dominant work surface, stable navigation, contextual AI at the side, and tools such as the terminal in a drawer.</p>
+    </div>
+  </div>
+
+  <div class="shell-card" data-choice="tiled-workspace" onclick="toggleSelect(this)">
+    <div class="shell-preview">
+      <div class="titlebar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="project">strukt / flexible grid</span></div>
+      <div class="body">
+        <div class="rail"><i class="active"></i><i></i><i></i><i></i><i></i></div>
+        <div class="primary">
+          <div class="tiles">
+            <div class="tile"><strong>EDITOR</strong><span class="purple">fn</span> <span class="blue">main</span>()</div>
+            <div class="tile"><strong>AGENT</strong><span style="color:#8b949e">Reviewing workspace…</span></div>
+            <div class="tile"><strong>TERMINAL</strong><span class="prompt">❯</span> cargo run</div>
+            <div class="tile"><strong>GIT</strong><span class="green">main</span><br>3 changed files</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-copy">
+      <span class="choice">B</span>
+      <h3>Tiled Workspace</h3>
+      <p>Editor, agents, terminal, Git, and future tools occupy equal, rearrangeable panes with minimal prescribed hierarchy.</p>
+    </div>
+  </div>
+
+  <div class="shell-card" data-choice="workflow-canvas" onclick="toggleSelect(this)">
+    <div class="shell-preview">
+      <div class="titlebar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="project">strukt / feature-auth</span></div>
+      <div class="body">
+        <div class="rail"><i class="active"></i><i></i><i></i><i></i><i></i></div>
+        <div class="flow">
+          <div style="margin-bottom:10px;color:#f0f6fc">WORKFLOW · Add authentication</div>
+          <div class="flow-lane">
+            <div class="flow-card"><strong>SPEC</strong><div class="flow-line"></div><div class="flow-line"></div><div class="flow-line" style="width:60%"></div></div>
+            <div class="flow-card"><strong>AGENT</strong><span style="color:#8b949e">Plan created</span><div class="flow-line"></div><div class="flow-line" style="width:75%"></div></div>
+            <div class="flow-card active"><strong>EDIT</strong><span class="blue">auth.rs</span><div class="flow-line"></div><div class="flow-line"></div></div>
+            <div class="flow-card"><strong>VERIFY</strong><span class="green">24 passed</span><div class="flow-line"></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="drawer"><span class="prompt">❯</span> Ask, run, open, or orchestrate…</div>
+    </div>
+    <div class="card-copy">
+      <span class="choice">C</span>
+      <h3>Workflow Canvas</h3>
+      <p>Work is organized as a reproducible sequence of specs, agent activity, edits, commands, and verification blocks.</p>
+    </div>
+  </div>
+</div>
+<script>
+  function toggleSelect(element) {
+    document.querySelectorAll("[data-choice]").forEach((item) => item.classList.remove("selected"));
+    element.classList.add("selected");
+  }
+</script>
+</body>
+</html>
