@@ -1,6 +1,6 @@
 # Workspace Shell and Remote Development Foundation
 
-- Status: Design approved; written-spec review pending
+- Status: Approved
 - Date: 2026-07-26
 - Mockups: [`docs/mockups/workspace-shell/`](../mockups/workspace-shell/)
 
