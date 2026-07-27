@@ -16,6 +16,8 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo build -p strukt-app
+cargo check -p strukt-app --target x86_64-pc-windows-msvc
+cargo check -p strukt-app --target x86_64-unknown-linux-gnu
 ```
 
 The workspace contains ten passing tests:
@@ -86,5 +88,12 @@ widget against this boundary before ADR 0001 is considered permanent.
 - macOS, Windows, and Linux hosted CI results
 - native Windows window launch and shortcut inspection
 - follow-up accessibility and IME prototypes described above
+
+The Windows MSVC and Linux GNU cross-target checks pass from the macOS development
+machine. They provide compile evidence, but do not replace native execution or the
+hosted CI matrix.
+
+Hosted CI could not be triggered during this validation because the local
+repository has no Git remote configured.
 
 ADR 0001 remains proposed until its stated validation gates have evidence.

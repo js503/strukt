@@ -86,6 +86,7 @@ Local macOS validation on 2026-07-26 confirms:
 - Focus + Context regions, light/dark themes, resizing, and shell shortcuts work;
 - Iced is isolated to `strukt-app`;
 - the domain crates build and test without Iced dependencies;
+- the application passes cross-target checks for Windows MSVC and Linux GNU;
 - the idle process sample reports `0.0%` CPU and `108752` KB RSS after extended
   idle.
 
