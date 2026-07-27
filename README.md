@@ -31,6 +31,7 @@ software engineering: one context, every tool, and any model.
 
 ## Key Docs
 
+- Roadmap: `docs/roadmap.md`
 - Specs: `docs/specs/`
 - Plans: `docs/plans/`
 - Mockups: `docs/mockups/`
