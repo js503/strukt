@@ -1224,7 +1224,9 @@ checks are recorded, change ADR 0001 from `Proposed for milestone validation` to
 - [ ] **Step 5: Run the full verification gate**
 
 ```bash
-forj check .
+test -f .forj-manifest.json
+primary_repo="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+forj check "$primary_repo"
 git diff --check
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
@@ -1232,8 +1234,13 @@ cargo test --workspace
 cargo build -p strukt-app
 ```
 
-Expected: the `forj` manifest is printed, Git reports no whitespace errors, and all
-Cargo commands exit successfully.
+Expected: the worktree manifest exists, the shared repository's `forj` manifest is
+printed, Git reports no whitespace errors, and all Cargo commands exit successfully.
+
+`forj` currently requires `.git` to be a directory and therefore cannot inspect a
+linked worktree directly. Resolving the shared primary checkout through
+`git rev-parse --git-common-dir` preserves the governance check while the worktree's
+own manifest is verified separately.
 
 - [ ] **Step 6: Commit**
 
