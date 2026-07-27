@@ -25,9 +25,9 @@ software engineering: one context, every tool, and any model.
 
 ## Status
 
-- Stage: design and architecture shaping
-- Current foundation: workspace shell and SSH-backed remote development
-- Implementation has not started
+- Stage: native shell foundation implementation
+- Current foundation: GPU-rendered Focus + Context workspace shell
+- Milestone: M1 in progress
 
 ## Key Docs
 
@@ -40,13 +40,24 @@ software engineering: one context, every tool, and any model.
 
 ## Local Development
 
-The runtime has not been scaffolded yet. Build, test, and packaging commands will be
-added with the first implementation plan.
+Install Rust through `rustup`; the repository pins the required toolchain.
+
+```bash
+cargo run -p strukt-app
+cargo test --workspace
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+The current executable is a shell foundation. File entries, terminal output, and AI
+context are representative views; real filesystem, PTY, SSH, and provider behavior
+belong to later milestones.
 
 ## Verification
 
 - Run `forj check .` to verify the governed repository manifest.
 - Follow the verification requirements in the active spec and implementation plan.
+- See `docs/evidence/m1-native-shell-validation.md` for native-window validation.
 
 ## Pull Request Expectations
 

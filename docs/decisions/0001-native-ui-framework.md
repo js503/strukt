@@ -78,6 +78,30 @@ Iced styles at the application boundary.
 
 This is a milestone validation decision, not an unconditional permanent commitment.
 
+## Validation Results
+
+Local macOS validation on 2026-07-26 confirms:
+
+- the native `wgpu` window launches without Electron or a browser;
+- Focus + Context regions, light/dark themes, resizing, and shell shortcuts work;
+- Iced is isolated to `strukt-app`;
+- the domain crates build and test without Iced dependencies;
+- the idle process sample reports `0.0%` CPU and `108752` KB RSS after extended
+  idle.
+
+The inspection also identified two open framework risks:
+
+- rendered Iced controls were not exposed as individually addressable elements in
+  the macOS accessibility inspection;
+- IME behavior cannot be validated until M2 introduces editable text.
+
+The complete evidence, screenshot, mitigation path, and measurement limitations are
+recorded in
+[`docs/evidence/m1-native-shell-validation.md`](../evidence/m1-native-shell-validation.md).
+
+Cross-platform CI and a native Windows launch remain required before this ADR can
+move to `Accepted`.
+
 ## Validation gates
 
 Move this ADR to `Accepted` only after:
