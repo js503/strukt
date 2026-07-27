@@ -1,5 +1,17 @@
 # Tracker
 
-| Workstream | Status | Spec | Plan | Issue | PR | Notes |
+Milestone order, dependencies, outcomes, and exit criteria are defined in
+[`roadmap.md`](roadmap.md).
+
+| Milestone | Workstream | Status | Spec | Plan | Issue | PR |
 |---|---|---|---|---|---|---|
-| Workspace shell and remote development foundation | Spec approved | `docs/specs/0001-workspace-shell-and-remote-development.md` | `docs/plans/0001-native-shell-foundation.md` | pending | pending | First implementation plan covers the native shell foundation |
+| M0 | Product and architecture foundation | Complete | [`specs/0001-workspace-shell-and-remote-development.md`](specs/0001-workspace-shell-and-remote-development.md) | — | — | — |
+| M1 | Native shell foundation | Planned | [`specs/0001-workspace-shell-and-remote-development.md`](specs/0001-workspace-shell-and-remote-development.md) | [`plans/0001-native-shell-foundation.md`](plans/0001-native-shell-foundation.md) | Not created | Not created |
+| M2 | Local development workspace | Not planned | Not created | Not created | Not created | Not created |
+| M3 | Local persistent sessions | Not planned | Not created | Not created | Not created | Not created |
+| M4 | SSH remote workspace | Not planned | Not created | Not created | Not created | Not created |
+| M5 | Remote persistent sessions | Not planned | Not created | Not created | Not created | Not created |
+| M6 | AI and workspace context | Not planned | Not created | Not created | Not created | Not created |
+| M7 | Plugin and MCP foundation | Not planned | Not created | Not created | Not created | Not created |
+| M8 | Integrated developer workflows | Not planned | Not created | Not created | Not created | Not created |
+| M9 | Public alpha readiness | Not planned | Not created | Not created | Not created | Not created |
