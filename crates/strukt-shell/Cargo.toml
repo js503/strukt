@@ -1,0 +1,13 @@
+[package]
+name = "strukt-shell"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+strukt-core.workspace = true
+strukt-theme.workspace = true
+
+[lints]
+workspace = true
