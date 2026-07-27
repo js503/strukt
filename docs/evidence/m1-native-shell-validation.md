@@ -20,9 +20,9 @@ cargo check -p strukt-app --target x86_64-pc-windows-msvc
 cargo check -p strukt-app --target x86_64-unknown-linux-gnu
 ```
 
-The workspace contains ten passing tests:
+The workspace contains eleven passing tests:
 
-- three capability-registry tests
+- four capability-registry tests
 - two semantic-theme tests
 - three framework-independent shell-state tests
 - two native-application wiring tests

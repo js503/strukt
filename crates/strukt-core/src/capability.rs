@@ -94,6 +94,18 @@ impl CapabilityRegistry {
                 .unwrap_or(state.descriptor.enabled_by_default)
         })
     }
+
+    #[must_use]
+    pub fn enabled_count(&self) -> usize {
+        self.capabilities
+            .values()
+            .filter(|state| {
+                state
+                    .override_enabled
+                    .unwrap_or(state.descriptor.enabled_by_default)
+            })
+            .count()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]

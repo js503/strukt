@@ -152,7 +152,10 @@ fn context_panel(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Messa
         column![
             text(ai_status),
             text("Current workspace"),
-            text("4 capabilities enabled"),
+            text(format!(
+                "{} capabilities enabled",
+                app.capabilities.enabled_count()
+            )),
             Space::new().height(Fill),
             button("Hide context").on_press(Message::ToggleContext),
         ]

@@ -39,3 +39,20 @@ fn duplicate_registration_is_rejected() {
 
     assert_eq!(error, RegistryError::Duplicate(CapabilityId::FILES));
 }
+
+#[test]
+fn enabled_count_reflects_defaults_and_overrides() {
+    let mut registry = CapabilityRegistry::new();
+    registry
+        .register(CapabilityDescriptor::new(CapabilityId::FILES, true))
+        .unwrap();
+    registry
+        .register(CapabilityDescriptor::new(CapabilityId::AI, false))
+        .unwrap();
+
+    assert_eq!(registry.enabled_count(), 1);
+
+    registry.set_enabled(CapabilityId::AI, true).unwrap();
+
+    assert_eq!(registry.enabled_count(), 2);
+}
