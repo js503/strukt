@@ -102,7 +102,7 @@ milestone.
 - Spatial reference:
   [`mockups/workspace-shell/focus-context.html`](mockups/workspace-shell/focus-context.html)
 - Issue: [#1 — M1: Native shell foundation](https://github.com/js503/strukt/issues/1)
-- Pull request: not yet created
+- Pull request: [#2 — feat: add native shell foundation](https://github.com/js503/strukt/pull/2)
 
 ## M2 — Local Development Workspace
 
