@@ -101,7 +101,7 @@ milestone.
   [`decisions/0001-native-ui-framework.md`](decisions/0001-native-ui-framework.md)
 - Spatial reference:
   [`mockups/workspace-shell/focus-context.html`](mockups/workspace-shell/focus-context.html)
-- Issue: not yet created
+- Issue: [#1 — M1: Native shell foundation](https://github.com/js503/strukt/issues/1)
 - Pull request: not yet created
 
 ## M2 — Local Development Workspace
