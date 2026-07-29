@@ -1,6 +1,6 @@
 # M1 Windows Native Smoke Validation Implementation Plan
 
-- Status: In progress
+- Status: Complete
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > superpowers:subagent-driven-development (recommended) or
@@ -65,7 +65,7 @@ docs/tracker.md
 - Modify: `crates/strukt-app/src/app.rs`
 - Modify: `crates/strukt-app/src/main.rs`
 
-- [ ] **Step 1: Write failing launch-mode tests**
+- [x] **Step 1: Write failing launch-mode tests**
 
 Add these imports and tests to the existing `tests` module in
 `crates/strukt-app/src/main.rs`:
@@ -153,7 +153,7 @@ fn unmodified_shortcut_keys_do_not_toggle_shell_panels() {
 
 Retain the existing capability and message-state tests.
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 Run:
 
@@ -164,7 +164,7 @@ cargo test -p strukt-app
 Expected: compilation fails because `LaunchMode`,
 `LaunchMode::from_args`, and `LaunchMode::smoke_timeout` do not exist.
 
-- [ ] **Step 3: Implement the minimal launch-mode boundary**
+- [x] **Step 3: Implement the minimal launch-mode boundary**
 
 Add this near the imports in `crates/strukt-app/src/app.rs`:
 
@@ -204,7 +204,7 @@ Do not add launch mode to `StruktApp` yet. Task 2 introduces the field and
 constructor when the lifecycle consumes them, which keeps this step free of
 dead-code warnings.
 
-- [ ] **Step 4: Run the focused tests and verify GREEN**
+- [x] **Step 4: Run the focused tests and verify GREEN**
 
 Run:
 
@@ -216,7 +216,7 @@ Expected: all `strukt-app` tests pass. The shortcut tests are characterization
 coverage for existing message behavior; the launch-mode tests provide the
 red-green cycle for new behavior.
 
-- [ ] **Step 5: Run static verification**
+- [x] **Step 5: Run static verification**
 
 Run:
 
@@ -227,7 +227,7 @@ cargo clippy -p strukt-app --all-targets -- -D warnings
 
 Expected: both commands exit successfully.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/strukt-app/src/app.rs crates/strukt-app/src/main.rs
@@ -241,7 +241,7 @@ git commit -m "test: cover platform launch and shortcuts"
 - Modify: `crates/strukt-app/src/app.rs`
 - Modify: `crates/strukt-app/src/main.rs`
 
-- [ ] **Step 1: Write the failing smoke-exit task test**
+- [x] **Step 1: Write the failing smoke-exit task test**
 
 Add this test to `crates/strukt-app/src/main.rs`:
 
@@ -256,7 +256,7 @@ fn smoke_timeout_requests_runtime_work() {
 }
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
@@ -267,7 +267,7 @@ cargo test -p strukt-app smoke_timeout_requests_runtime_work
 Expected: compilation fails because `Message::SmokeTimeout` does not exist and
 `StruktApp::new` and the runtime lifecycle do not exist.
 
-- [ ] **Step 3: Implement the minimal timer and exit lifecycle**
+- [x] **Step 3: Implement the minimal timer and exit lifecycle**
 
 Update imports in `crates/strukt-app/src/app.rs`:
 
@@ -412,7 +412,7 @@ fn main() -> iced::Result {
 }
 ```
 
-- [ ] **Step 4: Run the focused tests and verify GREEN**
+- [x] **Step 4: Run the focused tests and verify GREEN**
 
 Run:
 
@@ -422,7 +422,7 @@ cargo test -p strukt-app
 
 Expected: all `strukt-app` tests pass, including the smoke-exit task test.
 
-- [ ] **Step 5: Run the real smoke mode locally**
+- [x] **Step 5: Run the real smoke mode locally**
 
 Run:
 
@@ -434,7 +434,7 @@ Expected: a native window starts, the process prints
 `strukt smoke test: native event loop started` after approximately three seconds,
 and exits with status zero without user input.
 
-- [ ] **Step 6: Verify interactive mode remains open**
+- [x] **Step 6: Verify interactive mode remains open**
 
 Run:
 
@@ -445,7 +445,7 @@ cargo run -p strukt-app
 Expected: the application stays open beyond three seconds. Close the window
 normally after observing that it remains interactive.
 
-- [ ] **Step 7: Run static verification**
+- [x] **Step 7: Run static verification**
 
 Run:
 
@@ -457,7 +457,7 @@ cargo test -p strukt-app
 
 Expected: all commands exit successfully.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add crates/strukt-app/src/app.rs crates/strukt-app/src/main.rs
@@ -470,7 +470,7 @@ git commit -m "feat: add native startup smoke mode"
 
 - Modify: `.github/workflows/ci.yml`
 
-- [ ] **Step 1: Add the Windows-only smoke step**
+- [x] **Step 1: Add the Windows-only smoke step**
 
 Append this step after `Build native application`:
 
@@ -492,7 +492,7 @@ Append this step after `Build native application`:
           }
 ```
 
-- [ ] **Step 2: Validate the workflow structure and local commands**
+- [x] **Step 2: Validate the workflow structure and local commands**
 
 Run:
 
@@ -507,7 +507,7 @@ git diff --check
 Expected: formatting, Clippy, all tests, the native build, and whitespace checks
 pass.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/ci.yml
@@ -525,7 +525,7 @@ git commit -m "ci: smoke test native Windows startup"
 - Modify: `docs/specs/0002-m1-windows-smoke-validation.md`
 - Modify: `docs/plans/0002-m1-windows-smoke-validation.md`
 
-- [ ] **Step 1: Record the validation policy before hosted results**
+- [x] **Step 1: Record the validation policy before hosted results**
 
 Update the evidence and ADR to state:
 
@@ -541,7 +541,7 @@ remain mandatory before M9 public-alpha readiness can be marked complete.
 
 Keep ADR 0001 proposed and M1 in progress until the new hosted matrix passes.
 
-- [ ] **Step 2: Run governance and documentation verification**
+- [x] **Step 2: Run governance and documentation verification**
 
 Run:
 
@@ -553,7 +553,7 @@ git diff --check
 
 Expected: the forj manifest is found and no whitespace errors are reported.
 
-- [ ] **Step 3: Commit the pre-CI governance update**
+- [x] **Step 3: Commit the pre-CI governance update**
 
 ```bash
 git add docs/evidence/m1-native-shell-validation.md \
@@ -565,7 +565,7 @@ git add docs/evidence/m1-native-shell-validation.md \
 git commit -m "docs: define automated Windows validation gate"
 ```
 
-- [ ] **Step 4: Push and monitor hosted CI**
+- [x] **Step 4: Push and monitor hosted CI**
 
 Run:
 
@@ -577,7 +577,7 @@ gh pr checks 2 --repo js503/strukt --watch --interval 10
 Expected: macOS 14, Ubuntu 24.04, and Windows 2022 pass. The Windows log includes
 `strukt smoke test: native event loop started`.
 
-- [ ] **Step 5: Record terminal hosted evidence**
+- [x] **Step 5: Record terminal hosted evidence**
 
 After the final run passes:
 
@@ -588,7 +588,7 @@ After the final run passes:
 - keep the human Windows QA requirement under M9;
 - mark this spec and plan complete.
 
-- [ ] **Step 6: Run the final local gate**
+- [x] **Step 6: Run the final local gate**
 
 Run:
 
@@ -607,7 +607,7 @@ cargo check -p strukt-app --target x86_64-unknown-linux-gnu
 Expected: governance, whitespace, formatting, Clippy, all tests, native build, and
 both cross-target checks pass.
 
-- [ ] **Step 7: Commit and push final evidence**
+- [x] **Step 7: Commit and push final evidence**
 
 ```bash
 git add docs/evidence/m1-native-shell-validation.md \
@@ -620,7 +620,7 @@ git commit -m "docs: complete milestone one validation"
 git push
 ```
 
-- [ ] **Step 8: Verify the final PR head**
+- [x] **Step 8: Verify the final PR head**
 
 Run:
 

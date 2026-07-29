@@ -1,6 +1,6 @@
 # ADR 0001: Native UI Framework for the Foundation Milestone
 
-- Status: Proposed for milestone validation
+- Status: Accepted for the M1 foundation
 - Date: 2026-07-26
 - Decision owners: strukt maintainers
 
@@ -100,13 +100,15 @@ The complete evidence, screenshot, mitigation path, and measurement limitations 
 recorded in
 [`docs/evidence/m1-native-shell-validation.md`](../evidence/m1-native-shell-validation.md).
 
-An initial cross-platform matrix passed compilation and tests on macOS, Windows,
-and Linux. A deterministic Windows-native startup smoke gate is now pending before
-this ADR can move to `Accepted for the M1 foundation`.
+GitHub Actions
+[run 30415817787](https://github.com/js503/strukt/actions/runs/30415817787)
+passed compilation and tests on macOS, Windows, and Linux. The Windows Server 2022
+job additionally launched the real native executable, reached the Iced event loop,
+printed the required success marker, and exited cleanly.
 
 ## Validation gates
 
-Move this ADR to `Accepted for the M1 foundation` only after:
+This M1 acceptance is supported by the following completed gates:
 
 1. the shell builds on macOS, Windows, and Linux CI;
 2. macOS manual validation and the Windows-native hosted smoke gate exercise the
@@ -122,7 +124,7 @@ accepts an editor or terminal widget, the framework decision must be revisited
 against custom-widget, accessibility, focus-order, keyboard-navigation, and IME
 prototypes. M1 acceptance is not an unconditional permanent framework commitment.
 
-If Iced fails a gate, keep the domain crates and evaluate Floem or a focused
+If Iced fails a later gate, keep the domain crates and evaluate Floem or a focused
 `winit`/`wgpu` shell without changing workspace-domain APIs.
 
 ## Consequences
@@ -130,4 +132,5 @@ If Iced fails a gate, keep the domain crates and evaluate Floem or a focused
 - The first milestone can produce a cross-platform executable quickly.
 - UI framework churn is contained within one crate.
 - The terminal renderer will require a custom widget in a later milestone.
-- The team accepts Iced's experimental status during validation.
+- The team accepts Iced's experimental status for the M1 foundation while retaining
+  explicit M2 and M9 revalidation gates.

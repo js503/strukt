@@ -108,14 +108,31 @@ This is native startup evidence, not visual QA. Human Windows visual,
 accessibility, IME, packaging, and installation validation remain mandatory before
 M9 public-alpha readiness can be marked complete.
 
-## Remaining Acceptance Evidence
+## Hosted CI Results
 
-- final macOS, Windows, and Linux hosted CI results with the Windows smoke gate
-- follow-up accessibility, IME, and custom-widget prototypes described above
+GitHub Actions
+[run 30415817787](https://github.com/js503/strukt/actions/runs/30415817787)
+passed on the M1 feature branch:
 
-The Windows MSVC and Linux GNU cross-target checks pass from the macOS development
-machine. An earlier hosted matrix also passed compilation and tests on macOS,
-Windows, and Linux. The new final matrix must additionally pass the native Windows
-smoke launch.
+| Hosted job | Result | Duration |
+|---|---|---|
+| macOS 14 | Pass | 42 seconds |
+| Ubuntu 24.04 | Pass | 30 seconds |
+| Windows Server 2022 | Pass | 1 minute 9 seconds |
 
-ADR 0001 remains proposed until its stated validation gates have evidence.
+The Windows job ran all seven `strukt-app` tests natively, including the
+Control-mapped platform shortcut tests. It then launched
+`target\debug\strukt-app.exe --smoke-test`, emitted
+`strukt smoke test: native event loop started`, and exited successfully.
+
+The Windows MSVC and Linux GNU cross-target checks also pass from the macOS
+development machine.
+
+## Deferred Validation
+
+- M2: custom editor or terminal widget boundary
+- M2: accessibility semantics, focus order, keyboard traversal, and IME behavior
+- M9: human Windows visual, packaging, installation, and keyboard-workflow QA
+
+These are explicit later-milestone gates rather than incomplete M1 acceptance
+evidence.

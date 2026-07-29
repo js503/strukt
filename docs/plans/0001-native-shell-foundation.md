@@ -1,5 +1,7 @@
 # Native Shell Foundation Implementation Plan
 
+- Status: Complete
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the first installable-shaped `strukt` executable: a GPU-rendered
@@ -105,7 +107,7 @@ Responsibilities:
 - Create: `crates/strukt-app/Cargo.toml`
 - Create: `crates/strukt-app/src/main.rs`
 
-- [ ] **Step 1: Install the pinned Rust toolchain**
+- [x] **Step 1: Install the pinned Rust toolchain**
 
 The current development machine does not have `rustc` or `cargo`. Request approval
 before installing outside the repository, then run:
@@ -124,7 +126,7 @@ cargo --version
 
 Expected: `rustc 1.97.1` and its matching Cargo release.
 
-- [ ] **Step 2: Pin the toolchain and formatter**
+- [x] **Step 2: Pin the toolchain and formatter**
 
 Create `rust-toolchain.toml`:
 
@@ -144,7 +146,7 @@ use_field_init_shorthand = true
 use_try_shorthand = true
 ```
 
-- [ ] **Step 3: Add the MIT license**
+- [x] **Step 3: Add the MIT license**
 
 Create `LICENSE`:
 
@@ -172,7 +174,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-- [ ] **Step 4: Define the Cargo workspace**
+- [x] **Step 4: Define the Cargo workspace**
 
 Create root `Cargo.toml`:
 
@@ -251,7 +253,7 @@ strukt-theme.workspace = true
 workspace = true
 ```
 
-- [ ] **Step 5: Add compileable crate entry points**
+- [x] **Step 5: Add compileable crate entry points**
 
 Each library `src/lib.rs` initially contains:
 
@@ -269,7 +271,7 @@ fn main() {
 }
 ```
 
-- [ ] **Step 6: Verify workspace metadata and the bootstrap build**
+- [x] **Step 6: Verify workspace metadata and the bootstrap build**
 
 Run:
 
@@ -282,7 +284,7 @@ cargo check --workspace
 Expected: four workspace packages, no formatting differences, and a successful
 development build.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add Cargo.toml Cargo.lock rust-toolchain.toml rustfmt.toml LICENSE crates
@@ -297,7 +299,7 @@ git commit -m "build: bootstrap native Rust workspace"
 - Modify: `crates/strukt-core/src/lib.rs`
 - Create: `crates/strukt-core/tests/capability_registry.rs`
 
-- [ ] **Step 1: Write the failing capability tests**
+- [x] **Step 1: Write the failing capability tests**
 
 Create `crates/strukt-core/tests/capability_registry.rs`:
 
@@ -347,7 +349,7 @@ fn duplicate_registration_is_rejected() {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run:
 
@@ -357,7 +359,7 @@ cargo test -p strukt-core --test capability_registry
 
 Expected: compilation fails because the capability types are not exported.
 
-- [ ] **Step 3: Implement the minimal capability model**
+- [x] **Step 3: Implement the minimal capability model**
 
 Create `crates/strukt-core/src/capability.rs`:
 
@@ -472,7 +474,7 @@ pub use capability::{
 
 Add `thiserror.workspace = true` to `crates/strukt-core/Cargo.toml`.
 
-- [ ] **Step 4: Run the focused and crate tests**
+- [x] **Step 4: Run the focused and crate tests**
 
 Run:
 
@@ -483,7 +485,7 @@ cargo test -p strukt-core
 
 Expected: three focused tests pass and the crate test suite passes.
 
-- [ ] **Step 5: Run static verification**
+- [x] **Step 5: Run static verification**
 
 ```bash
 cargo fmt --all --check
@@ -492,7 +494,7 @@ cargo clippy -p strukt-core --all-targets -- -D warnings
 
 Expected: both commands exit successfully with no diagnostics.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/strukt-core
@@ -507,7 +509,7 @@ git commit -m "feat: add capability registry"
 - Modify: `crates/strukt-theme/src/lib.rs`
 - Create: `crates/strukt-theme/tests/builtin_themes.rs`
 
-- [ ] **Step 1: Write the failing theme tests**
+- [x] **Step 1: Write the failing theme tests**
 
 Create `crates/strukt-theme/tests/builtin_themes.rs`:
 
@@ -532,7 +534,7 @@ fn terminal_and_connection_tokens_are_semantic() {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 cargo test -p strukt-theme --test builtin_themes
@@ -540,7 +542,7 @@ cargo test -p strukt-theme --test builtin_themes
 
 Expected: compilation fails because `ThemeMode` and `ThemeTokens` do not exist.
 
-- [ ] **Step 3: Implement immutable semantic tokens**
+- [x] **Step 3: Implement immutable semantic tokens**
 
 Create `crates/strukt-theme/src/tokens.rs`:
 
@@ -626,7 +628,7 @@ mod tokens;
 pub use tokens::{Rgb, ThemeMode, ThemeTokens};
 ```
 
-- [ ] **Step 4: Run tests and static verification**
+- [x] **Step 4: Run tests and static verification**
 
 ```bash
 cargo test -p strukt-theme
@@ -636,7 +638,7 @@ cargo clippy -p strukt-theme --all-targets -- -D warnings
 
 Expected: two theme tests pass and both static checks exit successfully.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/strukt-theme
@@ -651,7 +653,7 @@ git commit -m "feat: add semantic theme tokens"
 - Modify: `crates/strukt-shell/src/lib.rs`
 - Create: `crates/strukt-shell/tests/shell_state.rs`
 
-- [ ] **Step 1: Write the failing shell-state tests**
+- [x] **Step 1: Write the failing shell-state tests**
 
 Create `crates/strukt-shell/tests/shell_state.rs`:
 
@@ -690,7 +692,7 @@ fn theme_toggle_switches_between_builtin_modes() {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 cargo test -p strukt-shell --test shell_state
@@ -698,7 +700,7 @@ cargo test -p strukt-shell --test shell_state
 
 Expected: compilation fails because the shell-state types do not exist.
 
-- [ ] **Step 3: Implement the shell reducer**
+- [x] **Step 3: Implement the shell reducer**
 
 Create `crates/strukt-shell/src/state.rs`:
 
@@ -780,7 +782,7 @@ mod state;
 pub use state::{Activity, ShellAction, ShellState};
 ```
 
-- [ ] **Step 4: Run tests and static verification**
+- [x] **Step 4: Run tests and static verification**
 
 ```bash
 cargo test -p strukt-shell
@@ -790,7 +792,7 @@ cargo clippy -p strukt-shell --all-targets -- -D warnings
 
 Expected: three shell-state tests pass and both static checks exit successfully.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/strukt-shell
@@ -805,7 +807,7 @@ git commit -m "feat: add workspace shell state"
 - Create: `crates/strukt-app/src/app.rs`
 - Create: `crates/strukt-app/src/view.rs`
 
-- [ ] **Step 1: Define application state and messages**
+- [x] **Step 1: Define application state and messages**
 
 Create `crates/strukt-app/src/app.rs`:
 
@@ -890,7 +892,7 @@ impl StruktApp {
 }
 ```
 
-- [ ] **Step 2: Render the approved shell hierarchy**
+- [x] **Step 2: Render the approved shell hierarchy**
 
 Create `crates/strukt-app/src/view.rs`:
 
@@ -1057,7 +1059,7 @@ pub fn view(app: &StruktApp) -> Element<'_, Message> {
 }
 ```
 
-- [ ] **Step 3: Wire the native application**
+- [x] **Step 3: Wire the native application**
 
 Replace `crates/strukt-app/src/main.rs`:
 
@@ -1078,7 +1080,7 @@ fn main() -> iced::Result {
 }
 ```
 
-- [ ] **Step 4: Compile the application**
+- [x] **Step 4: Compile the application**
 
 Run:
 
@@ -1089,7 +1091,7 @@ cargo test --workspace
 
 Expected: the application compiles and all domain tests pass.
 
-- [ ] **Step 5: Run and inspect the native window**
+- [x] **Step 5: Run and inspect the native window**
 
 Run:
 
@@ -1112,7 +1114,7 @@ Verify manually:
 
 Record a screenshot and startup/idle measurements in the implementation PR.
 
-- [ ] **Step 6: Run static verification**
+- [x] **Step 6: Run static verification**
 
 ```bash
 cargo fmt --all --check
@@ -1121,7 +1123,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 Expected: both commands exit successfully with no diagnostics.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add crates/strukt-app
@@ -1137,7 +1139,7 @@ git commit -m "feat: render native workspace shell"
 - Modify: `docs/decisions/0001-native-ui-framework.md`
 - Modify: `docs/tracker.md`
 
-- [ ] **Step 1: Add the cross-platform workflow**
+- [x] **Step 1: Add the cross-platform workflow**
 
 Create `.github/workflows/ci.yml`:
 
@@ -1177,7 +1179,7 @@ jobs:
         run: cargo build -p strukt-app
 ```
 
-- [ ] **Step 2: Validate the workflow locally**
+- [x] **Step 2: Validate the workflow locally**
 
 Run:
 
@@ -1190,7 +1192,7 @@ cargo build -p strukt-app
 
 Expected: every command exits successfully.
 
-- [ ] **Step 3: Update local development documentation**
+- [x] **Step 3: Update local development documentation**
 
 Replace the `README.md` Local Development placeholder with:
 
@@ -1209,7 +1211,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 Set the README status to `native shell foundation in progress`.
 
-- [ ] **Step 4: Update governance state**
+- [x] **Step 4: Update governance state**
 
 Set the tracker row to:
 
@@ -1217,11 +1219,12 @@ Set the tracker row to:
 | Native shell foundation | In progress | `docs/specs/0001-workspace-shell-and-remote-development.md` | `docs/plans/0001-native-shell-foundation.md` | pending | pending | Iced validation milestone; local files and PTY follow in separate plans |
 ```
 
-After macOS, Windows, and Linux CI all pass and the manual macOS/Windows window
-checks are recorded, change ADR 0001 from `Proposed for milestone validation` to
-`Accepted`.
+After macOS, Windows, and Linux CI all pass, macOS manual window checks are
+recorded, and the Windows-native smoke gate in
+[`0002-m1-windows-smoke-validation.md`](0002-m1-windows-smoke-validation.md)
+passes, change ADR 0001 to `Accepted for the M1 foundation`.
 
-- [ ] **Step 5: Run the full verification gate**
+- [x] **Step 5: Run the full verification gate**
 
 ```bash
 test -f .forj-manifest.json
@@ -1242,7 +1245,7 @@ linked worktree directly. Resolving the shared primary checkout through
 `git rev-parse --git-common-dir` preserves the governance check while the worktree's
 own manifest is verified separately.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add .github/workflows/ci.yml README.md docs/decisions/0001-native-ui-framework.md docs/tracker.md

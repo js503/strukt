@@ -1,6 +1,6 @@
 # M1 Windows Native Smoke Validation
 
-- Status: Approved
+- Status: Implemented
 - Date: 2026-07-28
 - Parent spec:
   [`0001-workspace-shell-and-remote-development.md`](0001-workspace-shell-and-remote-development.md)
