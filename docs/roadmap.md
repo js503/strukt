@@ -26,7 +26,7 @@ exit criteria are satisfied and verified, not when a target date arrives.
 | ID | Milestone | Status | Depends on | Primary outcome |
 |---|---|---|---|---|
 | M0 | Product and architecture foundation | Complete | — | Approved product model, spatial design, remote-development model, and delivery process |
-| M1 | Native shell foundation | Planned | M0 | Cross-platform native shell proving capability boundaries, shell state, and semantic theming |
+| M1 | Native shell foundation | Complete | M0 | Cross-platform native shell proving capability boundaries, shell state, and semantic theming |
 | M2 | Local development workspace | Not planned | M1 | Real local files, editing, PTY/ConPTY terminals, terminal rendering, and workspace persistence |
 | M3 | Local persistent sessions | Not planned | M2 | Named local sessions with windows, split panes, detach/reattach, and restoration |
 | M4 | SSH remote workspace | Not planned | M2 | A remote development box behaves as a first-class workspace over standard SSH |
@@ -101,8 +101,8 @@ milestone.
   [`decisions/0001-native-ui-framework.md`](decisions/0001-native-ui-framework.md)
 - Spatial reference:
   [`mockups/workspace-shell/focus-context.html`](mockups/workspace-shell/focus-context.html)
-- Issue: not yet created
-- Pull request: not yet created
+- Issue: [#1 — M1: Native shell foundation](https://github.com/js503/strukt/issues/1)
+- Pull request: [#2 — feat: add native shell foundation](https://github.com/js503/strukt/pull/2)
 
 ## M2 — Local Development Workspace
 
@@ -353,6 +353,8 @@ and use for bounded local and remote development workflows.
 ### Exit Criteria
 
 - Packaged smoke tests pass on supported macOS and Windows versions.
+- A human validates visual rendering and keyboard workflows on a supported Windows
+  desktop.
 - A new user can complete documented local and EC2-backed remote workflows.
 - Critical accessibility and keyboard-only workflows are verified.
 - Known limitations and experimental capabilities are documented.

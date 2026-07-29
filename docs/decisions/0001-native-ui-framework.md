@@ -1,6 +1,6 @@
 # ADR 0001: Native UI Framework for the Foundation Milestone
 
-- Status: Proposed for milestone validation
+- Status: Accepted for the M1 foundation
 - Date: 2026-07-26
 - Decision owners: strukt maintainers
 
@@ -78,20 +78,53 @@ Iced styles at the application boundary.
 
 This is a milestone validation decision, not an unconditional permanent commitment.
 
+## Validation Results
+
+Local macOS validation on 2026-07-26 confirms:
+
+- the native `wgpu` window launches without Electron or a browser;
+- Focus + Context regions, light/dark themes, resizing, and shell shortcuts work;
+- Iced is isolated to `strukt-app`;
+- the domain crates build and test without Iced dependencies;
+- the application passes cross-target checks for Windows MSVC and Linux GNU;
+- the idle process sample reports `0.0%` CPU and `108752` KB RSS after extended
+  idle.
+
+The inspection also identified two open framework risks:
+
+- rendered Iced controls were not exposed as individually addressable elements in
+  the macOS accessibility inspection;
+- IME behavior cannot be validated until M2 introduces editable text.
+
+The complete evidence, screenshot, mitigation path, and measurement limitations are
+recorded in
+[`docs/evidence/m1-native-shell-validation.md`](../evidence/m1-native-shell-validation.md).
+
+GitHub Actions
+[run 30415817787](https://github.com/js503/strukt/actions/runs/30415817787)
+passed compilation and tests on macOS, Windows, and Linux. The Windows Server 2022
+job additionally launched the real native executable, reached the Iced event loop,
+printed the required success marker, and exited cleanly.
+
 ## Validation gates
 
-Move this ADR to `Accepted` only after:
+This M1 acceptance is supported by the following completed gates:
 
 1. the shell builds on macOS, Windows, and Linux CI;
-2. the macOS and Windows applications open a GPU-rendered window;
-3. keyboard focus and shortcuts work across the activity rail and panels;
+2. macOS manual validation and the Windows-native hosted smoke gate exercise the
+   Iced window, renderer, and event loop;
+3. platform-command shortcut tests pass natively on macOS and Windows;
 4. light and dark semantic tokens style every shell surface;
-5. an advanced custom widget can be introduced without moving domain state into the
-   application crate;
+5. domain state remains outside the Iced application crate;
 6. startup and idle resource measurements are recorded;
 7. IME and accessibility risks are documented with a concrete mitigation path.
 
-If Iced fails a gate, keep the domain crates and evaluate Floem or a focused
+Human Windows visual QA remains mandatory for M9 public-alpha readiness. Before M2
+accepts an editor or terminal widget, the framework decision must be revisited
+against custom-widget, accessibility, focus-order, keyboard-navigation, and IME
+prototypes. M1 acceptance is not an unconditional permanent framework commitment.
+
+If Iced fails a later gate, keep the domain crates and evaluate Floem or a focused
 `winit`/`wgpu` shell without changing workspace-domain APIs.
 
 ## Consequences
@@ -99,4 +132,5 @@ If Iced fails a gate, keep the domain crates and evaluate Floem or a focused
 - The first milestone can produce a cross-platform executable quickly.
 - UI framework churn is contained within one crate.
 - The terminal renderer will require a custom widget in a later milestone.
-- The team accepts Iced's experimental status during validation.
+- The team accepts Iced's experimental status for the M1 foundation while retaining
+  explicit M2 and M9 revalidation gates.

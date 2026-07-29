@@ -1,0 +1,15 @@
+[package]
+name = "strukt-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+iced.workspace = true
+strukt-core.workspace = true
+strukt-shell.workspace = true
+strukt-theme.workspace = true
+
+[lints]
+workspace = true
