@@ -1,13 +1,44 @@
+use std::time::Duration;
+
 use iced::keyboard::{self, Key};
-use iced::{Subscription, Theme};
+use iced::{Subscription, Task, Theme, time};
 use strukt_core::{CapabilityDescriptor, CapabilityId, CapabilityRegistry};
 use strukt_shell::{Activity, ShellAction, ShellState};
 use strukt_theme::ThemeMode;
+
+const SMOKE_TEST_DURATION: Duration = Duration::from_secs(3);
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LaunchMode {
+    #[default]
+    Interactive,
+    SmokeTest,
+}
+
+impl LaunchMode {
+    #[must_use]
+    pub fn from_args(args: impl IntoIterator<Item = String>) -> Self {
+        if args.into_iter().any(|argument| argument == "--smoke-test") {
+            Self::SmokeTest
+        } else {
+            Self::Interactive
+        }
+    }
+
+    #[must_use]
+    pub const fn smoke_timeout(self) -> Option<Duration> {
+        match self {
+            Self::Interactive => None,
+            Self::SmokeTest => Some(SMOKE_TEST_DURATION),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct StruktApp {
     pub capabilities: CapabilityRegistry,
     pub shell: ShellState,
+    launch_mode: LaunchMode,
 }
 
 #[derive(Clone, Debug)]
@@ -18,10 +49,18 @@ pub enum Message {
     ToggleExplorer,
     ToggleTheme,
     Keyboard(keyboard::Event),
+    SmokeTimeout,
 }
 
 impl Default for StruktApp {
     fn default() -> Self {
+        Self::new(LaunchMode::Interactive)
+    }
+}
+
+impl StruktApp {
+    #[must_use]
+    pub fn new(launch_mode: LaunchMode) -> Self {
         let mut capabilities = CapabilityRegistry::new();
         for descriptor in [
             CapabilityDescriptor::new(CapabilityId::FILES, true),
@@ -38,12 +77,13 @@ impl Default for StruktApp {
         Self {
             capabilities,
             shell: ShellState::default(),
+            launch_mode,
         }
     }
 }
 
 impl StruktApp {
-    pub fn update(&mut self, message: Message) {
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         let action = match message {
             Message::SelectActivity(activity) => Some(ShellAction::SelectActivity(activity)),
             Message::ToggleContext => Some(ShellAction::ToggleContext),
@@ -61,10 +101,16 @@ impl StruktApp {
                 }
             }
             Message::Keyboard(_) => None,
+            Message::SmokeTimeout => {
+                println!("strukt smoke test: native event loop started");
+                return iced::exit();
+            }
         };
         if let Some(action) = action {
             self.shell.apply(action);
         }
+
+        Task::none()
     }
 
     #[must_use]
@@ -75,7 +121,15 @@ impl StruktApp {
         }
     }
 
-    pub fn subscription() -> Subscription<Message> {
-        keyboard::listen().map(Message::Keyboard)
+    pub fn subscription(&self) -> Subscription<Message> {
+        let keyboard = keyboard::listen().map(Message::Keyboard);
+
+        match self.launch_mode.smoke_timeout() {
+            Some(timeout) => Subscription::batch([
+                keyboard,
+                time::every(timeout).map(|_| Message::SmokeTimeout),
+            ]),
+            None => keyboard,
+        }
     }
 }

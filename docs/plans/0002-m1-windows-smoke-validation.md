@@ -198,48 +198,9 @@ impl LaunchMode {
 }
 ```
 
-Add `launch_mode` to `StruktApp` and make `Default` delegate to `new`:
-
-```rust
-#[derive(Debug)]
-pub struct StruktApp {
-    pub capabilities: CapabilityRegistry,
-    pub shell: ShellState,
-    launch_mode: LaunchMode,
-}
-
-impl Default for StruktApp {
-    fn default() -> Self {
-        Self::new(LaunchMode::Interactive)
-    }
-}
-
-impl StruktApp {
-    #[must_use]
-    pub fn new(launch_mode: LaunchMode) -> Self {
-        let mut capabilities = CapabilityRegistry::new();
-        for descriptor in [
-            CapabilityDescriptor::new(CapabilityId::FILES, true),
-            CapabilityDescriptor::new(CapabilityId::TERMINAL, true),
-            CapabilityDescriptor::new(CapabilityId::THEMES, true),
-            CapabilityDescriptor::new(CapabilityId::CONNECTIONS, true),
-            CapabilityDescriptor::new(CapabilityId::AI, true),
-        ] {
-            capabilities
-                .register(descriptor)
-                .expect("built-in capability identifiers must be unique");
-        }
-
-        Self {
-            capabilities,
-            shell: ShellState::default(),
-            launch_mode,
-        }
-    }
-}
-```
-
-Do not add timer or exit behavior yet.
+Do not add launch mode to `StruktApp` yet. Task 2 introduces the field and
+constructor when the lifecycle consumes them, which keeps this step free of
+dead-code warnings.
 
 - [ ] **Step 4: Run the focused tests and verify GREEN**
 
@@ -302,7 +263,7 @@ cargo test -p strukt-app smoke_timeout_requests_runtime_work
 ```
 
 Expected: compilation fails because `Message::SmokeTimeout` does not exist and
-`StruktApp::update` does not return `Task<Message>`.
+`StruktApp::new` and the runtime lifecycle do not exist.
 
 - [ ] **Step 3: Implement the minimal timer and exit lifecycle**
 
@@ -324,6 +285,47 @@ pub enum Message {
     ToggleTheme,
     Keyboard(keyboard::Event),
     SmokeTimeout,
+}
+```
+
+Add `launch_mode` to `StruktApp` and make `Default` delegate to `new`:
+
+```rust
+#[derive(Debug)]
+pub struct StruktApp {
+    pub capabilities: CapabilityRegistry,
+    pub shell: ShellState,
+    launch_mode: LaunchMode,
+}
+
+impl Default for StruktApp {
+    fn default() -> Self {
+        Self::new(LaunchMode::Interactive)
+    }
+}
+
+impl StruktApp {
+    #[must_use]
+    pub fn new(launch_mode: LaunchMode) -> Self {
+        let mut capabilities = CapabilityRegistry::new();
+        for descriptor in [
+            CapabilityDescriptor::new(CapabilityId::FILES, true),
+            CapabilityDescriptor::new(CapabilityId::TERMINAL, true),
+            CapabilityDescriptor::new(CapabilityId::THEMES, true),
+            CapabilityDescriptor::new(CapabilityId::CONNECTIONS, true),
+            CapabilityDescriptor::new(CapabilityId::AI, true),
+        ] {
+            capabilities
+                .register(descriptor)
+                .expect("built-in capability identifiers must be unique");
+        }
+
+        Self {
+            capabilities,
+            shell: ShellState::default(),
+            launch_mode,
+        }
+    }
 }
 ```
 
