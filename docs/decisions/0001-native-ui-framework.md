@@ -100,21 +100,27 @@ The complete evidence, screenshot, mitigation path, and measurement limitations 
 recorded in
 [`docs/evidence/m1-native-shell-validation.md`](../evidence/m1-native-shell-validation.md).
 
-Cross-platform CI and a native Windows launch remain required before this ADR can
-move to `Accepted`.
+An initial cross-platform matrix passed compilation and tests on macOS, Windows,
+and Linux. A deterministic Windows-native startup smoke gate is now pending before
+this ADR can move to `Accepted for the M1 foundation`.
 
 ## Validation gates
 
-Move this ADR to `Accepted` only after:
+Move this ADR to `Accepted for the M1 foundation` only after:
 
 1. the shell builds on macOS, Windows, and Linux CI;
-2. the macOS and Windows applications open a GPU-rendered window;
-3. keyboard focus and shortcuts work across the activity rail and panels;
+2. macOS manual validation and the Windows-native hosted smoke gate exercise the
+   Iced window, renderer, and event loop;
+3. platform-command shortcut tests pass natively on macOS and Windows;
 4. light and dark semantic tokens style every shell surface;
-5. an advanced custom widget can be introduced without moving domain state into the
-   application crate;
+5. domain state remains outside the Iced application crate;
 6. startup and idle resource measurements are recorded;
 7. IME and accessibility risks are documented with a concrete mitigation path.
+
+Human Windows visual QA remains mandatory for M9 public-alpha readiness. Before M2
+accepts an editor or terminal widget, the framework decision must be revisited
+against custom-widget, accessibility, focus-order, keyboard-navigation, and IME
+prototypes. M1 acceptance is not an unconditional permanent framework commitment.
 
 If Iced fails a gate, keep the domain crates and evaluate Floem or a focused
 `winit`/`wgpu` shell without changing workspace-domain APIs.

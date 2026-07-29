@@ -353,6 +353,8 @@ and use for bounded local and remote development workflows.
 ### Exit Criteria
 
 - Packaged smoke tests pass on supported macOS and Windows versions.
+- A human validates visual rendering and keyboard workflows on a supported Windows
+  desktop.
 - A new user can complete documented local and EC2-backed remote workflows.
 - Critical accessibility and keyboard-only workflows are verified.
 - Known limitations and experimental capabilities are documented.

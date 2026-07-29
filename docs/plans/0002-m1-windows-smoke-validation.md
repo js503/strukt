@@ -1,5 +1,7 @@
 # M1 Windows Native Smoke Validation Implementation Plan
 
+- Status: In progress
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use

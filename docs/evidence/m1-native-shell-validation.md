@@ -20,15 +20,25 @@ cargo check -p strukt-app --target x86_64-pc-windows-msvc
 cargo check -p strukt-app --target x86_64-unknown-linux-gnu
 ```
 
-The workspace contains eleven passing tests:
+The workspace contains sixteen passing tests:
 
 - four capability-registry tests
 - two semantic-theme tests
 - three framework-independent shell-state tests
-- two native-application wiring tests
+- seven native-application launch, shortcut, lifecycle, and wiring tests
 
 Each behavioral suite was observed failing for the expected missing behavior before
 its implementation was added.
+
+The real macOS executable also passes the deterministic smoke path:
+
+```bash
+cargo run -p strukt-app -- --smoke-test
+```
+
+It opens the native Iced application, runs the event loop for three seconds, prints
+`strukt smoke test: native event loop started`, and exits with status zero. A normal
+interactive launch remains open beyond the smoke interval.
 
 ## macOS Window Verification
 
@@ -83,17 +93,29 @@ Iced remains isolated to `strukt-app`; all capability, theme, and shell state li
 in framework-independent crates. M2 must validate a custom terminal or editor
 widget against this boundary before ADR 0001 is considered permanent.
 
+## Windows Hosted Smoke Strategy
+
+M1 uses a deterministic Windows-native startup smoke mode because the project does
+not currently have a human-operated Windows environment. The hosted gate exercises
+the real Iced executable, native window and renderer initialization, event loop,
+clean runtime exit, and Windows-native platform-command shortcut tests.
+
+The Windows job requires both status zero and
+`strukt smoke test: native event loop started`; it fails after two minutes if the
+process hangs.
+
+This is native startup evidence, not visual QA. Human Windows visual,
+accessibility, IME, packaging, and installation validation remain mandatory before
+M9 public-alpha readiness can be marked complete.
+
 ## Remaining Acceptance Evidence
 
-- macOS, Windows, and Linux hosted CI results
-- native Windows window launch and shortcut inspection
-- follow-up accessibility and IME prototypes described above
+- final macOS, Windows, and Linux hosted CI results with the Windows smoke gate
+- follow-up accessibility, IME, and custom-widget prototypes described above
 
 The Windows MSVC and Linux GNU cross-target checks pass from the macOS development
-machine. They provide compile evidence, but do not replace native execution or the
-hosted CI matrix.
-
-Hosted CI could not be triggered during this validation because the local
-repository has no Git remote configured.
+machine. An earlier hosted matrix also passed compilation and tests on macOS,
+Windows, and Linux. The new final matrix must additionally pass the native Windows
+smoke launch.
 
 ADR 0001 remains proposed until its stated validation gates have evidence.
