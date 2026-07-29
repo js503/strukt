@@ -31,3 +31,18 @@ jobs:
         run: cargo test --workspace
       - name: Build native application
         run: cargo build -p strukt-app
+      - name: Smoke launch native Windows application
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 2
+        run: |
+          $output = & cargo run -p strukt-app -- --smoke-test 2>&1
+          $output | Write-Output
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "strukt smoke test exited with code $LASTEXITCODE"
+          }
+
+          if (($output -join "`n") -notmatch "strukt smoke test: native event loop started") {
+            throw "strukt smoke test did not emit its success marker"
+          }
