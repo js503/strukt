@@ -1,11 +1,11 @@
 # M1 Windows Native Smoke Validation
 
-- Status: Proposed
+- Status: Approved
 - Date: 2026-07-28
 - Parent spec:
   [`0001-workspace-shell-and-remote-development.md`](0001-workspace-shell-and-remote-development.md)
 - Implementation plan:
-  [`../plans/0001-native-shell-foundation.md`](../plans/0001-native-shell-foundation.md)
+  [`../plans/0002-m1-windows-smoke-validation.md`](../plans/0002-m1-windows-smoke-validation.md)
 - Tracking issue: [#1](https://github.com/js503/strukt/issues/1)
 - Pull request: [#2](https://github.com/js503/strukt/pull/2)
 
