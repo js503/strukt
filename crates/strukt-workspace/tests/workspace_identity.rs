@@ -61,6 +61,60 @@ fn workspace_id_rejects_malformed_representations() {
     assert!(serde_json::from_str::<WorkspaceId>(&format!(r#""{}""#, "g".repeat(64))).is_err());
 }
 
+#[test]
+fn retained_capability_rejects_a_replaced_root_path() {
+    let parent = tempdir().unwrap();
+    let path = parent.path().join("workspace");
+    let original = parent.path().join("original");
+    std::fs::create_dir(&path).unwrap();
+    let root = WorkspaceRoot::open(&path).unwrap();
+
+    std::fs::rename(&path, &original).unwrap();
+    std::fs::create_dir(&path).unwrap();
+
+    assert!(root.validate_location().is_err());
+    assert!(root.try_clone_capability().is_ok());
+}
+
+#[cfg(windows)]
+#[test]
+fn retained_capability_rejects_a_root_path_replaced_by_a_directory_symlink() {
+    use std::os::windows::fs::symlink_dir;
+
+    let parent = tempdir().unwrap();
+    let path = parent.path().join("workspace");
+    let moved = parent.path().join("moved");
+    std::fs::create_dir(&path).unwrap();
+    let root = WorkspaceRoot::open(&path).unwrap();
+
+    std::fs::rename(&path, &moved).unwrap();
+    if let Err(error) = symlink_dir(&moved, &path) {
+        if error.raw_os_error() == Some(1314) {
+            return;
+        }
+        panic!("failed to create Windows directory symlink: {error}");
+    }
+
+    assert!(root.validate_location().is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn retained_capability_rejects_a_root_path_replaced_by_a_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let parent = tempdir().unwrap();
+    let path = parent.path().join("workspace");
+    let moved = parent.path().join("moved");
+    std::fs::create_dir(&path).unwrap();
+    let root = WorkspaceRoot::open(&path).unwrap();
+
+    std::fs::rename(&path, &moved).unwrap();
+    symlink(&moved, &path).unwrap();
+
+    assert!(root.validate_location().is_err());
+}
+
 #[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn non_utf8_workspace_paths_are_explicitly_rejected() {

@@ -5,12 +5,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use cap_fs_ext::{
     FollowSymlinks, MetadataExt as IdentityMetadataExt, OpenOptionsFollowExt, OpenOptionsSyncExt,
 };
-use cap_std::ambient_authority;
 #[cfg(windows)]
 use cap_std::fs::MetadataExt as WindowsMetadataExt;
 #[cfg(unix)]
 use cap_std::fs::PermissionsExt;
 use cap_std::fs::{Dir, File, Metadata, OpenOptions, Permissions};
+#[cfg(unix)]
+use rustix::fs::{RenameFlags, renameat_with};
+use strukt_workspace::WorkspaceRoot;
 use thiserror::Error;
 
 #[cfg(windows)]
@@ -31,27 +33,29 @@ pub enum FileOperation {
     DeletePermanently(PathBuf),
 }
 
-/// Applies one file operation beneath an open local workspace capability.
+/// Applies one file operation beneath a retained local workspace capability.
 ///
 /// Paths used for filesystem mutations are resolved relative to the capability
-/// rather than through ambient process authority. The operating-system Trash
-/// API only accepts ambient paths, so [`FileOperation::MoveToTrash`] validates
-/// the target's parent through the capability immediately before its ambient
-/// handoff, but remains best-effort under adversarial concurrent parent
-/// replacement.
+/// retained when [`WorkspaceRoot`] was opened. The canonical display path is
+/// checked before execution, and a renamed, replaced, symlinked, or reparse
+/// workspace root is rejected.
 ///
 /// # Errors
 ///
 /// Returns [`OperationError::OutsideRoot`] when a path lexically escapes,
 /// [`OperationError::SymlinkCopy`] when a duplicate encounters a symbolic
-/// link, and the corresponding IO or trash error when the requested operation
-/// fails.
+/// link, [`OperationError::TrashUnavailable`] when the platform cannot trash
+/// through the retained capability, and the corresponding IO error when the
+/// requested operation fails.
 pub fn apply_operation(
-    root: impl AsRef<Path>,
+    root: &WorkspaceRoot,
     operation: FileOperation,
 ) -> Result<(), OperationError> {
-    let root_path = root.as_ref();
-    let root = Dir::open_ambient_dir(root_path, ambient_authority()).map_err(OperationError::Io)?;
+    root.validate_location()
+        .map_err(|_| OperationError::WorkspaceChanged)?;
+    let root = root
+        .try_clone_capability()
+        .map_err(|_| OperationError::WorkspaceChanged)?;
 
     match operation {
         FileOperation::CreateFile(path) => {
@@ -66,24 +70,16 @@ pub fn apply_operation(
         FileOperation::Rename { from, to } | FileOperation::Move { from, to } => {
             let source = scoped(&from)?;
             let destination = scoped(&to)?;
-            ensure_vacant(&root, &destination)?;
-
-            // Neither `std` nor cap-std offers a portable atomic no-replace
-            // rename. This capability-scoped preflight minimizes the
-            // publication race for normal local-workspace use.
-            root.rename(source, &root, destination)
-                .map_err(OperationError::Io)?;
+            rename_noreplace(&root, &source, &destination)?;
         }
         FileOperation::Duplicate { from, to } => {
             let source = scoped(&from)?;
             let destination = scoped(&to)?;
-            ensure_vacant(&root, &destination)?;
             duplicate(&root, &source, &destination)?;
         }
         FileOperation::MoveToTrash(path) => {
             let path = scoped(&path)?;
-            validate_parent(&root, &path)?;
-            trash::delete(root_path.join(path)).map_err(OperationError::Trash)?;
+            trash_confined(&root, &path)?;
         }
         FileOperation::DeletePermanently(path) => {
             let path = scoped(&path)?;
@@ -114,27 +110,66 @@ fn scoped(relative: &Path) -> Result<PathBuf, OperationError> {
     Ok(normalized)
 }
 
-fn validate_parent(root: &Dir, path: &Path) -> Result<(), OperationError> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| OperationError::OutsideRoot(path.to_path_buf()))?;
-    if parent.as_os_str().is_empty() {
-        root.dir_metadata().map_err(OperationError::Io)?;
-    } else {
-        root.open_dir(parent).map_err(OperationError::Io)?;
-    }
-    Ok(())
+fn rename_noreplace(root: &Dir, source: &Path, destination: &Path) -> Result<(), OperationError> {
+    rename_noreplace_with_hook(root, source, destination, || Ok(()))
 }
 
-fn ensure_vacant(root: &Dir, path: &Path) -> Result<(), OperationError> {
-    match root.symlink_metadata(path) {
-        Ok(_) => Err(OperationError::Io(io::Error::new(
-            ErrorKind::AlreadyExists,
-            format!("destination already exists: {}", path.display()),
-        ))),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(OperationError::Io(error)),
-    }
+fn rename_noreplace_with_hook(
+    root: &Dir,
+    source: &Path,
+    destination: &Path,
+    before_publication: impl FnOnce() -> Result<(), OperationError>,
+) -> Result<(), OperationError> {
+    let (source_parent, source_name) = destination_parts(source)?;
+    let (destination_parent, destination_name) = destination_parts(destination)?;
+    let source_parent = open_destination_parent(root, source_parent)?;
+    let destination_parent = open_destination_parent(root, destination_parent)?;
+    before_publication()?;
+    atomic_rename_noreplace(
+        &source_parent,
+        Path::new(source_name),
+        &destination_parent,
+        Path::new(destination_name),
+    )
+}
+
+#[cfg(unix)]
+fn atomic_rename_noreplace(
+    source_parent: &Dir,
+    source_name: &Path,
+    destination_parent: &Dir,
+    destination_name: &Path,
+) -> Result<(), OperationError> {
+    renameat_with(
+        source_parent,
+        source_name,
+        destination_parent,
+        destination_name,
+        RenameFlags::NOREPLACE,
+    )
+    .map_err(|error| OperationError::Io(error.into()))
+}
+
+#[cfg(windows)]
+fn atomic_rename_noreplace(
+    source_parent: &Dir,
+    source_name: &Path,
+    destination_parent: &Dir,
+    destination_name: &Path,
+) -> Result<(), OperationError> {
+    // MoveFileExW without MOVEFILE_REPLACE_EXISTING is an atomic no-replace
+    // publication on Windows. cap-std performs this operation relative to the
+    // two already-open parent capabilities.
+    source_parent
+        .rename(source_name, destination_parent, destination_name)
+        .map_err(OperationError::Io)
+}
+
+fn trash_confined(_root: &Dir, path: &Path) -> Result<(), OperationError> {
+    Err(OperationError::TrashUnavailable {
+        path: path.to_path_buf(),
+        reason: "the platform Trash API cannot consume a retained directory capability",
+    })
 }
 
 fn delete_permanently(root: &Dir, path: &Path) -> Result<(), OperationError> {
@@ -184,23 +219,12 @@ fn duplicate_with_hook(
         return Err(cleanup_failed_staging(staging, error));
     }
 
-    if let Err(error) = ensure_vacant(&parent, Path::new(destination_name)) {
-        return Err(cleanup_failed_staging(staging, error));
-    }
-
-    // Neither `std` nor cap-std offers a portable atomic no-replace rename.
-    // Publishing only after a capability-scoped vacancy check minimizes this
-    // accepted race while keeping the final destination untouched on copy
-    // failures.
-    if let Err(error) = staging
-        .rename(STAGING_PAYLOAD, &parent, destination_name)
-        .map_err(|error| {
-            OperationError::Io(io::Error::new(
-                error.kind(),
-                format!("staging publication failed: {error}"),
-            ))
-        })
-    {
+    if let Err(error) = atomic_rename_noreplace(
+        &staging,
+        Path::new(STAGING_PAYLOAD),
+        &parent,
+        Path::new(destination_name),
+    ) {
         return Err(cleanup_failed_staging(staging, error));
     }
 
@@ -543,16 +567,19 @@ pub enum OperationError {
     OutsideRoot(PathBuf),
     #[error("duplicating symbolic links is not supported: {0}")]
     SymlinkCopy(PathBuf),
+    #[error("workspace root changed after it was opened")]
+    WorkspaceChanged,
     #[error("file operation failed: {0}")]
     Io(#[source] io::Error),
-    #[error("trash operation failed: {0}")]
-    Trash(#[source] trash::Error),
+    #[error("cannot safely move {path} to Trash: {reason}")]
+    TrashUnavailable { path: PathBuf, reason: &'static str },
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
 
+    use strukt_workspace::WorkspaceRoot;
     use tempfile::tempdir;
 
     use super::*;
@@ -562,7 +589,8 @@ mod tests {
         let workspace = tempdir().unwrap();
         fs::create_dir(workspace.path().join("source")).unwrap();
         fs::write(workspace.path().join("source/child.txt"), "child").unwrap();
-        let root = Dir::open_ambient_dir(workspace.path(), ambient_authority()).unwrap();
+        let workspace_root = WorkspaceRoot::open(workspace.path()).unwrap();
+        let root = workspace_root.try_clone_capability().unwrap();
         let mut copied_children = 0;
 
         let result =
@@ -579,6 +607,61 @@ mod tests {
         duplicate(&root, Path::new("source"), Path::new("copy")).unwrap();
         assert_eq!(root.read_to_string("copy/child.txt").unwrap(), "child");
         assert_no_staging_entries(&root);
+    }
+
+    #[test]
+    fn destination_created_during_duplicate_is_never_overwritten() {
+        let workspace = tempdir().unwrap();
+        fs::write(workspace.path().join("source.txt"), "source").unwrap();
+        let workspace_root = WorkspaceRoot::open(workspace.path()).unwrap();
+        let root = workspace_root.try_clone_capability().unwrap();
+        let mut published_racer = false;
+
+        let result = duplicate_with_hook(
+            &root,
+            Path::new("source.txt"),
+            Path::new("copy.txt"),
+            &mut || {
+                root.write("copy.txt", "racer")
+                    .map_err(OperationError::Io)?;
+                published_racer = true;
+                Ok(())
+            },
+        );
+
+        assert!(published_racer);
+        assert!(matches!(
+            result,
+            Err(OperationError::Io(ref error)) if error.kind() == ErrorKind::AlreadyExists
+        ));
+        assert_eq!(root.read_to_string("copy.txt").unwrap(), "racer");
+        assert_eq!(root.read_to_string("source.txt").unwrap(), "source");
+        assert_no_staging_entries(&root);
+    }
+
+    #[test]
+    fn destination_created_at_rename_publication_is_never_overwritten() {
+        let workspace = tempdir().unwrap();
+        fs::write(workspace.path().join("source.txt"), "source").unwrap();
+        let workspace_root = WorkspaceRoot::open(workspace.path()).unwrap();
+        let root = workspace_root.try_clone_capability().unwrap();
+
+        let result = rename_noreplace_with_hook(
+            &root,
+            Path::new("source.txt"),
+            Path::new("destination.txt"),
+            || {
+                root.write("destination.txt", "racer")
+                    .map_err(OperationError::Io)
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(OperationError::Io(ref error)) if error.kind() == ErrorKind::AlreadyExists
+        ));
+        assert_eq!(root.read_to_string("source.txt").unwrap(), "source");
+        assert_eq!(root.read_to_string("destination.txt").unwrap(), "racer");
     }
 
     fn assert_no_staging_entries(root: &Dir) {

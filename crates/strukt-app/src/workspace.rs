@@ -16,7 +16,7 @@ pub(crate) fn open_workspace_with_store(
 ) -> Result<OpenedWorkspace, String> {
     let root = WorkspaceRoot::open(path).map_err(|error| error.to_string())?;
     let state = store
-        .load(root.id())
+        .load_for_root(&root)
         .map_err(|error| error.to_string())?
         .map_or_else(
             || WorkspaceState::new(root.clone()),

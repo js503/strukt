@@ -1200,6 +1200,14 @@ impl StruktApp {
         workspace_root: PathBuf,
         query: String,
     ) -> Task<Message> {
+        let Some(task_root) = self
+            .workspace
+            .as_ref()
+            .filter(|workspace| workspace.root.path() == workspace_root)
+            .map(|workspace| workspace.root.clone())
+        else {
+            return Task::none();
+        };
         let options = SearchOptions {
             max_results: 500,
             max_file_bytes: 2 * 1024 * 1024,
@@ -1210,9 +1218,8 @@ impl StruktApp {
         };
         Task::perform(
             async move {
-                let task_root = workspace_root.clone();
                 let result = tokio::task::spawn_blocking(move || {
-                    search_content(task_root, &query, options).map_err(|error| error.to_string())
+                    search_content(&task_root, &query, options).map_err(|error| error.to_string())
                 })
                 .await
                 .map_err(|error| error.to_string())
@@ -1274,6 +1281,7 @@ impl StruktApp {
         };
 
         let workspace_root = workspace.root.path().to_path_buf();
+        let operation_root = workspace.root.clone();
         self.operation_generation = self.operation_generation.wrapping_add(1);
         let generation = self.operation_generation;
         self.operation_in_flight = Some((generation, workspace_root.clone()));
@@ -1282,9 +1290,8 @@ impl StruktApp {
 
         Task::perform(
             async move {
-                let operation_root = workspace_root.clone();
                 let result = match tokio::task::spawn_blocking(move || {
-                    apply_operation(operation_root, operation)
+                    apply_operation(&operation_root, operation)
                 })
                 .await
                 {
@@ -1383,7 +1390,7 @@ pub(crate) fn run_workspace_files_smoke(root: PathBuf) -> Result<(), String> {
         .save(&opened.state)
         .map_err(|error| error.to_string())?;
     let snapshot = store
-        .load(opened.state.root.id())
+        .load_for_root(&opened.state.root)
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "persisted workspace snapshot could not be reloaded".to_owned())?;
     if snapshot.state != opened.state {

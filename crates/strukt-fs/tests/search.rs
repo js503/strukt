@@ -7,8 +7,21 @@ use std::sync::mpsc;
 #[cfg(unix)]
 use std::time::Duration;
 
-use strukt_fs::{DiscoveryOptions, SearchOptions, discover, quick_open_candidates, search_content};
+use strukt_fs::{
+    DiscoveryOptions, SearchError, SearchOptions, discover, quick_open_candidates,
+    search_content as search_with_root,
+};
+use strukt_workspace::WorkspaceRoot;
 use tempfile::tempdir;
+
+fn search_content(
+    root: impl AsRef<Path>,
+    needle: &str,
+    options: SearchOptions,
+) -> Result<strukt_fs::SearchResult, SearchError> {
+    let workspace = WorkspaceRoot::open(root).unwrap();
+    search_with_root(&workspace, needle, options)
+}
 
 #[test]
 fn quick_open_candidates_follow_default_discovery_visibility() {
@@ -166,4 +179,21 @@ fn content_search_skips_a_fifo_without_blocking() {
         .unwrap();
     assert_eq!(result.matches.len(), 1);
     assert!(result.truncated);
+}
+
+#[cfg(unix)]
+#[test]
+fn content_search_rejects_a_replaced_workspace_root() {
+    let parent = tempdir().unwrap();
+    let root_path = parent.path().join("workspace");
+    let moved_path = parent.path().join("moved");
+    fs::create_dir(&root_path).unwrap();
+    fs::write(root_path.join("safe.txt"), "safe").unwrap();
+    let root = WorkspaceRoot::open(&root_path).unwrap();
+
+    fs::rename(&root_path, &moved_path).unwrap();
+    fs::create_dir(&root_path).unwrap();
+    fs::write(root_path.join("secret.txt"), "needle").unwrap();
+
+    assert!(search_with_root(&root, "needle", SearchOptions::default()).is_err());
 }

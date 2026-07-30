@@ -1,10 +1,10 @@
-use std::fs::{self, OpenOptions};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
+use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt, OpenOptionsSyncExt};
+use cap_std::fs::{Dir, File, OpenOptions};
 use serde::{Deserialize, Serialize};
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
+use strukt_workspace::WorkspaceRoot;
 use thiserror::Error;
 
 use crate::{DiscoveryError, DiscoveryOptions, FileEntry, FileKind, discover_report};
@@ -12,16 +12,6 @@ use crate::{DiscoveryError, DiscoveryOptions, FileEntry, FileKind, discover_repo
 const MAX_TOTAL_SEARCH_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_PREVIEW_BYTES: usize = 512;
 const ELLIPSIS: &str = "…";
-
-// Linux defines O_NONBLOCK as octal 00004000 in asm-generic/fcntl.h.
-#[cfg(target_os = "linux")]
-const O_NONBLOCK: i32 = 0o4000;
-// macOS defines O_NONBLOCK as 0x0004 in sys/fcntl.h.
-#[cfg(target_os = "macos")]
-const O_NONBLOCK: i32 = 0x4;
-
-#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
-compile_error!("workspace search supports nonblocking Unix opens only on Linux and macOS");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SearchOptions {
@@ -110,7 +100,7 @@ fn subsequence_score(candidate: &str, query: &str) -> Option<usize> {
 /// and invalid UTF-8 files produce an incomplete result without discarding matches
 /// already found. A NUL byte is the deliberate binary-file heuristic.
 pub fn search_content(
-    root: impl AsRef<Path>,
+    root: &WorkspaceRoot,
     needle: &str,
     options: SearchOptions,
 ) -> Result<SearchResult, SearchError> {
@@ -118,13 +108,49 @@ pub fn search_content(
 }
 
 fn search_content_with_budget(
-    root: impl AsRef<Path>,
+    root: &WorkspaceRoot,
     needle: &str,
     options: SearchOptions,
     total_budget: u64,
 ) -> Result<SearchResult, SearchError> {
-    let root = root.as_ref();
-    let report = discover_report(root, options.discovery).map_err(SearchError::Discovery)?;
+    search_content_inner(root, needle, options, total_budget, || {})
+}
+
+#[cfg(test)]
+fn search_content_with_hook(
+    root: &WorkspaceRoot,
+    needle: &str,
+    options: SearchOptions,
+    after_discovery: impl FnOnce(),
+) -> Result<SearchResult, SearchError> {
+    search_content_inner(
+        root,
+        needle,
+        options,
+        MAX_TOTAL_SEARCH_BYTES,
+        after_discovery,
+    )
+}
+
+fn search_content_inner(
+    workspace: &WorkspaceRoot,
+    needle: &str,
+    options: SearchOptions,
+    total_budget: u64,
+    after_discovery: impl FnOnce(),
+) -> Result<SearchResult, SearchError> {
+    workspace
+        .validate_location()
+        .map_err(|_| SearchError::WorkspaceChanged)?;
+    let report =
+        discover_report(workspace.path(), options.discovery).map_err(SearchError::Discovery)?;
+    after_discovery();
+    workspace
+        .validate_location()
+        .map_err(|_| SearchError::WorkspaceChanged)?;
+    let root = workspace
+        .try_clone_capability()
+        .map_err(|_| SearchError::WorkspaceChanged)?;
     let mut incomplete = report.truncated || !report.warnings.is_empty();
     let mut remaining_budget = total_budget.min(MAX_TOTAL_SEARCH_BYTES);
     let mut matches = Vec::new();
@@ -140,8 +166,7 @@ fn search_content_with_budget(
         }
 
         let effective_limit = options.max_file_bytes.min(remaining_budget);
-        let path = root.join(&entry.relative_path);
-        let Some(metadata) = classify_entry_io(fs::symlink_metadata(&path))? else {
+        let Some(metadata) = classify_entry_io(root.symlink_metadata(&entry.relative_path))? else {
             incomplete = true;
             continue;
         };
@@ -150,7 +175,7 @@ fn search_content_with_budget(
             continue;
         }
 
-        let Some(file) = classify_entry_io(open_for_search(&path))? else {
+        let Some(file) = classify_entry_io(open_for_search(&root, &entry.relative_path))? else {
             incomplete = true;
             continue;
         };
@@ -206,12 +231,10 @@ fn search_content_with_budget(
     })
 }
 
-fn open_for_search(path: &Path) -> std::io::Result<std::fs::File> {
+fn open_for_search(root: &Dir, path: &Path) -> std::io::Result<File> {
     let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    options.custom_flags(O_NONBLOCK);
-    options.open(path)
+    options.read(true).nonblock(true).follow(FollowSymlinks::No);
+    root.open_with(path, &options)
 }
 
 fn classify_entry_io<T>(result: io::Result<T>) -> Result<Option<T>, SearchError> {
@@ -236,6 +259,8 @@ fn bounded_preview(line: &str) -> String {
 
 #[derive(Debug, Error)]
 pub enum SearchError {
+    #[error("workspace root changed after it was opened")]
+    WorkspaceChanged,
     #[error("file discovery failed: {0}")]
     Discovery(#[source] DiscoveryError),
     #[error("content search IO failed: {0}")]
@@ -250,7 +275,11 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::{SearchError, SearchOptions, classify_entry_io, search_content_with_budget};
+    use super::{
+        SearchError, SearchOptions, classify_entry_io, search_content_with_budget,
+        search_content_with_hook,
+    };
+    use strukt_workspace::WorkspaceRoot;
 
     #[test]
     fn not_found_entry_io_is_recoverable_churn() {
@@ -284,9 +313,10 @@ mod tests {
         let root = tempdir().unwrap();
         fs::write(root.path().join("a.txt"), "needle").unwrap();
         fs::write(root.path().join("b.txt"), "needle").unwrap();
+        let workspace = WorkspaceRoot::open(root.path()).unwrap();
 
         let result =
-            search_content_with_budget(root.path(), "needle", SearchOptions::default(), 6).unwrap();
+            search_content_with_budget(&workspace, "needle", SearchOptions::default(), 6).unwrap();
 
         assert_eq!(result.matches.len(), 1);
         assert_eq!(result.matches[0].relative_path, Path::new("a.txt"));
@@ -297,11 +327,39 @@ mod tests {
     fn exhausting_the_aggregate_budget_marks_the_result_incomplete() {
         let root = tempdir().unwrap();
         fs::write(root.path().join("only.txt"), "needle").unwrap();
+        let workspace = WorkspaceRoot::open(root.path()).unwrap();
 
         let result =
-            search_content_with_budget(root.path(), "needle", SearchOptions::default(), 6).unwrap();
+            search_content_with_budget(&workspace, "needle", SearchOptions::default(), 6).unwrap();
 
         assert_eq!(result.matches.len(), 1);
         assert!(result.truncated);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_swap_after_discovery_cannot_redirect_a_search_read() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        fs::create_dir(workspace.path().join("nested")).unwrap();
+        fs::write(workspace.path().join("nested/file.txt"), "safe").unwrap();
+        fs::write(outside.path().join("file.txt"), "needle secret").unwrap();
+        let root = WorkspaceRoot::open(workspace.path()).unwrap();
+
+        let result = search_content_with_hook(&root, "needle", SearchOptions::default(), || {
+            fs::rename(
+                workspace.path().join("nested"),
+                workspace.path().join("moved"),
+            )
+            .unwrap();
+            symlink(outside.path(), workspace.path().join("nested")).unwrap();
+        });
+
+        assert!(matches!(
+            result,
+            Err(SearchError::Io(ref error)) if error.kind() == ErrorKind::PermissionDenied
+        ));
     }
 }

@@ -2,7 +2,8 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
 
-use strukt_fs::{FileOperation, OperationError, apply_operation};
+use strukt_fs::{FileOperation, OperationError, apply_operation as apply_with_root};
+use strukt_workspace::WorkspaceRoot;
 use tempfile::tempdir;
 
 fn assert_already_exists(result: Result<(), OperationError>) {
@@ -14,6 +15,11 @@ fn assert_already_exists(result: Result<(), OperationError>) {
 
 fn assert_rejected(result: &Result<(), OperationError>) {
     assert!(result.is_err(), "operation unexpectedly succeeded");
+}
+
+fn apply_operation(path: impl AsRef<Path>, operation: FileOperation) -> Result<(), OperationError> {
+    let root = WorkspaceRoot::open(path).unwrap();
+    apply_with_root(&root, operation)
 }
 
 fn assert_no_duplicate_staging_entries(root: &Path) {
@@ -28,6 +34,43 @@ fn assert_no_duplicate_staging_entries(root: &Path) {
     assert!(
         staging_entries.is_empty(),
         "unexpected duplicate staging entries: {staging_entries:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn operation_rejects_root_replacement_without_mutating_either_directory() {
+    let parent = tempdir().unwrap();
+    let root_path = parent.path().join("workspace");
+    let original_path = parent.path().join("original");
+    fs::create_dir(&root_path).unwrap();
+    let root = WorkspaceRoot::open(&root_path).unwrap();
+
+    fs::rename(&root_path, &original_path).unwrap();
+    fs::create_dir(&root_path).unwrap();
+
+    let result = apply_with_root(&root, FileOperation::CreateFile("escaped.txt".into()));
+
+    assert!(matches!(result, Err(OperationError::WorkspaceChanged)));
+    assert!(!root_path.join("escaped.txt").exists());
+    assert!(!original_path.join("escaped.txt").exists());
+}
+
+#[test]
+fn trash_fails_closed_when_a_confined_os_adapter_is_unavailable() {
+    let root_dir = tempdir().unwrap();
+    fs::write(root_dir.path().join("preserved.txt"), "preserved").unwrap();
+    let root = WorkspaceRoot::open(root_dir.path()).unwrap();
+
+    let result = apply_with_root(&root, FileOperation::MoveToTrash("preserved.txt".into()));
+
+    assert!(matches!(
+        result,
+        Err(OperationError::TrashUnavailable { .. })
+    ));
+    assert_eq!(
+        fs::read_to_string(root_dir.path().join("preserved.txt")).unwrap(),
+        "preserved"
     );
 }
 
@@ -447,6 +490,43 @@ mod unix {
         assert_eq!(
             fs::read_to_string(root.path().join("source.txt")).unwrap(),
             "source"
+        );
+    }
+
+    #[test]
+    fn replaced_parent_cannot_redirect_permanent_delete_or_trash() {
+        let root_dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        fs::create_dir(root_dir.path().join("nested")).unwrap();
+        fs::write(root_dir.path().join("nested/local.txt"), "local").unwrap();
+        fs::write(outside.path().join("preserved.txt"), "preserved").unwrap();
+        let root = WorkspaceRoot::open(root_dir.path()).unwrap();
+
+        fs::rename(
+            root_dir.path().join("nested"),
+            root_dir.path().join("moved"),
+        )
+        .unwrap();
+        symlink(outside.path(), root_dir.path().join("nested")).unwrap();
+
+        assert_rejected(&apply_with_root(
+            &root,
+            FileOperation::DeletePermanently("nested/preserved.txt".into()),
+        ));
+        assert!(matches!(
+            apply_with_root(
+                &root,
+                FileOperation::MoveToTrash("nested/preserved.txt".into())
+            ),
+            Err(OperationError::TrashUnavailable { .. })
+        ));
+        assert_eq!(
+            fs::read_to_string(outside.path().join("preserved.txt")).unwrap(),
+            "preserved"
+        );
+        assert_eq!(
+            fs::read_to_string(root_dir.path().join("moved/local.txt")).unwrap(),
+            "local"
         );
     }
 }

@@ -87,6 +87,31 @@ impl WorkspaceStore {
         Ok(None)
     }
 
+    /// Loads a workspace snapshot, including the path-only storage key used by
+    /// earlier versions, and rehydrates it with the current retained
+    /// capability and volume-aware identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Io`] when a candidate cannot be read for a reason
+    /// other than not existing.
+    pub fn load_for_root(
+        &self,
+        root: &strukt_workspace::WorkspaceRoot,
+    ) -> Result<Option<WorkspaceSnapshot>, StoreError> {
+        if let Some(snapshot) = self.load(root.id())? {
+            return Ok(Some(snapshot));
+        }
+
+        let legacy_id = root.legacy_path_id();
+        for path in [self.current_path(legacy_id), self.backup_path(legacy_id)] {
+            if let Some(snapshot) = Self::read_valid(&path, root.id())? {
+                return Ok(Some(snapshot));
+            }
+        }
+        Ok(None)
+    }
+
     /// Loads recent workspace paths, falling back to the last valid record.
     ///
     /// Invalid JSON is recoverable and produces the backup or an empty list.
