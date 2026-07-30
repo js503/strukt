@@ -481,7 +481,9 @@ impl StruktApp {
         {
             self.selected_entry = None;
         }
-        if dialog_source(&self.explorer_dialog).is_some_and(|path| !entry_exists(path)) {
+        if self.operation_in_flight.is_none()
+            && dialog_source(&self.explorer_dialog).is_some_and(|path| !entry_exists(path))
+        {
             self.explorer_dialog = ExplorerDialog::None;
             self.operation_error = None;
         }

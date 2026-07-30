@@ -291,6 +291,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn refresh_cannot_clear_the_dialog_owned_by_an_in_flight_operation() {
+        let project = tempdir().unwrap();
+        let root = project.path().canonicalize().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        app.files = vec![file_entry("source.txt")];
+        app.selected_entry = Some("source.txt".into());
+        let _ = app.update(Message::ToggleHiddenFiles);
+        let _ = app.update(Message::BeginRename);
+        let original_dialog = app.explorer_dialog.clone();
+        let _ = app.update(Message::ExplorerDialogInput("renamed.txt".to_owned()));
+        let original_dialog = match original_dialog {
+            ExplorerDialog::Rename { from, .. } => ExplorerDialog::Rename {
+                from,
+                to: "renamed.txt".to_owned(),
+            },
+            _ => panic!("rename dialog must be open"),
+        };
+        let _ = app.update(Message::SubmitExplorerDialog);
+
+        let _ = app.update(Message::FilesRefreshed {
+            generation: 1,
+            result: Ok(discovery(&["remaining.txt"])),
+        });
+        assert_eq!(app.selected_entry, None);
+        assert_eq!(app.explorer_dialog, original_dialog);
+
+        let _ = app.update(Message::FileOperationCompleted {
+            generation: 1,
+            workspace_root: root,
+            result: Err("rename failed".to_owned()),
+        });
+
+        assert_eq!(app.explorer_dialog, original_dialog);
+        assert_eq!(app.workspace_error.as_deref(), Some("rename failed"));
+    }
+
     fn discovery(paths: &[&str]) -> DiscoveryReport {
         DiscoveryReport {
             entries: paths.iter().map(|path| file_entry(path)).collect(),
