@@ -1,5 +1,11 @@
 use std::fs;
 use std::path::Path;
+#[cfg(unix)]
+use std::process::Command;
+#[cfg(unix)]
+use std::sync::mpsc;
+#[cfg(unix)]
+use std::time::Duration;
 
 use strukt_fs::{DiscoveryOptions, SearchOptions, discover, quick_open_candidates, search_content};
 use tempfile::tempdir;
@@ -77,7 +83,7 @@ fn content_search_skips_files_larger_than_the_read_limit() {
 
     assert_eq!(result.matches.len(), 1);
     assert_eq!(result.matches[0].relative_path, Path::new("small.txt"));
-    assert!(!result.truncated);
+    assert!(result.truncated);
 }
 
 #[test]
@@ -91,4 +97,73 @@ fn content_search_skips_binary_and_invalid_utf8_without_failing() {
 
     assert_eq!(result.matches.len(), 1);
     assert_eq!(result.matches[0].relative_path, Path::new("text.txt"));
+    assert!(result.truncated);
+}
+
+#[test]
+fn content_search_propagates_discovery_truncation() {
+    let root = tempdir().unwrap();
+    fs::write(root.path().join("a.txt"), "no match").unwrap();
+    fs::write(root.path().join("z.txt"), "needle").unwrap();
+
+    let result = search_content(
+        root.path(),
+        "needle",
+        SearchOptions {
+            discovery: DiscoveryOptions {
+                max_entries: 1,
+                ..DiscoveryOptions::default()
+            },
+            ..SearchOptions::default()
+        },
+    )
+    .unwrap();
+
+    assert!(result.matches.is_empty());
+    assert!(result.truncated);
+}
+
+#[test]
+fn content_search_caps_long_utf8_previews() {
+    let root = tempdir().unwrap();
+    fs::write(
+        root.path().join("long.txt"),
+        format!("needle {}\n", "é".repeat(1_000)),
+    )
+    .unwrap();
+
+    let result = search_content(root.path(), "needle", SearchOptions::default()).unwrap();
+    let preview = &result.matches[0].preview;
+
+    assert!(preview.len() <= 512);
+    assert!(preview.ends_with('…'));
+}
+
+#[cfg(unix)]
+#[test]
+fn content_search_skips_a_fifo_without_blocking() {
+    let root = tempdir().unwrap();
+    fs::write(root.path().join("a.txt"), "needle").unwrap();
+    let fifo = root.path().join("pipe");
+    assert!(
+        Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("run mkfifo")
+            .success()
+    );
+
+    let root_path = root.path().to_path_buf();
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result = search_content(root_path, "needle", SearchOptions::default());
+        sender.send(result).ok();
+    });
+
+    let result = receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("FIFO search must not block")
+        .unwrap();
+    assert_eq!(result.matches.len(), 1);
+    assert!(result.truncated);
 }

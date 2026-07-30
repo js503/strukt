@@ -1,11 +1,27 @@
-use std::fs::{self, File};
+use std::fs::{self, OpenOptions};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use thiserror::Error;
 
-use crate::{DiscoveryError, DiscoveryOptions, FileEntry, FileKind, discover};
+use crate::{DiscoveryError, DiscoveryOptions, FileEntry, FileKind, discover_report};
+
+const MAX_TOTAL_SEARCH_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_PREVIEW_BYTES: usize = 512;
+const ELLIPSIS: &str = "…";
+
+// Linux defines O_NONBLOCK as octal 00004000 in asm-generic/fcntl.h.
+#[cfg(target_os = "linux")]
+const O_NONBLOCK: i32 = 0o4000;
+// macOS defines O_NONBLOCK as 0x0004 in sys/fcntl.h.
+#[cfg(target_os = "macos")]
+const O_NONBLOCK: i32 = 0x4;
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+compile_error!("workspace search supports nonblocking Unix opens only on Linux and macOS");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SearchOptions {
@@ -89,41 +105,81 @@ fn subsequence_score(candidate: &str, query: &str) -> Option<usize> {
 ///
 /// # Errors
 ///
-/// Returns [`SearchError`] when discovery or file IO fails. Oversized, binary,
-/// and invalid UTF-8 files are skipped.
+/// Returns [`SearchError`] when discovery of the workspace root fails. Individual
+/// file failures, oversized files, binary files, and invalid UTF-8 files produce
+/// an incomplete result instead of discarding matches already found. A NUL byte
+/// is the deliberate binary-file heuristic.
 pub fn search_content(
     root: impl AsRef<Path>,
     needle: &str,
     options: SearchOptions,
 ) -> Result<SearchResult, SearchError> {
+    search_content_with_budget(root, needle, options, MAX_TOTAL_SEARCH_BYTES)
+}
+
+fn search_content_with_budget(
+    root: impl AsRef<Path>,
+    needle: &str,
+    options: SearchOptions,
+    total_budget: u64,
+) -> Result<SearchResult, SearchError> {
     let root = root.as_ref();
-    let entries = discover(root, options.discovery).map_err(SearchError::Discovery)?;
+    let report = discover_report(root, options.discovery).map_err(SearchError::Discovery)?;
+    let mut incomplete = report.truncated || !report.warnings.is_empty();
+    let mut remaining_budget = total_budget.min(MAX_TOTAL_SEARCH_BYTES);
     let mut matches = Vec::new();
+    let entries = report
+        .entries
+        .into_iter()
+        .filter(|entry| entry.kind == FileKind::File);
 
     for entry in entries {
-        if entry.kind != FileKind::File {
-            continue;
+        if remaining_budget == 0 {
+            incomplete = true;
+            break;
         }
 
+        let effective_limit = options.max_file_bytes.min(remaining_budget);
         let path = root.join(&entry.relative_path);
-        if fs::metadata(&path).map_err(SearchError::Io)?.len() > options.max_file_bytes {
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            incomplete = true;
+            continue;
+        };
+        if !metadata.file_type().is_file() || metadata.len() > effective_limit {
+            incomplete = true;
             continue;
         }
 
-        let file = File::open(&path).map_err(SearchError::Io)?;
-        let mut bytes = Vec::new();
-        file.take(options.max_file_bytes.saturating_add(1))
-            .read_to_end(&mut bytes)
-            .map_err(SearchError::Io)?;
-        let oversized = u64::try_from(bytes.len())
-            .map_or(true, |bytes_read| bytes_read > options.max_file_bytes);
-        if oversized {
+        let Ok(file) = open_for_search(&path) else {
+            incomplete = true;
+            continue;
+        };
+        let Ok(metadata) = file.metadata() else {
+            incomplete = true;
+            continue;
+        };
+        if !metadata.file_type().is_file() || metadata.len() > effective_limit {
+            incomplete = true;
             continue;
         }
+
+        let mut bytes = Vec::new();
+        let read_result = file
+            .take(effective_limit.saturating_add(1))
+            .read_to_end(&mut bytes);
+        let bytes_read = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        remaining_budget = remaining_budget.saturating_sub(bytes_read);
+        if read_result.is_err() || bytes_read > effective_limit {
+            incomplete = true;
+            continue;
+        }
+        // NUL detection is an intentionally simple binary-file heuristic.
         if bytes.contains(&0) {
+            incomplete = true;
             continue;
         }
         let Ok(content) = String::from_utf8(bytes) else {
+            incomplete = true;
             continue;
         };
 
@@ -138,7 +194,7 @@ pub fn search_content(
                 matches.push(SearchMatch {
                     relative_path: entry.relative_path.clone(),
                     line: index + 1,
-                    preview: line.trim().to_owned(),
+                    preview: bounded_preview(line.trim()),
                 });
             }
         }
@@ -146,8 +202,28 @@ pub fn search_content(
 
     Ok(SearchResult {
         matches,
-        truncated: false,
+        truncated: incomplete || remaining_budget == 0,
     })
+}
+
+fn open_for_search(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(O_NONBLOCK);
+    options.open(path)
+}
+
+fn bounded_preview(line: &str) -> String {
+    if line.len() <= MAX_PREVIEW_BYTES {
+        return line.to_owned();
+    }
+
+    let mut end = MAX_PREVIEW_BYTES - ELLIPSIS.len();
+    while !line.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{ELLIPSIS}", &line[..end])
 }
 
 #[derive(Debug, Error)]
@@ -156,4 +232,40 @@ pub enum SearchError {
     Discovery(#[source] DiscoveryError),
     #[error("content search IO failed: {0}")]
     Io(#[source] std::io::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::Path;
+
+    use tempfile::tempdir;
+
+    use super::{SearchOptions, search_content_with_budget};
+
+    #[test]
+    fn aggregate_budget_preserves_matches_and_marks_remaining_work_incomplete() {
+        let root = tempdir().unwrap();
+        fs::write(root.path().join("a.txt"), "needle").unwrap();
+        fs::write(root.path().join("b.txt"), "needle").unwrap();
+
+        let result =
+            search_content_with_budget(root.path(), "needle", SearchOptions::default(), 6).unwrap();
+
+        assert_eq!(result.matches.len(), 1);
+        assert_eq!(result.matches[0].relative_path, Path::new("a.txt"));
+        assert!(result.truncated);
+    }
+
+    #[test]
+    fn exhausting_the_aggregate_budget_marks_the_result_incomplete() {
+        let root = tempdir().unwrap();
+        fs::write(root.path().join("only.txt"), "needle").unwrap();
+
+        let result =
+            search_content_with_budget(root.path(), "needle", SearchOptions::default(), 6).unwrap();
+
+        assert_eq!(result.matches.len(), 1);
+        assert!(result.truncated);
+    }
 }
