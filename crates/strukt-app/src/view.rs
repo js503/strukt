@@ -36,7 +36,7 @@ pub fn view(app: &StruktApp) -> Element<'_, Message> {
     let body = row![
         activity_rail(tokens),
         explorer(app, tokens),
-        primary_canvas(tokens),
+        primary_canvas(app, tokens),
         context_panel(app, tokens),
     ]
     .height(Fill);
@@ -293,21 +293,118 @@ fn explorer_dialog(app: &StruktApp) -> Element<'_, Message> {
     }
 }
 
-fn primary_canvas(tokens: ThemeTokens) -> Element<'static, Message> {
-    container(
+fn primary_canvas(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> {
+    let content: Element<'_, Message> = if app.workspace.is_none() {
+        welcome_canvas(app).into()
+    } else if app.quick_open_visible {
+        quick_open_canvas(app).into()
+    } else if app.shell.active_activity == Activity::Search {
+        search_canvas(app).into()
+    } else {
         column![
             text("Workspace shell").size(22),
             text("The primary canvas adapts to files, terminals, logs, and tools."),
             Space::new().height(Fill),
             text("Open a file or choose an activity to begin."),
         ]
-        .spacing(10),
-    )
-    .padding(20)
-    .width(Fill)
-    .height(Fill)
-    .style(panel_style(tokens, tokens.canvas))
-    .into()
+        .spacing(10)
+        .into()
+    };
+
+    container(content)
+        .padding(20)
+        .width(Fill)
+        .height(Fill)
+        .style(panel_style(tokens, tokens.canvas))
+        .into()
+}
+
+fn welcome_canvas(app: &StruktApp) -> iced::widget::Column<'_, Message> {
+    let mut recent = column![].spacing(8);
+    for path in &app.recent_workspaces {
+        let actions_enabled = !app.folder_picker_in_flight();
+        let mut actions = row![
+            text(path.display().to_string()).width(Fill),
+            button("Retry").on_press_maybe(
+                actions_enabled.then(|| Message::RetryRecentWorkspace(path.clone()))
+            ),
+            button("Remove").on_press_maybe(
+                actions_enabled.then(|| Message::RemoveRecentWorkspace(path.clone()))
+            ),
+        ]
+        .spacing(6);
+        if !path.is_dir() {
+            actions = actions.push(button("Locate").on_press_maybe(
+                actions_enabled.then(|| Message::LocateRecentWorkspace(path.clone())),
+            ));
+        }
+        recent = recent.push(actions);
+    }
+    column![
+        text("Open a local workspace").size(22),
+        text("Folders stay local and strukt does not add repository metadata."),
+        button("Open Folder…")
+            .on_press_maybe((!app.folder_picker_in_flight()).then_some(Message::OpenFolder)),
+        text("Recent workspaces").size(16),
+        recent,
+    ]
+    .spacing(12)
+}
+
+fn quick_open_canvas(app: &StruktApp) -> iced::widget::Column<'_, Message> {
+    let mut results = column![].spacing(4);
+    for candidate in &app.quick_open_results {
+        results = results.push(
+            button(text(candidate.relative_path.display().to_string()))
+                .width(Fill)
+                .on_press(Message::QuickOpenSelected(candidate.relative_path.clone())),
+        );
+    }
+    column![
+        row![
+            text("Quick Open").size(20),
+            Space::new().width(Fill),
+            button("Close").on_press(Message::ToggleQuickOpen),
+        ],
+        text_input("Quick Open", &app.quick_open_query)
+            .on_input(Message::QuickOpenChanged)
+            .on_submit(Message::ToggleQuickOpen),
+        button(if app.quick_open_include_ignored {
+            "Exclude ignored files"
+        } else {
+            "Include ignored files"
+        })
+        .on_press(Message::ToggleQuickOpenIgnored),
+        scrollable(results).height(Fill),
+    ]
+    .spacing(10)
+}
+
+fn search_canvas(app: &StruktApp) -> iced::widget::Column<'_, Message> {
+    let mut results = column![].spacing(6);
+    for result in &app.search_results.matches {
+        results = results.push(text(format!(
+            "{}:{}  {}",
+            result.relative_path.display(),
+            result.line,
+            result.preview
+        )));
+    }
+    if app.search_results.truncated {
+        results = results.push(text("Results truncated"));
+    }
+    column![
+        text("Workspace Search").size(20),
+        text_input("Search files", &app.search_query).on_input(Message::SearchChanged),
+        button(if app.search_include_ignored {
+            "Use ignore files"
+        } else {
+            "Include ignored files"
+        })
+        .on_press(Message::ToggleSearchIgnored),
+        scrollable(results).height(Fill),
+    ]
+    .spacing(10)
 }
 
 fn context_panel(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Message> {

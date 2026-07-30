@@ -10,7 +10,7 @@ fn main() -> iced::Result {
     let launch_mode = LaunchMode::from_args(std::env::args().skip(1));
 
     iced::application(
-        move || StruktApp::new(launch_mode),
+        move || StruktApp::boot(launch_mode),
         StruktApp::update,
         view::view,
     )
@@ -478,6 +478,20 @@ mod tests {
     }
 
     #[test]
+    fn opening_without_an_application_data_store_still_creates_a_local_workspace() {
+        let project = tempdir().unwrap();
+
+        let opened =
+            crate::workspace::open_workspace_without_store(project.path().to_path_buf()).unwrap();
+
+        assert_eq!(
+            opened.state.root.path(),
+            project.path().canonicalize().unwrap()
+        );
+        assert!(!project.path().join(".strukt").exists());
+    }
+
+    #[test]
     fn workspace_opening_restores_explorer_state_from_the_injected_store() {
         let app_data = tempdir().unwrap();
         let project = tempdir().unwrap();
@@ -676,5 +690,221 @@ mod tests {
             app.workspace.as_ref().unwrap().root.path(),
             second.path().canonicalize().unwrap()
         );
+    }
+
+    #[test]
+    fn stale_watcher_event_cannot_mark_a_replaced_workspace_stale() {
+        let first = tempdir().unwrap();
+        let second = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&first))));
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&second))));
+
+        let task = app.update(Message::FileEvent {
+            workspace_root: first.path().canonicalize().unwrap(),
+            event: strukt_fs::FileEvent::Stale("old overflow".to_owned()),
+        });
+
+        assert_eq!(task.units(), 0);
+        assert!(!app.workspace.as_ref().unwrap().stale_filesystem);
+        assert_ne!(app.workspace_error.as_deref(), Some("old overflow"));
+    }
+
+    #[test]
+    fn current_stale_watcher_event_marks_state_and_requests_one_refresh() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&project))));
+        let root = project.path().canonicalize().unwrap();
+
+        let first = app.update(Message::FileEvent {
+            workspace_root: root.clone(),
+            event: strukt_fs::FileEvent::Stale("overflow".to_owned()),
+        });
+        let second = app.update(Message::FileEvent {
+            workspace_root: root,
+            event: strukt_fs::FileEvent::Changed(vec!["file.txt".into()]),
+        });
+
+        assert_eq!(first.units(), 1);
+        assert_eq!(second.units(), 0);
+        assert!(app.workspace.as_ref().unwrap().stale_filesystem);
+        assert_eq!(app.workspace_error.as_deref(), Some("overflow"));
+    }
+
+    #[test]
+    fn stale_search_completion_cannot_replace_newer_results() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        let root = project.path().canonicalize().unwrap();
+        let _ = app.update(Message::SearchChanged("old".to_owned()));
+        let _ = app.update(Message::SearchChanged("new".to_owned()));
+
+        let _ = app.update(Message::SearchCompleted {
+            generation: 1,
+            workspace_root: root,
+            result: Ok(strukt_fs::SearchResult {
+                matches: vec![strukt_fs::SearchMatch {
+                    relative_path: "old.txt".into(),
+                    line: 1,
+                    preview: "old".to_owned(),
+                }],
+                truncated: false,
+            }),
+        });
+
+        assert!(app.search_results.matches.is_empty());
+    }
+
+    #[test]
+    fn quick_open_ignored_results_are_guarded_by_workspace_identity() {
+        let first = tempdir().unwrap();
+        let second = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(second.path()));
+        app.quick_open_query = "secret".to_owned();
+
+        let _ = app.update(Message::QuickOpenFilesLoaded {
+            generation: 1,
+            workspace_root: first.path().canonicalize().unwrap(),
+            result: Ok(vec![file_entry("secret.txt")]),
+        });
+
+        assert!(app.quick_open_results.is_empty());
+    }
+
+    #[test]
+    fn manual_open_prevents_late_auto_restore_from_replacing_user_intent() {
+        let auto = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        let _ = app.update(Message::OpenFolder);
+
+        let task = app.update(Message::RecentWorkspaceLoaded(Ok(
+            strukt_persistence::RecentWorkspaces {
+                paths: vec![auto.path().canonicalize().unwrap()],
+            },
+        )));
+
+        assert_eq!(task.units(), 0);
+        assert!(app.workspace.is_none());
+        assert_eq!(app.recent_workspaces.len(), 1);
+    }
+
+    #[test]
+    fn quick_open_and_search_ignore_preferences_do_not_change_explorer_visibility() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        let _ = app.update(Message::ToggleQuickOpenIgnored);
+        let _ = app.update(Message::ToggleSearchIgnored);
+
+        assert!(app.quick_open_include_ignored);
+        assert!(app.search_include_ignored);
+        assert!(!app.explorer_options.show_ignored);
+    }
+
+    #[test]
+    fn successful_rescan_clears_the_stale_filesystem_flag() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&project))));
+        let root = project.path().canonicalize().unwrap();
+        let _ = app.update(Message::FileEvent {
+            workspace_root: root,
+            event: strukt_fs::FileEvent::Stale("overflow".to_owned()),
+        });
+
+        let _ = app.update(Message::FilesRefreshed {
+            generation: 2,
+            result: Ok(discovery(&["current.rs"])),
+        });
+
+        assert!(!app.workspace.as_ref().unwrap().stale_filesystem);
+        assert_eq!(app.workspace_error, None);
+    }
+
+    #[test]
+    fn persistence_writes_are_serialized_and_old_errors_do_not_affect_new_workspace() {
+        let data = tempdir().unwrap();
+        let first = tempdir().unwrap();
+        let second = tempdir().unwrap();
+        let mut app = StruktApp::new_with_store(
+            LaunchMode::Interactive,
+            Some(WorkspaceStore::at(data.path())),
+        );
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&first))));
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&second))));
+
+        let follow_up = app.update(Message::WorkspacePersisted {
+            generation: 1,
+            workspace_root: first.path().canonicalize().unwrap(),
+            result: Err("old save failed".to_owned()),
+        });
+
+        assert_eq!(follow_up.units(), 1);
+        assert_eq!(app.workspace_error, None);
+
+        let _ = app.update(Message::WorkspacePersisted {
+            generation: 2,
+            workspace_root: second.path().canonicalize().unwrap(),
+            result: Ok(()),
+        });
+        assert_eq!(app.workspace_error, None);
+    }
+
+    #[test]
+    fn opening_a_new_workspace_clears_the_previous_workspace_persistence_error() {
+        let data = tempdir().unwrap();
+        let first = tempdir().unwrap();
+        let second = tempdir().unwrap();
+        let mut app = StruktApp::new_with_store(
+            LaunchMode::Interactive,
+            Some(WorkspaceStore::at(data.path())),
+        );
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&first))));
+        let _ = app.update(Message::WorkspacePersisted {
+            generation: 1,
+            workspace_root: first.path().canonicalize().unwrap(),
+            result: Err("first save failed".to_owned()),
+        });
+        assert_eq!(app.workspace_error.as_deref(), Some("first save failed"));
+
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&second))));
+
+        assert_eq!(app.workspace_error, None);
+    }
+
+    #[test]
+    fn search_error_is_not_cleared_by_an_unrelated_explorer_refresh() {
+        let project = tempdir().unwrap();
+        let root = project.path().canonicalize().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        let _ = app.update(Message::SearchChanged("needle".to_owned()));
+        let _ = app.update(Message::SearchCompleted {
+            generation: 1,
+            workspace_root: root,
+            result: Err("search failed".to_owned()),
+        });
+        let _ = app.update(Message::ToggleHiddenFiles);
+
+        let _ = app.update(Message::FilesRefreshed {
+            generation: 1,
+            result: Ok(discovery(&["current.rs"])),
+        });
+
+        assert_eq!(app.workspace_error.as_deref(), Some("search failed"));
+    }
+
+    #[test]
+    fn command_p_toggles_quick_open_without_changing_the_explorer() {
+        let mut app = StruktApp::default();
+        let explorer_visible = app.shell.explorer_visible;
+
+        let _ = app.update(key_pressed("p", key::Code::KeyP, Modifiers::COMMAND));
+
+        assert!(app.quick_open_visible);
+        assert_eq!(app.shell.explorer_visible, explorer_visible);
     }
 }

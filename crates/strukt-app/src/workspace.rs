@@ -10,11 +10,6 @@ pub struct OpenedWorkspace {
     pub discovery: DiscoveryReport,
 }
 
-pub fn open_workspace(path: PathBuf) -> Result<OpenedWorkspace, String> {
-    let store = WorkspaceStore::platform_default().map_err(|error| error.to_string())?;
-    open_workspace_with_store(path, &store)
-}
-
 pub(crate) fn open_workspace_with_store(
     path: PathBuf,
     store: &WorkspaceStore,
@@ -27,8 +22,17 @@ pub(crate) fn open_workspace_with_store(
             || WorkspaceState::new(root.clone()),
             |snapshot| snapshot.state,
         );
+    discover_workspace(state)
+}
+
+pub(crate) fn open_workspace_without_store(path: PathBuf) -> Result<OpenedWorkspace, String> {
+    let root = WorkspaceRoot::open(path).map_err(|error| error.to_string())?;
+    discover_workspace(WorkspaceState::new(root))
+}
+
+fn discover_workspace(state: WorkspaceState) -> Result<OpenedWorkspace, String> {
     let discovery = discover_report(
-        root.path(),
+        state.root.path(),
         DiscoveryOptions {
             show_hidden: state.explorer.show_hidden,
             show_ignored: state.explorer.show_ignored,

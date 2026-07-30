@@ -2,4 +2,4 @@
 
 mod workspace_store;
 
-pub use workspace_store::{StoreError, WorkspaceSnapshot, WorkspaceStore};
+pub use workspace_store::{RecentWorkspaces, StoreError, WorkspaceSnapshot, WorkspaceStore};
