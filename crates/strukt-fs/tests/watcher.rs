@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use notify::event::Flag;
 use notify::{Event, EventKind};
 use strukt_fs::{FileEvent, normalize_notify_event};
 
@@ -22,5 +23,17 @@ fn watcher_errors_mark_the_workspace_stale() {
     assert_eq!(
         FileEvent::watch_error("overflow"),
         FileEvent::Stale("overflow".into())
+    );
+}
+
+#[test]
+fn native_rescan_events_mark_the_workspace_stale() {
+    let event = Event::new(EventKind::Any)
+        .add_path(PathBuf::from("ignored"))
+        .set_flag(Flag::Rescan);
+
+    assert_eq!(
+        normalize_notify_event(event),
+        FileEvent::Stale("filesystem watcher requested a full rescan".into())
     );
 }

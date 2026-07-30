@@ -9,6 +9,7 @@ use thiserror::Error;
 const EVENT_QUEUE_CAPACITY: usize = 1024;
 const EVENT_LOSS_MESSAGE: &str = "filesystem watcher events were lost";
 const EVENT_CHANNEL_DISCONNECTED_MESSAGE: &str = "filesystem watcher event channel disconnected";
+const NATIVE_RESCAN_MESSAGE: &str = "filesystem watcher requested a full rescan";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FileEvent {
@@ -25,6 +26,10 @@ impl FileEvent {
 
 #[must_use]
 pub fn normalize_notify_event(event: Event) -> FileEvent {
+    if event.need_rescan() {
+        return FileEvent::watch_error(NATIVE_RESCAN_MESSAGE);
+    }
+
     let mut paths = event.paths;
     paths.sort();
     paths.dedup();
@@ -52,12 +57,18 @@ struct EventInbox {
     events: Receiver<FileEvent>,
     stale: Arc<AtomicBool>,
     disconnected_reported: AtomicBool,
+    capacity: usize,
 }
 
 #[cfg(test)]
 impl EventInbox {
     fn try_recv(&self) -> Option<FileEvent> {
-        try_recv_event(&self.events, &self.stale, &self.disconnected_reported)
+        try_recv_event(
+            &self.events,
+            &self.stale,
+            &self.disconnected_reported,
+            self.capacity,
+        )
     }
 }
 
@@ -74,6 +85,7 @@ fn event_channel(capacity: usize) -> (EventHandoff, EventInbox) {
             events,
             stale,
             disconnected_reported: AtomicBool::new(false),
+            capacity,
         },
     )
 }
@@ -82,8 +94,11 @@ fn try_recv_event(
     events: &Receiver<FileEvent>,
     stale: &AtomicBool,
     disconnected_reported: &AtomicBool,
+    capacity: usize,
 ) -> Option<FileEvent> {
     if stale.swap(false, Ordering::AcqRel) {
+        drain_obsolete_events(events, disconnected_reported, capacity);
+        stale.store(false, Ordering::Release);
         return Some(FileEvent::watch_error(EVENT_LOSS_MESSAGE));
     }
 
@@ -100,11 +115,29 @@ fn try_recv_event(
     }
 }
 
+fn drain_obsolete_events(
+    events: &Receiver<FileEvent>,
+    disconnected_reported: &AtomicBool,
+    capacity: usize,
+) {
+    for _ in 0..capacity {
+        match events.try_recv() {
+            Ok(_) => {}
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Disconnected) => {
+                disconnected_reported.store(true, Ordering::Release);
+                break;
+            }
+        }
+    }
+}
+
 pub struct WorkspaceWatcher {
     _watcher: RecommendedWatcher,
     events: Receiver<FileEvent>,
     stale: Arc<AtomicBool>,
     disconnected_reported: AtomicBool,
+    event_queue_capacity: usize,
 }
 
 impl WorkspaceWatcher {
@@ -133,12 +166,18 @@ impl WorkspaceWatcher {
             events: inbox.events,
             stale: inbox.stale,
             disconnected_reported: inbox.disconnected_reported,
+            event_queue_capacity: inbox.capacity,
         })
     }
 
     #[must_use]
     pub fn try_recv(&self) -> Option<FileEvent> {
-        try_recv_event(&self.events, &self.stale, &self.disconnected_reported)
+        try_recv_event(
+            &self.events,
+            &self.stale,
+            &self.disconnected_reported,
+            self.event_queue_capacity,
+        )
     }
 }
 
@@ -155,18 +194,34 @@ mod tests {
     use super::{FileEvent, event_channel};
 
     #[test]
-    fn full_event_queue_marks_stale_without_growing() {
+    fn full_event_queue_drains_before_new_changes_are_received() {
         let (handoff, inbox) = event_channel(1);
-        let first = FileEvent::Changed(vec![PathBuf::from("first")]);
-        let dropped = FileEvent::Changed(vec![PathBuf::from("dropped")]);
+        let first = FileEvent::Changed(vec![PathBuf::from("a")]);
+        let dropped = FileEvent::Changed(vec![PathBuf::from("b")]);
+        let next = FileEvent::Changed(vec![PathBuf::from("c")]);
 
-        assert!(handoff.try_send(first.clone()));
+        assert!(handoff.try_send(first));
         assert!(!handoff.try_send(dropped));
         assert_eq!(
             inbox.try_recv(),
             Some(FileEvent::watch_error(super::EVENT_LOSS_MESSAGE))
         );
-        assert_eq!(inbox.try_recv(), Some(first));
+        assert!(handoff.try_send(next.clone()));
+        assert_eq!(inbox.try_recv(), Some(next));
+        assert_eq!(inbox.try_recv(), None);
+    }
+
+    #[test]
+    fn disconnected_event_queue_reports_stale_once() {
+        let (handoff, inbox) = event_channel(1);
+        drop(handoff);
+
+        assert_eq!(
+            inbox.try_recv(),
+            Some(FileEvent::watch_error(
+                super::EVENT_CHANNEL_DISCONNECTED_MESSAGE
+            ))
+        );
         assert_eq!(inbox.try_recv(), None);
     }
 }
