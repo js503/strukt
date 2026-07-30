@@ -96,9 +96,7 @@ fn try_recv_event(
     disconnected_reported: &AtomicBool,
     capacity: usize,
 ) -> Option<FileEvent> {
-    if stale.swap(false, Ordering::AcqRel) {
-        drain_obsolete_events(events, disconnected_reported, capacity);
-        stale.store(false, Ordering::Release);
+    if recover_event_loss(events, stale, disconnected_reported, capacity, || {}) {
         return Some(FileEvent::watch_error(EVENT_LOSS_MESSAGE));
     }
 
@@ -113,6 +111,22 @@ fn try_recv_event(
             }
         }
     }
+}
+
+fn recover_event_loss(
+    events: &Receiver<FileEvent>,
+    stale: &AtomicBool,
+    disconnected_reported: &AtomicBool,
+    capacity: usize,
+    after_acknowledgement: impl FnOnce(),
+) -> bool {
+    if !stale.swap(false, Ordering::AcqRel) {
+        return false;
+    }
+
+    after_acknowledgement();
+    drain_obsolete_events(events, disconnected_reported, capacity);
+    true
 }
 
 fn drain_obsolete_events(
@@ -191,7 +205,7 @@ pub enum WatcherError {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{FileEvent, event_channel};
+    use super::{FileEvent, event_channel, recover_event_loss};
 
     #[test]
     fn full_event_queue_drains_before_new_changes_are_received() {
@@ -221,6 +235,30 @@ mod tests {
             Some(FileEvent::watch_error(
                 super::EVENT_CHANNEL_DISCONNECTED_MESSAGE
             ))
+        );
+        assert_eq!(inbox.try_recv(), None);
+    }
+
+    #[test]
+    fn loss_during_recovery_is_reported_on_the_next_receive() {
+        let (handoff, inbox) = event_channel(1);
+        let first = FileEvent::Changed(vec![PathBuf::from("a")]);
+        let dropped_before_recovery = FileEvent::Changed(vec![PathBuf::from("b")]);
+        let dropped_during_recovery = FileEvent::Changed(vec![PathBuf::from("c")]);
+
+        assert!(handoff.try_send(first));
+        assert!(!handoff.try_send(dropped_before_recovery));
+        assert!(recover_event_loss(
+            &inbox.events,
+            &inbox.stale,
+            &inbox.disconnected_reported,
+            inbox.capacity,
+            || assert!(!handoff.try_send(dropped_during_recovery)),
+        ));
+
+        assert_eq!(
+            inbox.try_recv(),
+            Some(FileEvent::watch_error(super::EVENT_LOSS_MESSAGE))
         );
         assert_eq!(inbox.try_recv(), None);
     }
