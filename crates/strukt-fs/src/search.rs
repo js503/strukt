@@ -1,5 +1,5 @@
 use std::fs::{self, OpenOptions};
-use std::io::Read;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -105,10 +105,10 @@ fn subsequence_score(candidate: &str, query: &str) -> Option<usize> {
 ///
 /// # Errors
 ///
-/// Returns [`SearchError`] when discovery of the workspace root fails. Individual
-/// file failures, oversized files, binary files, and invalid UTF-8 files produce
-/// an incomplete result instead of discarding matches already found. A NUL byte
-/// is the deliberate binary-file heuristic.
+/// Returns [`SearchError`] when discovery of the workspace root fails or file IO
+/// fails for a reason other than disappearance churn. Missing, oversized, binary,
+/// and invalid UTF-8 files produce an incomplete result without discarding matches
+/// already found. A NUL byte is the deliberate binary-file heuristic.
 pub fn search_content(
     root: impl AsRef<Path>,
     needle: &str,
@@ -141,7 +141,7 @@ fn search_content_with_budget(
 
         let effective_limit = options.max_file_bytes.min(remaining_budget);
         let path = root.join(&entry.relative_path);
-        let Ok(metadata) = fs::symlink_metadata(&path) else {
+        let Some(metadata) = classify_entry_io(fs::symlink_metadata(&path))? else {
             incomplete = true;
             continue;
         };
@@ -150,11 +150,11 @@ fn search_content_with_budget(
             continue;
         }
 
-        let Ok(file) = open_for_search(&path) else {
+        let Some(file) = classify_entry_io(open_for_search(&path))? else {
             incomplete = true;
             continue;
         };
-        let Ok(metadata) = file.metadata() else {
+        let Some(metadata) = classify_entry_io(file.metadata())? else {
             incomplete = true;
             continue;
         };
@@ -169,7 +169,7 @@ fn search_content_with_budget(
             .read_to_end(&mut bytes);
         let bytes_read = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
         remaining_budget = remaining_budget.saturating_sub(bytes_read);
-        if read_result.is_err() || bytes_read > effective_limit {
+        if classify_entry_io(read_result)?.is_none() || bytes_read > effective_limit {
             incomplete = true;
             continue;
         }
@@ -214,6 +214,14 @@ fn open_for_search(path: &Path) -> std::io::Result<std::fs::File> {
     options.open(path)
 }
 
+fn classify_entry_io<T>(result: io::Result<T>) -> Result<Option<T>, SearchError> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(SearchError::Io(error)),
+    }
+}
+
 fn bounded_preview(line: &str) -> String {
     if line.len() <= MAX_PREVIEW_BYTES {
         return line.to_owned();
@@ -237,11 +245,39 @@ pub enum SearchError {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::io::{self, ErrorKind};
     use std::path::Path;
 
     use tempfile::tempdir;
 
-    use super::{SearchOptions, search_content_with_budget};
+    use super::{SearchError, SearchOptions, classify_entry_io, search_content_with_budget};
+
+    #[test]
+    fn not_found_entry_io_is_recoverable_churn() {
+        let result = classify_entry_io::<()>(Err(io::Error::from(ErrorKind::NotFound)));
+
+        assert!(matches!(result, Ok(None)));
+    }
+
+    #[test]
+    fn permission_denied_entry_io_is_fatal() {
+        let result = classify_entry_io::<()>(Err(io::Error::from(ErrorKind::PermissionDenied)));
+
+        assert!(matches!(
+            result,
+            Err(SearchError::Io(error)) if error.kind() == ErrorKind::PermissionDenied
+        ));
+    }
+
+    #[test]
+    fn other_entry_io_is_fatal() {
+        let result = classify_entry_io::<()>(Err(io::Error::other("read failed")));
+
+        assert!(matches!(
+            result,
+            Err(SearchError::Io(error)) if error.kind() == ErrorKind::Other
+        ));
+    }
 
     #[test]
     fn aggregate_budget_preserves_matches_and_marks_remaining_work_incomplete() {
