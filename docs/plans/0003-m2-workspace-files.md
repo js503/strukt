@@ -1360,7 +1360,7 @@ git commit -m "feat: watch local workspace files"
 - Modify: `crates/strukt-fs/src/operations.rs`
 - Create: `crates/strukt-fs/tests/operations.rs`
 
-- [ ] **Step 1: Write failing operation tests**
+- [x] **Step 1: Write failing operation tests**
 
 Create `crates/strukt-fs/tests/operations.rs`:
 
@@ -1441,7 +1441,7 @@ fn duplicate_rejects_symlinks_that_escape_the_workspace() {
 }
 ```
 
-- [ ] **Step 2: Run operation tests and verify RED**
+- [x] **Step 2: Run operation tests and verify RED**
 
 Run:
 
@@ -1451,7 +1451,7 @@ cargo test -p strukt-fs --test operations
 
 Expected: FAIL because operations are not implemented.
 
-- [ ] **Step 3: Implement root-scoped operations**
+- [x] **Step 3: Implement root-scoped operations**
 
 Add `cap-std = "4.0.2"` and `cap-fs-ext = "4.0.2"` to
 `workspace.dependencies`, then enable both workspace dependencies in `strukt-fs`.
@@ -1594,7 +1594,7 @@ The final implementation must also:
 - use Windows directory-link removal semantics for directory symlinks; and
 - reject destination conflicts without adding public error variants.
 
-- [ ] **Step 4: Run operation and full filesystem tests**
+- [x] **Step 4: Run operation and full filesystem tests**
 
 Run:
 
@@ -1604,7 +1604,7 @@ cargo test -p strukt-fs
 
 Expected: all filesystem tests PASS.
 
-- [ ] **Step 5: Commit safe operations**
+- [x] **Step 5: Commit safe operations**
 
 ```bash
 git add Cargo.toml Cargo.lock crates/strukt-fs
