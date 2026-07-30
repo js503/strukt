@@ -27,7 +27,7 @@ exit criteria are satisfied and verified, not when a target date arrives.
 |---|---|---|---|---|
 | M0 | Product and architecture foundation | Complete | — | Approved product model, spatial design, remote-development model, and delivery process |
 | M1 | Native shell foundation | Complete | M0 | Cross-platform native shell proving capability boundaries, shell state, and semantic theming |
-| M2 | Local development workspace | Not planned | M1 | Real local files, editing, PTY/ConPTY terminals, terminal rendering, and workspace persistence |
+| M2 | Local development workspace | Shaping | M1 | Real local files, IDE-level editing, language intelligence, PTY/ConPTY terminals, terminal rendering, and workspace persistence |
 | M3 | Local persistent sessions | Not planned | M2 | Named local sessions with windows, split panes, detach/reattach, and restoration |
 | M4 | SSH remote workspace | Not planned | M2 | A remote development box behaves as a first-class workspace over standard SSH |
 | M5 | Remote persistent sessions | Not planned | M3, M4 | Multiple persistent sessions per remote host, reconnect recovery, and tmux interoperability |
@@ -115,9 +115,10 @@ service.
 ### Intended Scope
 
 - Local workspace lifecycle and persisted layout
-- Native file explorer, Quick Open, file watching, and foundational editing
+- Native file explorer, Quick Open, file watching, and IDE-level editing
+- Language-agnostic language-server discovery, configuration, and core IDE actions
 - Unix PTY adapters and Windows ConPTY adapter
-- GPU-rendered terminal surface with bounded scrollback
+- Multiple ephemeral terminal tabs and splits with GPU-rendered bounded scrollback
 - Clear process, filesystem, and terminal capability contracts
 
 ### Exit Criteria
@@ -132,7 +133,8 @@ service.
 
 - Governing spec:
   [`specs/0001-workspace-shell-and-remote-development.md`](specs/0001-workspace-shell-and-remote-development.md)
-- Dedicated spec: not yet created
+- Dedicated spec:
+  [`specs/0003-local-development-workspace.md`](specs/0003-local-development-workspace.md)
 - Implementation plan: not yet created
 - Workspace reference:
   [`mockups/workspace-shell/focus-context.html`](mockups/workspace-shell/focus-context.html)
