@@ -4,6 +4,7 @@ members = [
   "crates/strukt-core",
   "crates/strukt-shell",
   "crates/strukt-theme",
+  "crates/strukt-workspace",
 ]
 resolver = "3"
 
@@ -15,11 +16,23 @@ license = "MIT"
 repository = "https://github.com/js503/strukt"
 
 [workspace.dependencies]
+atomic-write-file = "0.3.0"
+blake3 = "1.8.5"
+directories = "6.0.0"
 iced = { version = "0.14.0", features = ["advanced", "tokio", "wgpu"] }
+ignore = "0.4.31"
+notify = "8.2.0"
+rfd = "0.17.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1"
 strukt-core = { path = "crates/strukt-core" }
 strukt-shell = { path = "crates/strukt-shell" }
 strukt-theme = { path = "crates/strukt-theme" }
+strukt-workspace = { path = "crates/strukt-workspace" }
+tempfile = "3.27.0"
 thiserror = "2.0"
+tokio = { version = "1", features = ["rt", "sync"] }
+trash = "5.2.6"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
