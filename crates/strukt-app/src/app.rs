@@ -412,6 +412,7 @@ impl StruktApp {
                 if self.refresh_in_flight != Some(generation) {
                     return Task::none();
                 }
+                let mut completion_tasks = Vec::new();
                 self.refresh_in_flight = None;
                 if generation == self.refresh_generation {
                     match result {
@@ -421,6 +422,17 @@ impl StruktApp {
                             self.filesystem_truncated = report.truncated;
                             self.filesystem_revision = self.filesystem_revision.wrapping_add(1);
                             self.invalidate_quick_open_cache();
+                            if self.quick_open_visible {
+                                if self.quick_open_include_ignored {
+                                    completion_tasks.push(self.start_quick_open_scan());
+                                } else {
+                                    self.quick_open_results = quick_open_candidates(
+                                        &self.files,
+                                        &self.quick_open_query,
+                                        50,
+                                    );
+                                }
+                            }
                             self.refresh_error = None;
                             if let Some(workspace) = &mut self.workspace {
                                 workspace.stale_filesystem = false;
@@ -433,14 +445,13 @@ impl StruktApp {
                 }
                 if self.refresh_pending {
                     self.refresh_pending = false;
-                    return self.start_file_refresh();
-                }
-                if self.persistence_in_flight.is_none()
+                    completion_tasks.push(self.start_file_refresh());
+                } else if self.persistence_in_flight.is_none()
                     && let Some(state) = self.persistence_pending.take()
                 {
-                    return self.start_persistence(state);
+                    completion_tasks.push(self.start_persistence(state));
                 }
-                return Task::none();
+                return Task::batch(completion_tasks);
             }
             Message::SelectExplorerEntry(path) => {
                 if self.explorer_dialog == ExplorerDialog::None

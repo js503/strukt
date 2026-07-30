@@ -867,6 +867,95 @@ mod tests {
     }
 
     #[test]
+    fn accepted_refresh_restarts_an_open_ignored_quick_open_without_stale_results() {
+        let project = tempdir().unwrap();
+        let root = project.path().canonicalize().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        let _ = app.update(Message::ToggleQuickOpenIgnored);
+        let _ = app.update(Message::QuickOpenFilesLoaded {
+            generation: 1,
+            workspace_root: root.clone(),
+            filesystem_revision: 0,
+            result: Ok(vec![file_entry("old-secret.txt")]),
+        });
+        let _ = app.update(Message::ToggleQuickOpen);
+        let _ = app.update(Message::ToggleHiddenFiles);
+
+        let replacement = app.update(Message::FilesRefreshed {
+            generation: 1,
+            result: Ok(discovery(&["visible-now.txt"])),
+        });
+        let _ = app.update(Message::QuickOpenFilesLoaded {
+            generation: 1,
+            workspace_root: root,
+            filesystem_revision: 0,
+            result: Ok(vec![file_entry("late-old-secret.txt")]),
+        });
+
+        assert_eq!(replacement.units(), 1);
+        assert!(app.quick_open_results.is_empty());
+    }
+
+    #[test]
+    fn ignored_quick_open_reload_batches_with_pending_workspace_persistence() {
+        let data = tempdir().unwrap();
+        let project = tempdir().unwrap();
+        let root = project.path().canonicalize().unwrap();
+        let mut app = StruktApp::new_with_store(
+            LaunchMode::Interactive,
+            Some(WorkspaceStore::at(data.path())),
+        );
+        app.workspace = Some(workspace_state(project.path()));
+        let _ = app.update(Message::ToggleQuickOpenIgnored);
+        let _ = app.update(Message::QuickOpenFilesLoaded {
+            generation: 1,
+            workspace_root: root,
+            filesystem_revision: 0,
+            result: Ok(vec![file_entry("old-secret.txt")]),
+        });
+        let _ = app.update(Message::ToggleQuickOpen);
+        let _ = app.update(Message::ToggleHiddenFiles);
+
+        let completion = app.update(Message::FilesRefreshed {
+            generation: 1,
+            result: Ok(discovery(&["visible-now.txt"])),
+        });
+
+        assert_eq!(completion.units(), 2);
+        assert!(app.quick_open_results.is_empty());
+    }
+
+    #[test]
+    fn accepted_refresh_reranks_an_open_normal_quick_open_from_refreshed_files() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        app.files = vec![file_entry("old-target.txt")];
+        let _ = app.update(Message::ToggleQuickOpen);
+        let _ = app.update(Message::QuickOpenChanged("target".to_owned()));
+        assert_eq!(
+            app.quick_open_results[0].relative_path,
+            std::path::Path::new("old-target.txt")
+        );
+        let _ = app.update(Message::ToggleHiddenFiles);
+
+        let completion = app.update(Message::FilesRefreshed {
+            generation: 1,
+            result: Ok(discovery(&["new-target.txt", "unrelated.txt"])),
+        });
+
+        assert_eq!(completion.units(), 0);
+        assert_eq!(
+            app.quick_open_results
+                .iter()
+                .map(|candidate| candidate.relative_path.as_path())
+                .collect::<Vec<_>>(),
+            vec![std::path::Path::new("new-target.txt")]
+        );
+    }
+
+    #[test]
     fn workspace_replacement_invalidates_ignored_quick_open_cache() {
         let first = tempdir().unwrap();
         let second = tempdir().unwrap();
