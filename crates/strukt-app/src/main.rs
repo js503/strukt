@@ -193,6 +193,104 @@ mod tests {
         assert_eq!(app.workspace_error.as_deref(), Some("cannot create"));
     }
 
+    #[test]
+    fn accepted_refresh_clears_a_selection_that_disappeared() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        app.files = vec![file_entry("removed.txt")];
+        app.selected_entry = Some("removed.txt".into());
+        let _ = app.update(Message::ToggleHiddenFiles);
+
+        let _ = app.update(Message::FilesRefreshed {
+            generation: 1,
+            result: Ok(discovery(&["remaining.txt"])),
+        });
+
+        assert_eq!(app.selected_entry, None);
+    }
+
+    #[test]
+    fn accepted_refresh_cancels_only_source_bound_dialogs_when_the_source_disappears() {
+        let project = tempdir().unwrap();
+        for dialog in [
+            ExplorerDialog::Rename {
+                from: "removed.txt".into(),
+                to: "renamed.txt".to_owned(),
+            },
+            ExplorerDialog::Duplicate {
+                from: "removed.txt".into(),
+                to: "copy.txt".to_owned(),
+            },
+            ExplorerDialog::ConfirmTrash("removed.txt".into()),
+            ExplorerDialog::ConfirmPermanentDelete("removed.txt".into()),
+        ] {
+            let mut app = StruktApp::default();
+            app.workspace = Some(workspace_state(project.path()));
+            let _ = app.update(Message::ToggleHiddenFiles);
+            app.explorer_dialog = dialog;
+
+            let _ = app.update(Message::FilesRefreshed {
+                generation: 1,
+                result: Ok(discovery(&["remaining.txt"])),
+            });
+            assert_eq!(app.explorer_dialog, ExplorerDialog::None);
+        }
+
+        for dialog in [
+            ExplorerDialog::CreateFile("new.txt".to_owned()),
+            ExplorerDialog::CreateDirectory("new".to_owned()),
+        ] {
+            let mut app = StruktApp::default();
+            app.workspace = Some(workspace_state(project.path()));
+            let _ = app.update(Message::ToggleHiddenFiles);
+            app.explorer_dialog = dialog.clone();
+
+            let _ = app.update(Message::FilesRefreshed {
+                generation: 1,
+                result: Ok(discovery(&["remaining.txt"])),
+            });
+            assert_eq!(app.explorer_dialog, dialog);
+        }
+    }
+
+    #[test]
+    fn an_open_dialog_cannot_be_replaced_or_change_visibility() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+
+        let _ = app.update(Message::BeginCreateFile);
+        let _ = app.update(Message::BeginCreateDirectory);
+        let refresh = app.update(Message::ToggleHiddenFiles);
+
+        assert_eq!(
+            app.explorer_dialog,
+            ExplorerDialog::CreateFile(String::new())
+        );
+        assert!(!app.explorer_options.show_hidden);
+        assert_eq!(refresh.units(), 0);
+    }
+
+    #[test]
+    fn trash_confirmation_freezes_selection_and_escalates_its_original_path() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        app.selected_entry = Some("a.txt".into());
+        let _ = app.update(Message::BeginTrash);
+
+        let _ = app.update(Message::SelectExplorerEntry("b.txt".into()));
+        let _ = app.update(Message::BeginRename);
+        let _ = app.update(Message::BeginPermanentDelete);
+
+        assert_eq!(app.selected_entry, Some("a.txt".into()));
+        assert_eq!(
+            app.explorer_dialog,
+            ExplorerDialog::ConfirmPermanentDelete("a.txt".into())
+        );
+    }
+
     fn discovery(paths: &[&str]) -> DiscoveryReport {
         DiscoveryReport {
             entries: paths.iter().map(|path| file_entry(path)).collect(),

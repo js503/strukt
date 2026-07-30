@@ -233,10 +233,16 @@ impl StruktApp {
                 return Task::none();
             }
             Message::ToggleHiddenFiles => {
+                if !self.can_use_explorer_controls() {
+                    return Task::none();
+                }
                 self.explorer_options.show_hidden = !self.explorer_options.show_hidden;
                 return self.request_file_refresh();
             }
             Message::ToggleIgnoredFiles => {
+                if !self.can_use_explorer_controls() {
+                    return Task::none();
+                }
                 self.explorer_options.show_ignored = !self.explorer_options.show_ignored;
                 return self.request_file_refresh();
             }
@@ -252,6 +258,7 @@ impl StruktApp {
                             self.file_warnings = report.warnings;
                             self.filesystem_truncated = report.truncated;
                             self.refresh_error = None;
+                            self.reconcile_explorer_targets();
                         }
                         Err(error) => self.refresh_error = Some(error),
                     }
@@ -264,7 +271,10 @@ impl StruktApp {
                 return Task::none();
             }
             Message::SelectExplorerEntry(path) => {
-                if is_scoped_relative_path(&path) {
+                if self.explorer_dialog == ExplorerDialog::None
+                    && self.operation_in_flight.is_none()
+                    && is_scoped_relative_path(&path)
+                {
                     self.selected_entry = Some(path);
                 }
                 return Task::none();
@@ -312,10 +322,17 @@ impl StruktApp {
                 return Task::none();
             }
             Message::BeginPermanentDelete => {
-                if self.can_begin_operation()
-                    && let Some(path) = self.selected_entry.clone()
-                {
-                    self.explorer_dialog = ExplorerDialog::ConfirmPermanentDelete(path);
+                if self.operation_in_flight.is_none() {
+                    let path = match &self.explorer_dialog {
+                        ExplorerDialog::ConfirmTrash(path) => Some(path.clone()),
+                        ExplorerDialog::None if self.workspace.is_some() => {
+                            self.selected_entry.clone()
+                        }
+                        _ => None,
+                    };
+                    if let Some(path) = path {
+                        self.explorer_dialog = ExplorerDialog::ConfirmPermanentDelete(path);
+                    }
                 }
                 return Task::none();
             }
@@ -438,7 +455,13 @@ impl StruktApp {
     }
 
     fn can_begin_operation(&self) -> bool {
-        self.workspace.is_some() && self.operation_in_flight.is_none()
+        self.can_use_explorer_controls()
+    }
+
+    fn can_use_explorer_controls(&self) -> bool {
+        self.workspace.is_some()
+            && self.explorer_dialog == ExplorerDialog::None
+            && self.operation_in_flight.is_none()
     }
 
     pub(crate) fn file_operation_in_flight(&self) -> bool {
@@ -447,6 +470,21 @@ impl StruktApp {
 
     pub(crate) fn folder_picker_in_flight(&self) -> bool {
         self.open_folder_in_flight
+    }
+
+    fn reconcile_explorer_targets(&mut self) {
+        let entry_exists = |path: &Path| self.files.iter().any(|entry| entry.relative_path == path);
+        if self
+            .selected_entry
+            .as_deref()
+            .is_some_and(|path| !entry_exists(path))
+        {
+            self.selected_entry = None;
+        }
+        if dialog_source(&self.explorer_dialog).is_some_and(|path| !entry_exists(path)) {
+            self.explorer_dialog = ExplorerDialog::None;
+            self.operation_error = None;
+        }
     }
 
     fn submit_explorer_dialog(&mut self) -> Task<Message> {
@@ -583,4 +621,16 @@ fn is_scoped_relative_path(path: &Path) -> bool {
         && path
             .components()
             .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
+}
+
+fn dialog_source(dialog: &ExplorerDialog) -> Option<&Path> {
+    match dialog {
+        ExplorerDialog::Rename { from, .. }
+        | ExplorerDialog::Duplicate { from, .. }
+        | ExplorerDialog::ConfirmTrash(from)
+        | ExplorerDialog::ConfirmPermanentDelete(from) => Some(from),
+        ExplorerDialog::None
+        | ExplorerDialog::CreateFile(_)
+        | ExplorerDialog::CreateDirectory(_) => None,
+    }
 }

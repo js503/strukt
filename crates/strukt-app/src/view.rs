@@ -106,7 +106,9 @@ fn explorer(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> {
     }
 
     let has_workspace = app.workspace.is_some();
-    let operation_ready = has_workspace && !app.file_operation_in_flight();
+    let operation_ready = has_workspace
+        && app.explorer_dialog == ExplorerDialog::None
+        && !app.file_operation_in_flight();
     let selection_ready = operation_ready && app.selected_entry.is_some();
     let controls = row![
         button(if app.explorer_options.show_hidden {
@@ -158,11 +160,9 @@ fn explorer(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> {
             } else {
                 label
             };
-            file_rows = file_rows.push(
-                button(label)
-                    .width(Fill)
-                    .on_press(Message::SelectExplorerEntry(entry.relative_path.clone())),
-            );
+            file_rows = file_rows.push(button(label).width(Fill).on_press_maybe(
+                operation_ready.then(|| Message::SelectExplorerEntry(entry.relative_path.clone())),
+            ));
         }
     }
 
@@ -268,24 +268,21 @@ fn explorer_dialog(app: &StruktApp) -> Element<'_, Message> {
         ],
         ExplorerDialog::ConfirmTrash(path) => column![
             text(format!("Move {} to Trash?", path.display())),
-            row![
-                button("Move to Trash").on_press_maybe(submit),
-                button("Delete Permanently…")
-                    .on_press_maybe((!in_flight).then_some(Message::BeginPermanentDelete)),
-                button("Cancel").on_press_maybe(cancel),
-            ]
-            .spacing(6),
+            button("Move to Trash").width(Fill).on_press_maybe(submit),
+            button("Delete Permanently…")
+                .width(Fill)
+                .on_press_maybe((!in_flight).then_some(Message::BeginPermanentDelete)),
+            button("Cancel").width(Fill).on_press_maybe(cancel),
         ],
         ExplorerDialog::ConfirmPermanentDelete(path) => column![
             text(format!(
                 "Permanently delete {}? This cannot be undone.",
                 path.display()
             )),
-            row![
-                button("Delete Permanently").on_press_maybe(submit),
-                button("Cancel").on_press_maybe(cancel),
-            ]
-            .spacing(6),
+            button("Delete Permanently")
+                .width(Fill)
+                .on_press_maybe(submit),
+            button("Cancel").width(Fill).on_press_maybe(cancel),
         ],
     }
     .spacing(6);
