@@ -579,6 +579,36 @@ mod tests {
     }
 
     #[test]
+    fn workspace_open_restores_explorer_visibility() {
+        let project = tempdir().unwrap();
+        let mut opened = open_workspace(&project);
+        opened.state.explorer.visible = false;
+        let mut app = StruktApp::default();
+
+        let _ = app.update(Message::WorkspaceOpened(Ok(opened)));
+
+        assert!(!app.shell.explorer_visible);
+        assert!(!app.workspace.as_ref().unwrap().explorer.visible);
+    }
+
+    #[test]
+    fn explorer_toggle_updates_workspace_state_and_schedules_persistence() {
+        let data = tempdir().unwrap();
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::new_with_store(
+            LaunchMode::Interactive,
+            Some(WorkspaceStore::at(data.path())),
+        );
+        app.workspace = Some(workspace_state(project.path()));
+
+        let persistence = app.update(Message::ToggleExplorer);
+
+        assert!(!app.shell.explorer_visible);
+        assert!(!app.workspace.as_ref().unwrap().explorer.visible);
+        assert_eq!(persistence.units(), 1);
+    }
+
+    #[test]
     fn opening_a_workspace_does_not_create_repository_metadata() {
         let project = tempdir().unwrap();
 

@@ -377,6 +377,7 @@ impl StruktApp {
                     show_ignored: opened.state.explorer.show_ignored,
                     ..DiscoveryOptions::default()
                 };
+                self.shell.explorer_visible = opened.state.explorer.visible;
                 self.files = opened.discovery.entries;
                 self.file_warnings = opened.discovery.warnings;
                 self.filesystem_truncated = opened.discovery.truncated;
@@ -980,8 +981,16 @@ impl StruktApp {
                 panic!("strukt workspace files smoke failed: {error}");
             }
         };
+        let explorer_was_visible = self.shell.explorer_visible;
         if let Some(action) = action {
             self.shell.apply(action);
+        }
+
+        if self.shell.explorer_visible != explorer_was_visible
+            && let Some(workspace) = &mut self.workspace
+        {
+            workspace.explorer.visible = self.shell.explorer_visible;
+            return self.request_persistence(false);
         }
 
         Task::none()
