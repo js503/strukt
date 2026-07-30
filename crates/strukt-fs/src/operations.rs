@@ -111,6 +111,7 @@ fn scoped(relative: &Path) -> Result<PathBuf, OperationError> {
 }
 
 fn rename_noreplace(root: &Dir, source: &Path, destination: &Path) -> Result<(), OperationError> {
+    #[cfg(windows)]
     atomic_noreplace_supported()?;
     rename_noreplace_with_hook(root, source, destination, || Ok(()))
 }
@@ -165,11 +166,6 @@ fn atomic_rename_noreplace(
     atomic_noreplace_supported()
 }
 
-#[cfg(unix)]
-fn atomic_noreplace_supported() -> Result<(), OperationError> {
-    Ok(())
-}
-
 #[cfg(windows)]
 fn atomic_noreplace_supported() -> Result<(), OperationError> {
     Err(OperationError::AtomicNoReplaceUnavailable {
@@ -205,6 +201,7 @@ fn delete_permanently(root: &Dir, path: &Path) -> Result<(), OperationError> {
 }
 
 fn duplicate(root: &Dir, source: &Path, destination: &Path) -> Result<(), OperationError> {
+    #[cfg(windows)]
     atomic_noreplace_supported()?;
     duplicate_with_hook(root, source, destination, &mut || Ok(()))
 }
