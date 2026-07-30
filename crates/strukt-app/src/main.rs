@@ -182,7 +182,7 @@ mod tests {
 
         let _ = app.update(Message::FileOperationCompleted {
             generation: 1,
-            workspace_root: root,
+            workspace_root: root.clone(),
             result: Err("cannot create".to_owned()),
         });
 
@@ -768,6 +768,7 @@ mod tests {
         let _ = app.update(Message::QuickOpenFilesLoaded {
             generation: 1,
             workspace_root: first.path().canonicalize().unwrap(),
+            filesystem_revision: 0,
             result: Ok(vec![file_entry("secret.txt")]),
         });
 
@@ -805,6 +806,89 @@ mod tests {
     }
 
     #[test]
+    fn quick_open_reuses_a_valid_ignored_cache_after_close_and_reopen() {
+        let project = tempdir().unwrap();
+        let root = project.path().canonicalize().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        app.files = vec![file_entry("visible.txt")];
+        assert_eq!(app.update(Message::ToggleQuickOpenIgnored).units(), 1);
+        let _ = app.update(Message::QuickOpenFilesLoaded {
+            generation: 1,
+            workspace_root: root,
+            filesystem_revision: 0,
+            result: Ok(vec![file_entry("ignored-secret.txt")]),
+        });
+
+        let _ = app.update(Message::ToggleQuickOpen);
+        assert_eq!(
+            app.quick_open_results[0].relative_path,
+            std::path::Path::new("ignored-secret.txt")
+        );
+        let _ = app.update(Message::ToggleQuickOpen);
+        let reopen = app.update(Message::ToggleQuickOpen);
+
+        assert_eq!(reopen.units(), 1);
+        assert_eq!(
+            app.quick_open_results[0].relative_path,
+            std::path::Path::new("ignored-secret.txt")
+        );
+    }
+
+    #[test]
+    fn accepted_refresh_invalidates_ignored_quick_open_cache_before_reopen() {
+        let project = tempdir().unwrap();
+        let root = project.path().canonicalize().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        let _ = app.update(Message::ToggleQuickOpenIgnored);
+        let _ = app.update(Message::QuickOpenFilesLoaded {
+            generation: 1,
+            workspace_root: root.clone(),
+            filesystem_revision: 0,
+            result: Ok(vec![file_entry("stale-secret.txt")]),
+        });
+        let _ = app.update(Message::ToggleHiddenFiles);
+        let _ = app.update(Message::FilesRefreshed {
+            generation: 1,
+            result: Ok(discovery(&["current.txt"])),
+        });
+
+        let open = app.update(Message::ToggleQuickOpen);
+        let _ = app.update(Message::QuickOpenFilesLoaded {
+            generation: 1,
+            workspace_root: root,
+            filesystem_revision: 0,
+            result: Ok(vec![file_entry("late-stale-secret.txt")]),
+        });
+
+        assert_eq!(open.units(), 2);
+        assert!(app.quick_open_results.is_empty());
+    }
+
+    #[test]
+    fn workspace_replacement_invalidates_ignored_quick_open_cache() {
+        let first = tempdir().unwrap();
+        let second = tempdir().unwrap();
+        let first_root = first.path().canonicalize().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(first.path()));
+        let _ = app.update(Message::ToggleQuickOpenIgnored);
+        let _ = app.update(Message::QuickOpenFilesLoaded {
+            generation: 1,
+            workspace_root: first_root,
+            filesystem_revision: 0,
+            result: Ok(vec![file_entry("first-secret.txt")]),
+        });
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&second))));
+
+        let open = app.update(Message::ToggleQuickOpen);
+
+        assert_eq!(open.units(), 2);
+        assert!(app.quick_open_results.is_empty());
+    }
+
+    #[test]
     fn successful_rescan_clears_the_stale_filesystem_flag() {
         let project = tempdir().unwrap();
         let mut app = StruktApp::default();
@@ -839,6 +923,7 @@ mod tests {
         let follow_up = app.update(Message::WorkspacePersisted {
             generation: 1,
             workspace_root: first.path().canonicalize().unwrap(),
+            recent_roots: vec![WorkspaceRoot::open(first.path()).unwrap()],
             result: Err("old save failed".to_owned()),
         });
 
@@ -848,6 +933,10 @@ mod tests {
         let _ = app.update(Message::WorkspacePersisted {
             generation: 2,
             workspace_root: second.path().canonicalize().unwrap(),
+            recent_roots: vec![
+                WorkspaceRoot::open(first.path()).unwrap(),
+                WorkspaceRoot::open(second.path()).unwrap(),
+            ],
             result: Ok(()),
         });
         assert_eq!(app.workspace_error, None);
@@ -866,6 +955,7 @@ mod tests {
         let _ = app.update(Message::WorkspacePersisted {
             generation: 1,
             workspace_root: first.path().canonicalize().unwrap(),
+            recent_roots: vec![WorkspaceRoot::open(first.path()).unwrap()],
             result: Err("first save failed".to_owned()),
         });
         assert_eq!(app.workspace_error.as_deref(), Some("first save failed"));
@@ -895,6 +985,44 @@ mod tests {
         });
 
         assert_eq!(app.workspace_error.as_deref(), Some("search failed"));
+    }
+
+    #[test]
+    fn coalesced_snapshot_saves_preserve_every_recent_root_in_open_order() {
+        let data = tempdir().unwrap();
+        let first = tempdir().unwrap();
+        let second = tempdir().unwrap();
+        let third = tempdir().unwrap();
+        let store = WorkspaceStore::at(data.path());
+        let first_root = WorkspaceRoot::open(first.path()).unwrap();
+        let second_root = WorkspaceRoot::open(second.path()).unwrap();
+        let third_root = WorkspaceRoot::open(third.path()).unwrap();
+        let mut app = StruktApp::new_with_store(LaunchMode::Interactive, Some(store.clone()));
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&first))));
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&second))));
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&third))));
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&second))));
+
+        assert_eq!(app.active_recent_roots_for_test(), vec![first_root.clone()]);
+        assert_eq!(
+            app.pending_recent_roots_for_test(),
+            vec![third_root.clone(), second_root.clone()]
+        );
+        crate::app::persist_workspace_batch(
+            &store,
+            app.workspace.as_ref().unwrap(),
+            &[first_root, third_root.clone(), second_root.clone()],
+        )
+        .unwrap();
+
+        assert_eq!(
+            store.load_recent().unwrap().paths,
+            vec![
+                second_root.path().to_path_buf(),
+                third_root.path().to_path_buf(),
+                first.path().canonicalize().unwrap(),
+            ]
+        );
     }
 
     #[test]

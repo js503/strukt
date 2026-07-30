@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
@@ -12,7 +13,7 @@ use strukt_fs::{
 use strukt_persistence::{RecentWorkspaces, WorkspaceStore};
 use strukt_shell::{Activity, ShellAction, ShellState};
 use strukt_theme::ThemeMode;
-use strukt_workspace::WorkspaceState;
+use strukt_workspace::{WorkspaceRoot, WorkspaceState};
 
 use crate::workspace::{OpenedWorkspace, open_workspace_without_store};
 
@@ -86,11 +87,21 @@ pub struct StruktApp {
     operation_in_flight: Option<(u64, PathBuf)>,
     persistence_generation: u64,
     persistence_in_flight: Option<(u64, PathBuf)>,
-    persistence_pending: Option<(WorkspaceState, bool)>,
+    persistence_pending: Option<WorkspaceState>,
+    pending_recent_roots: VecDeque<WorkspaceRoot>,
+    active_recent_roots: Vec<WorkspaceRoot>,
     persistence_error: Option<String>,
     search_generation: u64,
+    filesystem_revision: u64,
     quick_open_generation: u64,
-    quick_open_files: Vec<FileEntry>,
+    quick_open_scan_in_flight: Option<(u64, PathBuf, u64)>,
+    quick_open_cache: Option<QuickOpenCache>,
+}
+
+struct QuickOpenCache {
+    workspace_root: PathBuf,
+    filesystem_revision: u64,
+    files: Vec<FileEntry>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -150,6 +161,7 @@ pub enum Message {
     WorkspacePersisted {
         generation: u64,
         workspace_root: PathBuf,
+        recent_roots: Vec<WorkspaceRoot>,
         result: Result<(), String>,
     },
     RecentWorkspaceLoaded(Result<RecentWorkspaces, String>),
@@ -168,6 +180,7 @@ pub enum Message {
     QuickOpenFilesLoaded {
         generation: u64,
         workspace_root: PathBuf,
+        filesystem_revision: u64,
         result: Result<Vec<FileEntry>, String>,
     },
     SearchChanged(String),
@@ -255,10 +268,14 @@ impl StruktApp {
             persistence_generation: 0,
             persistence_in_flight: None,
             persistence_pending: None,
+            pending_recent_roots: VecDeque::new(),
+            active_recent_roots: Vec::new(),
             persistence_error: None,
             search_generation: 0,
+            filesystem_revision: 0,
             quick_open_generation: 0,
-            quick_open_files: Vec::new(),
+            quick_open_scan_in_flight: None,
+            quick_open_cache: None,
         }
     }
 
@@ -358,11 +375,11 @@ impl StruktApp {
                 self.open_folder_in_flight = false;
                 self.refresh_generation = self.refresh_generation.wrapping_add(1);
                 self.refresh_pending = false;
-                self.quick_open_generation = self.quick_open_generation.wrapping_add(1);
+                self.filesystem_revision = self.filesystem_revision.wrapping_add(1);
+                self.invalidate_quick_open_cache();
                 self.search_generation = self.search_generation.wrapping_add(1);
                 self.quick_open_visible = false;
                 self.quick_open_results.clear();
-                self.quick_open_files.clear();
                 self.search_results.matches.clear();
                 self.search_results.truncated = false;
                 return self.request_persistence(true);
@@ -402,6 +419,8 @@ impl StruktApp {
                             self.files = report.entries;
                             self.file_warnings = report.warnings;
                             self.filesystem_truncated = report.truncated;
+                            self.filesystem_revision = self.filesystem_revision.wrapping_add(1);
+                            self.invalidate_quick_open_cache();
                             self.refresh_error = None;
                             if let Some(workspace) = &mut self.workspace {
                                 workspace.stale_filesystem = false;
@@ -417,9 +436,9 @@ impl StruktApp {
                     return self.start_file_refresh();
                 }
                 if self.persistence_in_flight.is_none()
-                    && let Some((state, record_recent)) = self.persistence_pending.take()
+                    && let Some(state) = self.persistence_pending.take()
                 {
-                    return self.start_persistence(state, record_recent);
+                    return self.start_persistence(state);
                 }
                 return Task::none();
             }
@@ -591,20 +610,26 @@ impl StruktApp {
             Message::WorkspacePersisted {
                 generation,
                 workspace_root,
+                recent_roots,
                 result,
             } => {
                 if self.persistence_in_flight.as_ref()
                     != Some(&(generation, workspace_root.clone()))
+                    || self.active_recent_roots != recent_roots
                 {
                     return Task::none();
                 }
                 self.persistence_in_flight = None;
+                self.active_recent_roots.clear();
+                if result.is_err() {
+                    self.requeue_recent_roots(recent_roots);
+                }
                 if self.is_current_root(&workspace_root) {
                     self.persistence_error = result.err();
                     self.recompute_workspace_error();
                 }
-                if let Some((state, record_recent)) = self.persistence_pending.take() {
-                    return self.start_persistence(state, record_recent);
+                if let Some(state) = self.persistence_pending.take() {
+                    return self.start_persistence(state);
                 }
                 return Task::none();
             }
@@ -720,21 +745,26 @@ impl StruktApp {
             Message::ToggleQuickOpen => {
                 self.quick_open_visible = !self.quick_open_visible;
                 self.quick_open_query.clear();
-                self.quick_open_results = quick_open_candidates(&self.files, "", 50);
                 return if self.quick_open_visible {
-                    iced::widget::operation::focus(crate::view::quick_open_input_id())
+                    let files = self.quick_open_source();
+                    let has_source = files.is_some();
+                    let results =
+                        files.map_or_else(Vec::new, |files| quick_open_candidates(files, "", 50));
+                    self.quick_open_results = results;
+                    let focus = iced::widget::operation::focus(crate::view::quick_open_input_id());
+                    if self.quick_open_include_ignored && !has_source {
+                        Task::batch([focus, self.start_quick_open_scan()])
+                    } else {
+                        focus
+                    }
                 } else {
                     Task::none()
                 };
             }
             Message::QuickOpenChanged(query) => {
-                let files = if self.quick_open_include_ignored && !self.quick_open_files.is_empty()
-                {
-                    &self.quick_open_files
-                } else {
-                    &self.files
-                };
-                self.quick_open_results = quick_open_candidates(files, &query, 50);
+                self.quick_open_results = self
+                    .quick_open_source()
+                    .map_or_else(Vec::new, |files| quick_open_candidates(files, &query, 50));
                 self.quick_open_query = query;
                 return Task::none();
             }
@@ -749,18 +779,27 @@ impl StruktApp {
             Message::QuickOpenFilesLoaded {
                 generation,
                 workspace_root,
+                filesystem_revision,
                 result,
             } => {
-                if generation != self.quick_open_generation
+                if self.quick_open_scan_in_flight
+                    != Some((generation, workspace_root.clone(), filesystem_revision))
+                    || generation != self.quick_open_generation
                     || !self.is_current_root(&workspace_root)
+                    || filesystem_revision != self.filesystem_revision
                 {
                     return Task::none();
                 }
+                self.quick_open_scan_in_flight = None;
                 match result {
                     Ok(files) => {
                         self.quick_open_results =
                             quick_open_candidates(&files, &self.quick_open_query, 50);
-                        self.quick_open_files = files;
+                        self.quick_open_cache = Some(QuickOpenCache {
+                            workspace_root,
+                            filesystem_revision,
+                            files,
+                        });
                         self.quick_open_error = None;
                         self.recompute_workspace_error();
                     }
@@ -930,68 +969,124 @@ impl StruktApp {
         let Some(state) = self.workspace.clone() else {
             return Task::none();
         };
+        if record_recent {
+            self.enqueue_recent_root(state.root.clone());
+        }
         if self.persistence_in_flight.is_some() || self.refresh_in_flight.is_some() {
-            let record_recent = self
-                .persistence_pending
-                .as_ref()
-                .is_some_and(|(_, pending_recent)| *pending_recent)
-                || record_recent;
-            self.persistence_pending = Some((state, record_recent));
+            self.persistence_pending = Some(state);
             Task::none()
         } else {
-            self.start_persistence(state, record_recent)
+            self.start_persistence(state)
         }
     }
 
-    fn start_persistence(&mut self, state: WorkspaceState, record_recent: bool) -> Task<Message> {
+    fn start_persistence(&mut self, state: WorkspaceState) -> Task<Message> {
         let Some(store) = self.store.clone() else {
             return Task::none();
         };
         self.persistence_generation = self.persistence_generation.wrapping_add(1);
         let generation = self.persistence_generation;
         let workspace_root = state.root.path().to_path_buf();
+        let recent_roots: Vec<_> = self.pending_recent_roots.drain(..).collect();
+        self.active_recent_roots.clone_from(&recent_roots);
         self.persistence_in_flight = Some((generation, workspace_root.clone()));
         Task::perform(
             async move {
                 let task_root = workspace_root.clone();
+                let task_recent_roots = recent_roots.clone();
                 let result = tokio::task::spawn_blocking(move || {
-                    store.save(&state).map_err(|error| error.to_string())?;
-                    if record_recent {
-                        store
-                            .record_recent(&state.root)
-                            .map_err(|error| error.to_string())?;
-                    }
-                    Ok(())
+                    persist_workspace_batch(&store, &state, &recent_roots)
                 })
                 .await
                 .map_err(|error| error.to_string())
                 .and_then(|result| result);
-                (generation, task_root, result)
+                (generation, task_root, task_recent_roots, result)
             },
-            |(generation, workspace_root, result)| Message::WorkspacePersisted {
+            |(generation, workspace_root, recent_roots, result)| Message::WorkspacePersisted {
                 generation,
                 workspace_root,
+                recent_roots,
                 result,
             },
         )
+    }
+
+    fn enqueue_recent_root(&mut self, root: WorkspaceRoot) {
+        self.pending_recent_roots
+            .retain(|candidate| candidate != &root);
+        self.pending_recent_roots.push_back(root);
+    }
+
+    fn requeue_recent_roots(&mut self, roots: Vec<WorkspaceRoot>) {
+        for root in roots.into_iter().rev() {
+            self.pending_recent_roots
+                .retain(|candidate| candidate != &root);
+            self.pending_recent_roots.push_front(root);
+        }
+    }
+
+    fn quick_open_source(&self) -> Option<&[FileEntry]> {
+        if !self.quick_open_include_ignored {
+            return Some(&self.files);
+        }
+        let workspace = self.workspace.as_ref()?;
+        self.quick_open_cache.as_ref().and_then(|cache| {
+            (cache.workspace_root == workspace.root.path()
+                && cache.filesystem_revision == self.filesystem_revision)
+                .then_some(cache.files.as_slice())
+        })
+    }
+
+    fn invalidate_quick_open_cache(&mut self) {
+        self.quick_open_generation = self.quick_open_generation.wrapping_add(1);
+        self.quick_open_scan_in_flight = None;
+        self.quick_open_cache = None;
+        if self.quick_open_include_ignored {
+            self.quick_open_results.clear();
+        }
     }
 
     fn toggle_quick_open_ignored(&mut self) -> Task<Message> {
         self.quick_open_include_ignored = !self.quick_open_include_ignored;
         self.quick_open_error = None;
         self.recompute_workspace_error();
-        self.quick_open_generation = self.quick_open_generation.wrapping_add(1);
-        let generation = self.quick_open_generation;
-        let Some(workspace) = &self.workspace else {
-            return Task::none();
-        };
         if !self.quick_open_include_ignored {
-            self.quick_open_files.clear();
+            self.quick_open_generation = self.quick_open_generation.wrapping_add(1);
+            self.quick_open_scan_in_flight = None;
             self.quick_open_results =
                 quick_open_candidates(&self.files, &self.quick_open_query, 50);
             return Task::none();
         }
-        let workspace_root = workspace.root.path().to_path_buf();
+        if let Some(files) = self.quick_open_source() {
+            self.quick_open_results = quick_open_candidates(files, &self.quick_open_query, 50);
+            return Task::none();
+        }
+        self.quick_open_results.clear();
+        self.start_quick_open_scan()
+    }
+
+    fn start_quick_open_scan(&mut self) -> Task<Message> {
+        let Some(workspace_root) = self
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.root.path().to_path_buf())
+        else {
+            return Task::none();
+        };
+        if self
+            .quick_open_scan_in_flight
+            .as_ref()
+            .is_some_and(|(_, root, revision)| {
+                root == &workspace_root && *revision == self.filesystem_revision
+            })
+        {
+            return Task::none();
+        }
+        self.quick_open_generation = self.quick_open_generation.wrapping_add(1);
+        let generation = self.quick_open_generation;
+        let filesystem_revision = self.filesystem_revision;
+        self.quick_open_scan_in_flight =
+            Some((generation, workspace_root.clone(), filesystem_revision));
         let options = DiscoveryOptions {
             show_ignored: true,
             ..self.explorer_options
@@ -1007,14 +1102,27 @@ impl StruktApp {
                 .await
                 .map_err(|error| error.to_string())
                 .and_then(|result| result);
-                (generation, workspace_root, result)
+                (generation, workspace_root, filesystem_revision, result)
             },
-            |(generation, workspace_root, result)| Message::QuickOpenFilesLoaded {
-                generation,
-                workspace_root,
-                result,
+            |(generation, workspace_root, filesystem_revision, result)| {
+                Message::QuickOpenFilesLoaded {
+                    generation,
+                    workspace_root,
+                    filesystem_revision,
+                    result,
+                }
             },
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn active_recent_roots_for_test(&self) -> Vec<WorkspaceRoot> {
+        self.active_recent_roots.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_recent_roots_for_test(&self) -> Vec<WorkspaceRoot> {
+        self.pending_recent_roots.iter().cloned().collect()
     }
 
     fn schedule_search(&mut self, query: String) -> Task<Message> {
@@ -1213,6 +1321,20 @@ impl StruktApp {
         }
         Subscription::batch(subscriptions)
     }
+}
+
+pub(crate) fn persist_workspace_batch(
+    store: &WorkspaceStore,
+    state: &WorkspaceState,
+    recent_roots: &[WorkspaceRoot],
+) -> Result<(), String> {
+    store.save(state).map_err(|error| error.to_string())?;
+    for root in recent_roots {
+        store
+            .record_recent(root)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 pub(crate) fn operation_from_dialog(dialog: &ExplorerDialog) -> Option<FileOperation> {
