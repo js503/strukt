@@ -1,10 +1,11 @@
-use iced::widget::{Space, button, column, container, row, scrollable, text};
+use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
 use iced::{Background, Border, Color, Element, Fill, Length};
 use strukt_core::CapabilityId;
+use strukt_fs::{FileEntry, FileKind};
 use strukt_shell::Activity;
 use strukt_theme::{Rgb, ThemeTokens};
 
-use crate::app::{Message, StruktApp};
+use crate::app::{ExplorerDialog, Message, StruktApp};
 
 fn color(rgb: Rgb) -> Color {
     Color::from_rgb8(rgb.red, rgb.green, rgb.blue)
@@ -40,19 +41,33 @@ pub fn view(app: &StruktApp) -> Element<'_, Message> {
     ]
     .height(Fill);
 
-    container(column![header(tokens), body, drawer(app, tokens)].height(Fill))
+    container(column![header(app, tokens), body, drawer(app, tokens)].height(Fill))
         .width(Fill)
         .height(Fill)
         .style(panel_style(tokens, tokens.canvas))
         .into()
 }
 
-fn header(tokens: ThemeTokens) -> Element<'static, Message> {
+fn header(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Message> {
+    let workspace_label = app.workspace.as_ref().map_or_else(
+        || "No folder open".to_owned(),
+        |workspace| {
+            format!(
+                "{}  ·  {}",
+                workspace.root.display_name(),
+                workspace.root.path().display()
+            )
+        },
+    );
+    let open_folder = button("Open Folder…")
+        .on_press_maybe((!app.folder_picker_in_flight()).then_some(Message::OpenFolder));
+
     container(
         row![
             text("strukt").size(16),
-            text("  /  local workspace").size(13),
+            text(format!("  /  {workspace_label}")).size(13),
             Space::new().width(Fill),
+            open_folder,
             button("Toggle theme").on_press(Message::ToggleTheme),
             button("Context").on_press(Message::ToggleContext),
         ]
@@ -85,9 +100,81 @@ fn activity_rail(tokens: ThemeTokens) -> Element<'static, Message> {
     .into()
 }
 
-fn explorer(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Message> {
+fn explorer(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> {
     if !app.shell.explorer_visible {
         return container(Space::new()).width(Length::Shrink).into();
+    }
+
+    let has_workspace = app.workspace.is_some();
+    let operation_ready = has_workspace && !app.file_operation_in_flight();
+    let selection_ready = operation_ready && app.selected_entry.is_some();
+    let controls = row![
+        button(if app.explorer_options.show_hidden {
+            "Hide hidden"
+        } else {
+            "Show hidden"
+        })
+        .on_press_maybe(operation_ready.then_some(Message::ToggleHiddenFiles)),
+        button(if app.explorer_options.show_ignored {
+            "Hide ignored"
+        } else {
+            "Show ignored"
+        })
+        .on_press_maybe(operation_ready.then_some(Message::ToggleIgnoredFiles)),
+    ]
+    .spacing(6);
+    let operations = column![
+        row![
+            button("New File").on_press_maybe(operation_ready.then_some(Message::BeginCreateFile)),
+            button("New Folder")
+                .on_press_maybe(operation_ready.then_some(Message::BeginCreateDirectory)),
+        ]
+        .spacing(6),
+        row![
+            button("Rename").on_press_maybe(selection_ready.then_some(Message::BeginRename)),
+            button("Duplicate").on_press_maybe(selection_ready.then_some(Message::BeginDuplicate)),
+            button("Trash").on_press_maybe(selection_ready.then_some(Message::BeginTrash)),
+        ]
+        .spacing(6),
+    ]
+    .spacing(6);
+
+    let mut file_rows = column![].spacing(4);
+    if !has_workspace {
+        file_rows = file_rows.push(text("Open a folder to browse real files."));
+    } else if app.files.is_empty() {
+        file_rows = file_rows.push(text("This workspace has no visible files."));
+    } else {
+        for entry in &app.files {
+            let selected = app.selected_entry.as_ref() == Some(&entry.relative_path);
+            let row_label = if selected {
+                format!("● {}", file_entry_label(entry))
+            } else {
+                file_entry_label(entry)
+            };
+            let label = text(row_label);
+            let label = if entry.ignored {
+                label.color(color(tokens.text_muted))
+            } else {
+                label
+            };
+            file_rows = file_rows.push(
+                button(label)
+                    .width(Fill)
+                    .on_press(Message::SelectExplorerEntry(entry.relative_path.clone())),
+            );
+        }
+    }
+
+    let mut notices = column![].spacing(4);
+    if let Some(error) = &app.workspace_error {
+        notices = notices.push(text(format!("Error: {error}")));
+    }
+    for warning in &app.file_warnings {
+        notices = notices.push(text(format!("Warning: {warning}")));
+    }
+    if app.filesystem_truncated {
+        notices = notices.push(text("File list truncated"));
     }
 
     container(
@@ -97,20 +184,13 @@ fn explorer(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Message> {
                 Space::new().width(Fill),
                 button("×").on_press(Message::ToggleExplorer),
             ],
-            text("STRUKT"),
-            scrollable(
-                column![
-                    text("▾ crates"),
-                    text("  ▸ strukt-app"),
-                    text("  ▸ strukt-core"),
-                    text("  ▸ strukt-shell"),
-                    text("  ▸ strukt-theme"),
-                    text("▸ docs"),
-                    text("  README.md"),
-                    text("  Cargo.toml"),
-                ]
-                .spacing(6)
-            ),
+            button("Open Folder…")
+                .on_press_maybe((!app.folder_picker_in_flight()).then_some(Message::OpenFolder)),
+            controls,
+            operations,
+            explorer_dialog(app),
+            notices,
+            scrollable(file_rows),
         ]
         .spacing(10),
     )
@@ -118,6 +198,102 @@ fn explorer(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Message> {
     .width(Length::Fixed(235.0))
     .style(panel_style(tokens, tokens.panel))
     .into()
+}
+
+pub(crate) fn file_entry_label(entry: &FileEntry) -> String {
+    let indent = "  ".repeat(entry.depth);
+    let name = entry.relative_path.file_name().map_or_else(
+        || entry.relative_path.to_string_lossy().into_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let marker = match entry.kind {
+        FileKind::Directory => "▸ ",
+        FileKind::File => "",
+        FileKind::Symlink => "↗ ",
+    };
+    format!("{indent}{marker}{name}")
+}
+
+fn explorer_dialog(app: &StruktApp) -> Element<'_, Message> {
+    let in_flight = app.file_operation_in_flight();
+    let submit = (!in_flight).then_some(Message::SubmitExplorerDialog);
+    let cancel = (!in_flight).then_some(Message::CancelExplorerDialog);
+    let pending = in_flight.then_some(text("Working…"));
+
+    let content = match &app.explorer_dialog {
+        ExplorerDialog::None => return Space::new().height(Length::Shrink).into(),
+        ExplorerDialog::CreateFile(path) => column![
+            text("Create file"),
+            text_input("relative/path.txt", path)
+                .on_input_maybe((!in_flight).then_some(Message::ExplorerDialogInput))
+                .on_submit_maybe(submit.clone()),
+            row![
+                button("Create").on_press_maybe(submit),
+                button("Cancel").on_press_maybe(cancel)
+            ]
+            .spacing(6),
+        ],
+        ExplorerDialog::CreateDirectory(path) => column![
+            text("Create folder"),
+            text_input("relative/folder", path)
+                .on_input_maybe((!in_flight).then_some(Message::ExplorerDialogInput))
+                .on_submit_maybe(submit.clone()),
+            row![
+                button("Create").on_press_maybe(submit),
+                button("Cancel").on_press_maybe(cancel)
+            ]
+            .spacing(6),
+        ],
+        ExplorerDialog::Rename { from, to } => column![
+            text(format!("Rename {}", from.display())),
+            text_input("new relative path", to)
+                .on_input_maybe((!in_flight).then_some(Message::ExplorerDialogInput))
+                .on_submit_maybe(submit.clone()),
+            row![
+                button("Rename").on_press_maybe(submit),
+                button("Cancel").on_press_maybe(cancel)
+            ]
+            .spacing(6),
+        ],
+        ExplorerDialog::Duplicate { from, to } => column![
+            text(format!("Duplicate {}", from.display())),
+            text_input("copy relative path", to)
+                .on_input_maybe((!in_flight).then_some(Message::ExplorerDialogInput))
+                .on_submit_maybe(submit.clone()),
+            row![
+                button("Duplicate").on_press_maybe(submit),
+                button("Cancel").on_press_maybe(cancel)
+            ]
+            .spacing(6),
+        ],
+        ExplorerDialog::ConfirmTrash(path) => column![
+            text(format!("Move {} to Trash?", path.display())),
+            row![
+                button("Move to Trash").on_press_maybe(submit),
+                button("Delete Permanently…")
+                    .on_press_maybe((!in_flight).then_some(Message::BeginPermanentDelete)),
+                button("Cancel").on_press_maybe(cancel),
+            ]
+            .spacing(6),
+        ],
+        ExplorerDialog::ConfirmPermanentDelete(path) => column![
+            text(format!(
+                "Permanently delete {}? This cannot be undone.",
+                path.display()
+            )),
+            row![
+                button("Delete Permanently").on_press_maybe(submit),
+                button("Cancel").on_press_maybe(cancel),
+            ]
+            .spacing(6),
+        ],
+    }
+    .spacing(6);
+
+    match pending {
+        Some(pending) => column![content, pending].spacing(4).into(),
+        None => content.into(),
+    }
 }
 
 fn primary_canvas(tokens: ThemeTokens) -> Element<'static, Message> {

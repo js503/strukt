@@ -32,7 +32,7 @@ mod tests {
     use strukt_workspace::{WorkspaceRoot, WorkspaceState};
     use tempfile::{TempDir, tempdir};
 
-    use crate::app::{LaunchMode, Message, StruktApp};
+    use crate::app::{ExplorerDialog, LaunchMode, Message, StruktApp, operation_from_dialog};
 
     fn key_pressed(character: &'static str, code: key::Code, modifiers: Modifiers) -> Message {
         let key = Key::Character(character.into());
@@ -56,6 +56,141 @@ mod tests {
             hidden: false,
             ignored: false,
         }
+    }
+
+    #[test]
+    fn explorer_labels_use_real_relative_paths() {
+        let label = crate::view::file_entry_label(&FileEntry {
+            relative_path: "src/main.rs".into(),
+            kind: FileKind::File,
+            depth: 2,
+            hidden: false,
+            ignored: false,
+        });
+
+        assert_eq!(label, "    main.rs");
+    }
+
+    #[test]
+    fn dialog_builds_only_complete_file_operations() {
+        assert_eq!(
+            operation_from_dialog(&ExplorerDialog::Rename {
+                from: "old.txt".into(),
+                to: "new.txt".into(),
+            }),
+            Some(strukt_fs::FileOperation::Rename {
+                from: "old.txt".into(),
+                to: "new.txt".into(),
+            })
+        );
+        assert_eq!(
+            operation_from_dialog(&ExplorerDialog::CreateFile(String::new())),
+            None
+        );
+    }
+
+    #[test]
+    fn explorer_selection_rejects_paths_outside_the_workspace() {
+        let mut app = StruktApp::default();
+
+        let _ = app.update(Message::SelectExplorerEntry("../outside".into()));
+        assert_eq!(app.selected_entry, None);
+
+        let _ = app.update(Message::SelectExplorerEntry("/absolute".into()));
+        assert_eq!(app.selected_entry, None);
+
+        let _ = app.update(Message::SelectExplorerEntry("src/main.rs".into()));
+        assert_eq!(app.selected_entry, Some("src/main.rs".into()));
+    }
+
+    #[test]
+    fn ordinary_trash_and_permanent_delete_are_distinct_dialogs() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        app.selected_entry = Some("notes.txt".into());
+
+        let _ = app.update(Message::BeginTrash);
+        assert_eq!(
+            app.explorer_dialog,
+            ExplorerDialog::ConfirmTrash("notes.txt".into())
+        );
+        assert_eq!(
+            operation_from_dialog(&app.explorer_dialog),
+            Some(strukt_fs::FileOperation::MoveToTrash("notes.txt".into()))
+        );
+
+        let _ = app.update(Message::BeginPermanentDelete);
+        assert_eq!(
+            app.explorer_dialog,
+            ExplorerDialog::ConfirmPermanentDelete("notes.txt".into())
+        );
+        assert_eq!(
+            operation_from_dialog(&app.explorer_dialog),
+            Some(strukt_fs::FileOperation::DeletePermanently(
+                "notes.txt".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn one_file_operation_can_be_in_flight() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        app.explorer_dialog = ExplorerDialog::CreateFile("first.txt".to_owned());
+
+        assert_eq!(app.update(Message::SubmitExplorerDialog).units(), 1);
+        app.explorer_dialog = ExplorerDialog::CreateFile("second.txt".to_owned());
+        assert_eq!(app.update(Message::SubmitExplorerDialog).units(), 0);
+    }
+
+    #[test]
+    fn stale_file_operation_completion_cannot_affect_a_replaced_workspace() {
+        let first = tempdir().unwrap();
+        let second = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(first.path()));
+        app.explorer_dialog = ExplorerDialog::CreateFile("first.txt".to_owned());
+        let _ = app.update(Message::SubmitExplorerDialog);
+        let opened = open_workspace(&second);
+        let _ = app.update(Message::WorkspaceOpened(Ok(opened)));
+        app.explorer_dialog = ExplorerDialog::CreateFile("second.txt".to_owned());
+
+        let task = app.update(Message::FileOperationCompleted {
+            generation: 1,
+            workspace_root: first.path().canonicalize().unwrap(),
+            result: Err("stale failure".to_owned()),
+        });
+
+        assert_eq!(task.units(), 0);
+        assert_eq!(
+            app.explorer_dialog,
+            ExplorerDialog::CreateFile("second.txt".to_owned())
+        );
+        assert_eq!(app.workspace_error, None);
+    }
+
+    #[test]
+    fn failed_file_operation_keeps_dialog_open_and_owns_its_error() {
+        let project = tempdir().unwrap();
+        let root = project.path().canonicalize().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        app.explorer_dialog = ExplorerDialog::CreateFile("notes.txt".to_owned());
+        let _ = app.update(Message::SubmitExplorerDialog);
+
+        let _ = app.update(Message::FileOperationCompleted {
+            generation: 1,
+            workspace_root: root,
+            result: Err("cannot create".to_owned()),
+        });
+
+        assert_eq!(
+            app.explorer_dialog,
+            ExplorerDialog::CreateFile("notes.txt".to_owned())
+        );
+        assert_eq!(app.workspace_error.as_deref(), Some("cannot create"));
     }
 
     fn discovery(paths: &[&str]) -> DiscoveryReport {

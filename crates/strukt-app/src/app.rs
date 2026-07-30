@@ -1,10 +1,12 @@
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use iced::keyboard::{self, Key};
 use iced::{Subscription, Task, Theme, time};
 use strukt_core::{CapabilityDescriptor, CapabilityId, CapabilityRegistry};
-use strukt_fs::{DiscoveryOptions, DiscoveryReport, FileEntry, discover_report};
+use strukt_fs::{
+    DiscoveryOptions, DiscoveryReport, FileEntry, FileOperation, apply_operation, discover_report,
+};
 use strukt_shell::{Activity, ShellAction, ShellState};
 use strukt_theme::ThemeMode;
 use strukt_workspace::WorkspaceState;
@@ -49,13 +51,36 @@ pub struct StruktApp {
     pub filesystem_truncated: bool,
     pub explorer_options: DiscoveryOptions,
     pub workspace_error: Option<String>,
+    pub selected_entry: Option<PathBuf>,
+    pub explorer_dialog: ExplorerDialog,
     launch_mode: LaunchMode,
     open_folder_in_flight: bool,
     open_error: Option<String>,
+    operation_error: Option<String>,
     refresh_error: Option<String>,
     refresh_generation: u64,
     refresh_in_flight: Option<u64>,
     refresh_pending: bool,
+    operation_generation: u64,
+    operation_in_flight: Option<(u64, PathBuf)>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum ExplorerDialog {
+    #[default]
+    None,
+    CreateFile(String),
+    CreateDirectory(String),
+    Rename {
+        from: PathBuf,
+        to: String,
+    },
+    Duplicate {
+        from: PathBuf,
+        to: String,
+    },
+    ConfirmTrash(PathBuf),
+    ConfirmPermanentDelete(PathBuf),
 }
 
 #[derive(Clone, Debug)]
@@ -65,26 +90,29 @@ pub enum Message {
     ToggleDrawer,
     ToggleExplorer,
     ToggleTheme,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "constructed by the explorer view in Task 8")
-    )]
     OpenFolder,
     FolderPicked(Option<PathBuf>),
     WorkspaceOpened(Result<OpenedWorkspace, String>),
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "constructed by the explorer view in Task 8")
-    )]
     ToggleHiddenFiles,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "constructed by the explorer view in Task 8")
-    )]
     ToggleIgnoredFiles,
     FilesRefreshed {
         generation: u64,
         result: Result<DiscoveryReport, String>,
+    },
+    SelectExplorerEntry(PathBuf),
+    BeginCreateFile,
+    BeginCreateDirectory,
+    BeginRename,
+    BeginDuplicate,
+    BeginTrash,
+    BeginPermanentDelete,
+    ExplorerDialogInput(String),
+    CancelExplorerDialog,
+    SubmitExplorerDialog,
+    FileOperationCompleted {
+        generation: u64,
+        workspace_root: PathBuf,
+        result: Result<(), String>,
     },
     Keyboard(keyboard::Event),
     SmokeTimeout,
@@ -121,18 +149,27 @@ impl StruktApp {
             filesystem_truncated: false,
             explorer_options: DiscoveryOptions::default(),
             workspace_error: None,
+            selected_entry: None,
+            explorer_dialog: ExplorerDialog::None,
             launch_mode,
             open_folder_in_flight: false,
             open_error: None,
+            operation_error: None,
             refresh_error: None,
             refresh_generation: 0,
             refresh_in_flight: None,
             refresh_pending: false,
+            operation_generation: 0,
+            operation_in_flight: None,
         }
     }
 }
 
 impl StruktApp {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the reducer keeps message ownership and task scheduling explicit in one exhaustive match"
+    )]
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::OpenFolder => {
@@ -178,7 +215,10 @@ impl StruktApp {
                 self.file_warnings = opened.discovery.warnings;
                 self.filesystem_truncated = opened.discovery.truncated;
                 self.workspace = Some(opened.state);
+                self.selected_entry = None;
+                self.explorer_dialog = ExplorerDialog::None;
                 self.open_error = None;
+                self.operation_error = None;
                 self.refresh_error = None;
                 self.recompute_workspace_error();
                 self.open_folder_in_flight = false;
@@ -223,6 +263,117 @@ impl StruktApp {
                 }
                 return Task::none();
             }
+            Message::SelectExplorerEntry(path) => {
+                if is_scoped_relative_path(&path) {
+                    self.selected_entry = Some(path);
+                }
+                return Task::none();
+            }
+            Message::BeginCreateFile => {
+                if self.can_begin_operation() {
+                    self.explorer_dialog = ExplorerDialog::CreateFile(String::new());
+                }
+                return Task::none();
+            }
+            Message::BeginCreateDirectory => {
+                if self.can_begin_operation() {
+                    self.explorer_dialog = ExplorerDialog::CreateDirectory(String::new());
+                }
+                return Task::none();
+            }
+            Message::BeginRename => {
+                if self.can_begin_operation()
+                    && let Some(from) = self.selected_entry.clone()
+                {
+                    self.explorer_dialog = ExplorerDialog::Rename {
+                        to: from.to_string_lossy().into_owned(),
+                        from,
+                    };
+                }
+                return Task::none();
+            }
+            Message::BeginDuplicate => {
+                if self.can_begin_operation()
+                    && let Some(from) = self.selected_entry.clone()
+                {
+                    self.explorer_dialog = ExplorerDialog::Duplicate {
+                        to: from.to_string_lossy().into_owned(),
+                        from,
+                    };
+                }
+                return Task::none();
+            }
+            Message::BeginTrash => {
+                if self.can_begin_operation()
+                    && let Some(path) = self.selected_entry.clone()
+                {
+                    self.explorer_dialog = ExplorerDialog::ConfirmTrash(path);
+                }
+                return Task::none();
+            }
+            Message::BeginPermanentDelete => {
+                if self.can_begin_operation()
+                    && let Some(path) = self.selected_entry.clone()
+                {
+                    self.explorer_dialog = ExplorerDialog::ConfirmPermanentDelete(path);
+                }
+                return Task::none();
+            }
+            Message::ExplorerDialogInput(input) => {
+                if self.operation_in_flight.is_none() {
+                    match &mut self.explorer_dialog {
+                        ExplorerDialog::CreateFile(path)
+                        | ExplorerDialog::CreateDirectory(path) => *path = input,
+                        ExplorerDialog::Rename { to, .. }
+                        | ExplorerDialog::Duplicate { to, .. } => *to = input,
+                        ExplorerDialog::None
+                        | ExplorerDialog::ConfirmTrash(_)
+                        | ExplorerDialog::ConfirmPermanentDelete(_) => {}
+                    }
+                }
+                return Task::none();
+            }
+            Message::CancelExplorerDialog => {
+                if self.operation_in_flight.is_none() {
+                    self.explorer_dialog = ExplorerDialog::None;
+                    self.operation_error = None;
+                    self.recompute_workspace_error();
+                }
+                return Task::none();
+            }
+            Message::SubmitExplorerDialog => return self.submit_explorer_dialog(),
+            Message::FileOperationCompleted {
+                generation,
+                workspace_root,
+                result,
+            } => {
+                if self.operation_in_flight.as_ref() != Some(&(generation, workspace_root.clone()))
+                {
+                    return Task::none();
+                }
+                self.operation_in_flight = None;
+                let current_root = self
+                    .workspace
+                    .as_ref()
+                    .map(|workspace| workspace.root.path());
+                if current_root != Some(workspace_root.as_path()) {
+                    return Task::none();
+                }
+                match result {
+                    Ok(()) => {
+                        self.explorer_dialog = ExplorerDialog::None;
+                        self.selected_entry = None;
+                        self.operation_error = None;
+                        self.recompute_workspace_error();
+                        return self.request_file_refresh();
+                    }
+                    Err(error) => {
+                        self.operation_error = Some(error);
+                        self.recompute_workspace_error();
+                    }
+                }
+                return Task::none();
+            }
             _ => {}
         }
 
@@ -241,7 +392,20 @@ impl StruktApp {
             | Message::WorkspaceOpened(_)
             | Message::ToggleHiddenFiles
             | Message::ToggleIgnoredFiles
-            | Message::FilesRefreshed { .. } => unreachable!("handled before shell actions"),
+            | Message::FilesRefreshed { .. }
+            | Message::SelectExplorerEntry(_)
+            | Message::BeginCreateFile
+            | Message::BeginCreateDirectory
+            | Message::BeginRename
+            | Message::BeginDuplicate
+            | Message::BeginTrash
+            | Message::BeginPermanentDelete
+            | Message::ExplorerDialogInput(_)
+            | Message::CancelExplorerDialog
+            | Message::SubmitExplorerDialog
+            | Message::FileOperationCompleted { .. } => {
+                unreachable!("handled before shell actions")
+            }
             Message::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
                 if modifiers.command() =>
             {
@@ -269,7 +433,59 @@ impl StruktApp {
         self.workspace_error = self
             .open_error
             .clone()
+            .or_else(|| self.operation_error.clone())
             .or_else(|| self.refresh_error.clone());
+    }
+
+    fn can_begin_operation(&self) -> bool {
+        self.workspace.is_some() && self.operation_in_flight.is_none()
+    }
+
+    pub(crate) fn file_operation_in_flight(&self) -> bool {
+        self.operation_in_flight.is_some()
+    }
+
+    pub(crate) fn folder_picker_in_flight(&self) -> bool {
+        self.open_folder_in_flight
+    }
+
+    fn submit_explorer_dialog(&mut self) -> Task<Message> {
+        if self.operation_in_flight.is_some() {
+            return Task::none();
+        }
+        let Some(operation) = operation_from_dialog(&self.explorer_dialog) else {
+            return Task::none();
+        };
+        let Some(workspace) = &self.workspace else {
+            return Task::none();
+        };
+
+        let workspace_root = workspace.root.path().to_path_buf();
+        self.operation_generation = self.operation_generation.wrapping_add(1);
+        let generation = self.operation_generation;
+        self.operation_in_flight = Some((generation, workspace_root.clone()));
+        self.operation_error = None;
+        self.recompute_workspace_error();
+
+        Task::perform(
+            async move {
+                let operation_root = workspace_root.clone();
+                let result = match tokio::task::spawn_blocking(move || {
+                    apply_operation(operation_root, operation)
+                })
+                .await
+                {
+                    Ok(result) => result.map_err(|error| error.to_string()),
+                    Err(error) => Err(error.to_string()),
+                };
+                (generation, workspace_root, result)
+            },
+            |(generation, workspace_root, result)| Message::FileOperationCompleted {
+                generation,
+                workspace_root,
+                result,
+            },
+        )
     }
 
     fn request_file_refresh(&mut self) -> Task<Message> {
@@ -330,4 +546,41 @@ impl StruktApp {
             None => keyboard,
         }
     }
+}
+
+pub(crate) fn operation_from_dialog(dialog: &ExplorerDialog) -> Option<FileOperation> {
+    match dialog {
+        ExplorerDialog::CreateFile(path) if !path.is_empty() => {
+            Some(FileOperation::CreateFile(path.into()))
+        }
+        ExplorerDialog::CreateDirectory(path) if !path.is_empty() => {
+            Some(FileOperation::CreateDirectory(path.into()))
+        }
+        ExplorerDialog::Rename { from, to } if !to.is_empty() => Some(FileOperation::Rename {
+            from: from.clone(),
+            to: to.into(),
+        }),
+        ExplorerDialog::Duplicate { from, to } if !to.is_empty() => {
+            Some(FileOperation::Duplicate {
+                from: from.clone(),
+                to: to.into(),
+            })
+        }
+        ExplorerDialog::ConfirmTrash(path) => Some(FileOperation::MoveToTrash(path.clone())),
+        ExplorerDialog::ConfirmPermanentDelete(path) => {
+            Some(FileOperation::DeletePermanently(path.clone()))
+        }
+        ExplorerDialog::None
+        | ExplorerDialog::CreateFile(_)
+        | ExplorerDialog::CreateDirectory(_)
+        | ExplorerDialog::Rename { .. }
+        | ExplorerDialog::Duplicate { .. } => None,
+    }
+}
+
+fn is_scoped_relative_path(path: &Path) -> bool {
+    !path.as_os_str().is_empty()
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
 }
