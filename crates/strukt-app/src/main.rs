@@ -4,13 +4,23 @@ mod app;
 mod view;
 mod workspace;
 
-use app::{LaunchMode, StruktApp};
+use app::{LaunchMode, Message, StruktApp};
 
 fn main() -> iced::Result {
     let launch_mode = LaunchMode::from_args(std::env::args().skip(1));
 
+    if let LaunchMode::WorkspaceFilesSmoke { root } = &launch_mode {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("workspace files smoke runtime must start");
+        let result = runtime.block_on(app::workspace_files_smoke_task(root.clone()));
+        let mut app = StruktApp::new_with_store(launch_mode, None);
+        let _exit = app.update(Message::WorkspaceFilesSmokeFinished(result));
+        return Ok(());
+    }
+
     iced::application(
-        move || StruktApp::boot(launch_mode),
+        move || StruktApp::boot(launch_mode.clone()),
         StruktApp::update,
         view::view,
     )
@@ -22,6 +32,7 @@ fn main() -> iced::Result {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::time::Duration;
 
     use iced::keyboard::{self, Key, Location, Modifiers, key};
@@ -32,7 +43,10 @@ mod tests {
     use strukt_workspace::{WorkspaceRoot, WorkspaceState};
     use tempfile::{TempDir, tempdir};
 
-    use crate::app::{ExplorerDialog, LaunchMode, Message, StruktApp, operation_from_dialog};
+    use crate::app::{
+        ExplorerDialog, LaunchMode, Message, StruktApp, operation_from_dialog,
+        run_workspace_files_smoke,
+    };
 
     fn key_pressed(character: &'static str, code: key::Code, modifiers: Modifiers) -> Message {
         let key = Key::Character(character.into());
@@ -386,6 +400,73 @@ mod tests {
             LaunchMode::from_args(["--smoke-testing".to_owned()]),
             LaunchMode::Interactive
         );
+        assert_eq!(
+            LaunchMode::from_args(["launcher-argument".to_owned(), "--smoke-test".to_owned()]),
+            LaunchMode::SmokeTest
+        );
+    }
+
+    #[test]
+    fn workspace_files_smoke_requires_the_exact_flag_and_one_path() {
+        let root = PathBuf::from("fixture");
+
+        assert_eq!(
+            LaunchMode::from_args([
+                "--workspace-files-smoke".to_owned(),
+                root.display().to_string(),
+            ]),
+            LaunchMode::WorkspaceFilesSmoke { root: root.clone() }
+        );
+        assert_eq!(
+            LaunchMode::from_args(["--workspace-files-smoke".to_owned()]),
+            LaunchMode::Interactive
+        );
+        assert_eq!(
+            LaunchMode::from_args(["--workspace-files-smoke".to_owned(), String::new()]),
+            LaunchMode::Interactive
+        );
+        assert_eq!(
+            LaunchMode::from_args([
+                "--workspace-files-smoke".to_owned(),
+                root.display().to_string(),
+                "extra".to_owned(),
+            ]),
+            LaunchMode::Interactive
+        );
+        assert_eq!(
+            LaunchMode::from_args([
+                "--workspace-file-smoke".to_owned(),
+                root.display().to_string(),
+            ]),
+            LaunchMode::Interactive
+        );
+        assert_eq!(
+            LaunchMode::from_args([
+                "--workspace-files-smoke=true".to_owned(),
+                root.display().to_string(),
+            ]),
+            LaunchMode::Interactive
+        );
+    }
+
+    #[test]
+    fn workspace_files_smoke_opens_discovers_and_round_trips_without_repo_metadata() {
+        let project = tempdir().unwrap();
+        std::fs::write(project.path().join("strukt-smoke.txt"), "strukt\n").unwrap();
+
+        run_workspace_files_smoke(project.path().to_path_buf()).unwrap();
+
+        assert!(!project.path().join(".strukt").exists());
+    }
+
+    #[test]
+    fn workspace_files_smoke_rejects_a_fixture_without_the_exact_sentinel() {
+        let project = tempdir().unwrap();
+        std::fs::write(project.path().join("strukt-smoke.txt.bak"), "strukt\n").unwrap();
+
+        let error = run_workspace_files_smoke(project.path().to_path_buf()).unwrap_err();
+
+        assert!(error.contains("strukt-smoke.txt"));
     }
 
     #[test]
@@ -394,6 +475,13 @@ mod tests {
         assert_eq!(
             LaunchMode::SmokeTest.smoke_timeout(),
             Some(Duration::from_secs(3))
+        );
+        assert_eq!(
+            LaunchMode::WorkspaceFilesSmoke {
+                root: PathBuf::from("fixture")
+            }
+            .smoke_timeout(),
+            None
         );
     }
 

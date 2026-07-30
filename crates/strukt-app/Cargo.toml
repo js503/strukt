@@ -14,10 +14,8 @@ strukt-persistence.workspace = true
 strukt-shell.workspace = true
 strukt-theme.workspace = true
 strukt-workspace.workspace = true
-tokio.workspace = true
-
-[dev-dependencies]
 tempfile.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true

@@ -6,9 +6,9 @@ use iced::keyboard::{self, Key};
 use iced::{Subscription, Task, Theme, time};
 use strukt_core::{CapabilityDescriptor, CapabilityId, CapabilityRegistry};
 use strukt_fs::{
-    DiscoveryOptions, DiscoveryReport, FileEntry, FileEvent, FileOperation, QuickOpenCandidate,
-    SearchOptions, SearchResult, WorkspaceWatcher, apply_operation, discover_report,
-    quick_open_candidates, search_content,
+    DiscoveryOptions, DiscoveryReport, FileEntry, FileEvent, FileKind, FileOperation,
+    QuickOpenCandidate, SearchOptions, SearchResult, WorkspaceWatcher, apply_operation,
+    discover_report, quick_open_candidates, search_content,
 };
 use strukt_persistence::{RecentWorkspaces, WorkspaceStore};
 use strukt_shell::{Activity, ShellAction, ShellState};
@@ -19,27 +19,35 @@ use crate::workspace::{OpenedWorkspace, open_workspace_without_store};
 
 const SMOKE_TEST_DURATION: Duration = Duration::from_secs(3);
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub enum LaunchMode {
     #[default]
     Interactive,
     SmokeTest,
+    WorkspaceFilesSmoke {
+        root: PathBuf,
+    },
 }
 
 impl LaunchMode {
     #[must_use]
     pub fn from_args(args: impl IntoIterator<Item = String>) -> Self {
-        if args.into_iter().any(|argument| argument == "--smoke-test") {
-            Self::SmokeTest
-        } else {
-            Self::Interactive
+        let args = args.into_iter().collect::<Vec<_>>();
+        match args.as_slice() {
+            [flag, root] if flag == "--workspace-files-smoke" && !root.is_empty() => {
+                Self::WorkspaceFilesSmoke {
+                    root: PathBuf::from(root),
+                }
+            }
+            _ if args.iter().any(|argument| argument == "--smoke-test") => Self::SmokeTest,
+            _ => Self::Interactive,
         }
     }
 
     #[must_use]
-    pub const fn smoke_timeout(self) -> Option<Duration> {
+    pub const fn smoke_timeout(&self) -> Option<Duration> {
         match self {
-            Self::Interactive => None,
+            Self::Interactive | Self::WorkspaceFilesSmoke { .. } => None,
             Self::SmokeTest => Some(SMOKE_TEST_DURATION),
         }
     }
@@ -197,6 +205,7 @@ pub enum Message {
     ToggleSearchIgnored,
     Keyboard(keyboard::Event),
     SmokeTimeout,
+    WorkspaceFilesSmokeFinished(Result<(), String>),
 }
 
 impl Default for StruktApp {
@@ -280,6 +289,16 @@ impl StruktApp {
     }
 
     pub fn boot(launch_mode: LaunchMode) -> (Self, Task<Message>) {
+        if let LaunchMode::WorkspaceFilesSmoke { root } = &launch_mode {
+            let root = root.clone();
+            let app = Self::new_with_store(launch_mode, None);
+            let smoke = Task::perform(
+                workspace_files_smoke_task(root),
+                Message::WorkspaceFilesSmokeFinished,
+            );
+            return (app, smoke);
+        }
+
         let mut app = Self::new(launch_mode);
         let Some(store) = app.store.clone() else {
             app.open_error = Some("platform application-data directory is unavailable".to_owned());
@@ -929,6 +948,13 @@ impl StruktApp {
                 println!("strukt smoke test: native event loop started");
                 return iced::exit();
             }
+            Message::WorkspaceFilesSmokeFinished(Ok(())) => {
+                println!("strukt workspace files smoke: open, discovery, and persistence passed");
+                return iced::exit();
+            }
+            Message::WorkspaceFilesSmokeFinished(Err(error)) => {
+                panic!("strukt workspace files smoke failed: {error}");
+            }
         };
         if let Some(action) = action {
             self.shell.apply(action);
@@ -1332,6 +1358,43 @@ impl StruktApp {
         }
         Subscription::batch(subscriptions)
     }
+}
+
+pub(crate) fn run_workspace_files_smoke(root: PathBuf) -> Result<(), String> {
+    const SENTINEL: &str = "strukt-smoke.txt";
+
+    let store_directory = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let store = WorkspaceStore::at(store_directory.path().join("workspaces"));
+    let opened = crate::workspace::open_workspace_with_store(root, &store)?;
+
+    let sentinel_found =
+        opened.discovery.entries.iter().any(|entry| {
+            entry.relative_path == Path::new(SENTINEL) && entry.kind == FileKind::File
+        });
+    if !sentinel_found {
+        return Err(format!(
+            "workspace discovery did not contain the required {SENTINEL} sentinel"
+        ));
+    }
+
+    store
+        .save(&opened.state)
+        .map_err(|error| error.to_string())?;
+    let snapshot = store
+        .load(opened.state.root.id())
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "persisted workspace snapshot could not be reloaded".to_owned())?;
+    if snapshot.state != opened.state {
+        return Err("reloaded workspace snapshot did not match the opened workspace".to_owned());
+    }
+
+    Ok(())
+}
+
+pub(crate) async fn workspace_files_smoke_task(root: PathBuf) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || run_workspace_files_smoke(root))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 pub(crate) fn persist_workspace_batch(
