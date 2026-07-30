@@ -1,14 +1,24 @@
 use std::io::{self, ErrorKind};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
+use cap_fs_ext::{
+    FollowSymlinks, MetadataExt as IdentityMetadataExt, OpenOptionsFollowExt, OpenOptionsSyncExt,
+};
 use cap_std::ambient_authority;
 #[cfg(windows)]
-use cap_std::fs::MetadataExt;
+use cap_std::fs::MetadataExt as WindowsMetadataExt;
+#[cfg(unix)]
+use cap_std::fs::PermissionsExt;
 use cap_std::fs::{Dir, File, Metadata, OpenOptions, Permissions};
 use thiserror::Error;
 
 #[cfg(windows)]
 const WINDOWS_FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+const STAGING_PREFIX: &str = ".strukt-duplicate-stage-";
+const STAGING_ATTEMPTS: usize = 32;
+const STAGING_PAYLOAD: &str = "payload";
+static NEXT_STAGING_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FileOperation {
@@ -148,18 +158,199 @@ fn delete_permanently(root: &Dir, path: &Path) -> Result<(), OperationError> {
 }
 
 fn duplicate(root: &Dir, source: &Path, destination: &Path) -> Result<(), OperationError> {
+    duplicate_with_hook(root, source, destination, &mut || Ok(()))
+}
+
+fn duplicate_with_hook(
+    root: &Dir,
+    source: &Path,
+    destination: &Path,
+    after_file_copy: &mut impl FnMut() -> Result<(), OperationError>,
+) -> Result<(), OperationError> {
+    let source_metadata = checked_copy_metadata(root, source)?;
+    reject_resolved_descendant(root, source, destination, source_metadata.is_dir())?;
     let plan = preflight_copy(root, source)?;
-    if matches!(
-        plan.first().map(|entry| entry.kind),
-        Some(CopyKind::Directory)
-    ) && destination.starts_with(source)
+    let (destination_parent, destination_name) = destination_parts(destination)?;
+    let parent = open_destination_parent(root, destination_parent)?;
+    let staging = create_staging(&parent)?;
+
+    if let Err(error) = execute_copy_plan(
+        root,
+        &staging,
+        Path::new(STAGING_PAYLOAD),
+        &plan,
+        after_file_copy,
+    ) {
+        return Err(cleanup_failed_staging(staging, error));
+    }
+
+    if let Err(error) = ensure_vacant(&parent, Path::new(destination_name)) {
+        return Err(cleanup_failed_staging(staging, error));
+    }
+
+    // Neither `std` nor cap-std offers a portable atomic no-replace rename.
+    // Publishing only after a capability-scoped vacancy check minimizes this
+    // accepted race while keeping the final destination untouched on copy
+    // failures.
+    if let Err(error) = staging
+        .rename(STAGING_PAYLOAD, &parent, destination_name)
+        .map_err(|error| {
+            OperationError::Io(io::Error::new(
+                error.kind(),
+                format!("staging publication failed: {error}"),
+            ))
+        })
+    {
+        return Err(cleanup_failed_staging(staging, error));
+    }
+
+    // cap-std cannot publish a read-only directory payload on every supported
+    // platform. The staged root is restrictive (0700 on Unix), then its saved
+    // final permissions are applied immediately through the held parent
+    // capability after publication. Child permissions are finalized in stage.
+    if let Some(permissions) = top_directory_permissions(&plan)
+        && let Err(error) = parent
+            .set_permissions(Path::new(destination_name), permissions)
+            .map_err(|error| {
+                OperationError::Io(io::Error::new(
+                    error.kind(),
+                    format!("published duplicate final permission update failed: {error}"),
+                ))
+            })
+    {
+        return Err(cleanup_published_stage(staging, error));
+    }
+
+    staging.remove_open_dir_all().map_err(|error| {
+        OperationError::Io(io::Error::other(format!(
+            "duplicate published but staging cleanup failed: {error}"
+        )))
+    })
+}
+
+fn top_directory_permissions(plan: &[CopyEntry]) -> Option<Permissions> {
+    plan.first().and_then(|entry| {
+        matches!(entry.kind, CopyKind::Directory).then(|| entry.permissions.clone())
+    })
+}
+
+fn reject_resolved_descendant(
+    root: &Dir,
+    source: &Path,
+    destination: &Path,
+    source_is_directory: bool,
+) -> Result<(), OperationError> {
+    if !source_is_directory {
+        return Ok(());
+    }
+
+    let canonical_source = root.canonicalize(source).map_err(OperationError::Io)?;
+    let (destination_parent, destination_name) = destination_parts(destination)?;
+    let canonical_parent = root
+        .canonicalize(nonempty_parent(destination_parent))
+        .map_err(OperationError::Io)?;
+    let canonical_destination = canonical_parent.join(destination_name);
+    if canonical_destination.starts_with(&canonical_source)
+        || destination_ancestor_matches_source(root, &canonical_source, &canonical_parent)?
     {
         return Err(invalid_input(
             "cannot duplicate a directory into itself or its descendant",
         ));
     }
+    Ok(())
+}
 
-    execute_copy_plan(root, destination, &plan)
+fn destination_ancestor_matches_source(
+    root: &Dir,
+    canonical_source: &Path,
+    canonical_parent: &Path,
+) -> Result<bool, OperationError> {
+    let source = root
+        .open_dir(canonical_source)
+        .map_err(OperationError::Io)?
+        .dir_metadata()
+        .map_err(OperationError::Io)?;
+    let mut ancestor = Some(canonical_parent);
+
+    while let Some(path) = ancestor {
+        let metadata = open_destination_parent(root, path)?
+            .dir_metadata()
+            .map_err(OperationError::Io)?;
+        if source.dev() == metadata.dev() && source.ino() == metadata.ino() {
+            return Ok(true);
+        }
+        ancestor = path.parent().filter(|parent| *parent != path);
+    }
+    Ok(false)
+}
+
+fn destination_parts(destination: &Path) -> Result<(&Path, &std::ffi::OsStr), OperationError> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| OperationError::OutsideRoot(destination.to_path_buf()))?;
+    let name = destination
+        .file_name()
+        .ok_or_else(|| invalid_input("duplicate destination must name a workspace entry"))?;
+    Ok((parent, name))
+}
+
+fn nonempty_parent(parent: &Path) -> &Path {
+    if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    }
+}
+
+fn open_destination_parent(root: &Dir, parent: &Path) -> Result<Dir, OperationError> {
+    if parent.as_os_str().is_empty() {
+        root.try_clone().map_err(OperationError::Io)
+    } else {
+        root.open_dir(parent).map_err(OperationError::Io)
+    }
+}
+
+fn create_staging(parent: &Dir) -> Result<Dir, OperationError> {
+    for _ in 0..STAGING_ATTEMPTS {
+        let id = NEXT_STAGING_ID.fetch_add(1, Ordering::Relaxed);
+        let name = format!("{STAGING_PREFIX}{}-{id}", std::process::id());
+        match parent.create_dir(&name) {
+            Ok(()) => {
+                if let Err(error) = make_staging_private(parent, Path::new(&name)) {
+                    let cleanup_result = parent.remove_dir_all(&name);
+                    return Err(match cleanup_result {
+                        Ok(()) => error,
+                        Err(cleanup_error) => combined_cleanup_error(&error, &cleanup_error),
+                    });
+                }
+                return parent.open_dir(&name).map_err(|open_error| {
+                    let cleanup_result = parent.remove_dir_all(&name);
+                    match cleanup_result {
+                        Ok(()) => OperationError::Io(open_error),
+                        Err(cleanup_error) => {
+                            combined_cleanup_error(&OperationError::Io(open_error), &cleanup_error)
+                        }
+                    }
+                });
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(OperationError::Io(error)),
+        }
+    }
+    Err(OperationError::Io(io::Error::new(
+        ErrorKind::AlreadyExists,
+        "could not allocate a unique duplicate staging directory",
+    )))
+}
+
+fn make_staging_private(parent: &Dir, name: &Path) -> Result<(), OperationError> {
+    #[cfg(unix)]
+    parent
+        .set_permissions(name, Permissions::from_mode(0o700))
+        .map_err(OperationError::Io)?;
+    #[cfg(not(unix))]
+    let _ = (parent, name);
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -226,64 +417,78 @@ fn checked_copy_metadata(root: &Dir, source: &Path) -> Result<Metadata, Operatio
 }
 
 fn execute_copy_plan(
-    root: &Dir,
+    source_root: &Dir,
+    destination_root: &Dir,
     destination: &Path,
     plan: &[CopyEntry],
+    after_file_copy: &mut impl FnMut() -> Result<(), OperationError>,
 ) -> Result<(), OperationError> {
-    let root_kind = plan
-        .first()
-        .map(|entry| entry.kind)
-        .ok_or_else(|| invalid_input("duplicate source produced an empty copy plan"))?;
-    let mut created_destination = false;
+    if plan.is_empty() {
+        return Err(invalid_input(
+            "duplicate source produced an empty copy plan",
+        ));
+    }
 
-    let result = (|| {
-        for entry in plan {
-            let target = copy_target(destination, &entry.relative);
-            match entry.kind {
-                CopyKind::Directory => {
-                    root.create_dir(&target).map_err(OperationError::Io)?;
-                    if entry.relative.as_os_str().is_empty() {
-                        created_destination = true;
-                    }
-                }
-                CopyKind::File => {
-                    let mut source_file = open_regular_source(root, &entry.source)?;
-                    let mut destination_file = root
-                        .open_with(&target, OpenOptions::new().write(true).create_new(true))
-                        .map_err(OperationError::Io)?;
-                    if entry.relative.as_os_str().is_empty() {
-                        created_destination = true;
-                    }
-                    io::copy(&mut source_file, &mut destination_file)
-                        .map_err(OperationError::Io)?;
-                    destination_file
-                        .set_permissions(entry.permissions.clone())
-                        .map_err(OperationError::Io)?;
-                }
+    for entry in plan {
+        let target = copy_target(destination, &entry.relative);
+        match entry.kind {
+            CopyKind::Directory => {
+                destination_root
+                    .create_dir(&target)
+                    .map_err(OperationError::Io)?;
+            }
+            CopyKind::File => {
+                let mut source_file = open_regular_source(source_root, &entry.source)?;
+                let mut destination_file = destination_root
+                    .open_with(&target, OpenOptions::new().write(true).create_new(true))
+                    .map_err(OperationError::Io)?;
+                io::copy(&mut source_file, &mut destination_file).map_err(OperationError::Io)?;
+                destination_file
+                    .set_permissions(entry.permissions.clone())
+                    .map_err(OperationError::Io)?;
+                after_file_copy()?;
             }
         }
+    }
 
-        for entry in plan.iter().rev() {
-            if matches!(entry.kind, CopyKind::Directory) {
-                root.set_permissions(
+    for entry in plan.iter().rev() {
+        if matches!(entry.kind, CopyKind::Directory) && !entry.relative.as_os_str().is_empty() {
+            destination_root
+                .set_permissions(
                     copy_target(destination, &entry.relative),
                     entry.permissions.clone(),
                 )
                 .map_err(OperationError::Io)?;
-            }
         }
-        Ok(())
-    })();
-
-    if result.is_err() && created_destination {
-        cleanup_duplicate(root, destination, root_kind);
     }
-    result
+    set_restrictive_staging_root(destination_root, destination, plan)?;
+    Ok(())
+}
+
+fn set_restrictive_staging_root(
+    destination_root: &Dir,
+    destination: &Path,
+    plan: &[CopyEntry],
+) -> Result<(), OperationError> {
+    if !matches!(
+        plan.first().map(|entry| entry.kind),
+        Some(CopyKind::Directory)
+    ) {
+        return Ok(());
+    }
+
+    #[cfg(unix)]
+    destination_root
+        .set_permissions(destination, Permissions::from_mode(0o700))
+        .map_err(OperationError::Io)?;
+    #[cfg(not(unix))]
+    let _ = (destination_root, destination);
+    Ok(())
 }
 
 fn open_regular_source(root: &Dir, source: &Path) -> Result<File, OperationError> {
     let mut options = OpenOptions::new();
-    options.read(true)._cap_fs_ext_nonblock(true);
+    options.read(true).nonblock(true).follow(FollowSymlinks::No);
     let file = root
         .open_with(source, &options)
         .map_err(OperationError::Io)?;
@@ -305,11 +510,27 @@ fn copy_target(destination: &Path, relative: &Path) -> PathBuf {
     }
 }
 
-fn cleanup_duplicate(root: &Dir, destination: &Path, kind: CopyKind) {
-    let _ = match kind {
-        CopyKind::Directory => root.remove_dir_all(destination),
-        CopyKind::File => root.remove_file(destination),
-    };
+fn cleanup_failed_staging(staging: Dir, original: OperationError) -> OperationError {
+    match staging.remove_open_dir_all() {
+        Ok(()) => original,
+        Err(cleanup) => combined_cleanup_error(&original, &cleanup),
+    }
+}
+
+fn cleanup_published_stage(staging: Dir, original: OperationError) -> OperationError {
+    match staging.remove_open_dir_all() {
+        Ok(()) => original,
+        Err(cleanup) => OperationError::Io(io::Error::other(format!(
+            "duplicate published but final permission update failed: {original}; staging cleanup \
+             failed: {cleanup}"
+        ))),
+    }
+}
+
+fn combined_cleanup_error(original: &OperationError, cleanup: &io::Error) -> OperationError {
+    OperationError::Io(io::Error::other(format!(
+        "duplicate failed: {original}; staging cleanup failed: {cleanup}"
+    )))
 }
 
 fn invalid_input(message: &'static str) -> OperationError {
@@ -326,4 +547,50 @@ pub enum OperationError {
     Io(#[source] io::Error),
     #[error("trash operation failed: {0}")]
     Trash(#[source] trash::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
+    use super::*;
+
+    #[test]
+    fn injected_failure_after_a_staged_child_cleans_stage_and_allows_retry() {
+        let workspace = tempdir().unwrap();
+        fs::create_dir(workspace.path().join("source")).unwrap();
+        fs::write(workspace.path().join("source/child.txt"), "child").unwrap();
+        let root = Dir::open_ambient_dir(workspace.path(), ambient_authority()).unwrap();
+        let mut copied_children = 0;
+
+        let result =
+            duplicate_with_hook(&root, Path::new("source"), Path::new("copy"), &mut || {
+                copied_children += 1;
+                Err(invalid_input("injected copy failure"))
+            });
+
+        assert!(result.is_err());
+        assert_eq!(copied_children, 1);
+        assert!(root.symlink_metadata("copy").is_err());
+        assert_no_staging_entries(&root);
+
+        duplicate(&root, Path::new("source"), Path::new("copy")).unwrap();
+        assert_eq!(root.read_to_string("copy/child.txt").unwrap(), "child");
+        assert_no_staging_entries(&root);
+    }
+
+    fn assert_no_staging_entries(root: &Dir) {
+        let entries = root
+            .entries()
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| name.to_string_lossy().starts_with(STAGING_PREFIX))
+            .collect::<Vec<_>>();
+        assert!(
+            entries.is_empty(),
+            "unexpected staging entries: {entries:?}"
+        );
+    }
 }

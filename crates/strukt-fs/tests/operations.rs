@@ -16,6 +16,21 @@ fn assert_rejected(result: &Result<(), OperationError>) {
     assert!(result.is_err(), "operation unexpectedly succeeded");
 }
 
+fn assert_no_duplicate_staging_entries(root: &Path) {
+    let staging_entries = fs::read_dir(root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .filter(|name| {
+            name.to_string_lossy()
+                .starts_with(".strukt-duplicate-stage-")
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        staging_entries.is_empty(),
+        "unexpected duplicate staging entries: {staging_entries:?}"
+    );
+}
+
 #[test]
 fn create_rename_and_duplicate_stay_inside_the_workspace() {
     let root = tempdir().unwrap();
@@ -47,6 +62,7 @@ fn create_rename_and_duplicate_stay_inside_the_workspace() {
         fs::read_to_string(root.path().join("copy.txt")).unwrap(),
         "workspace notes"
     );
+    assert_no_duplicate_staging_entries(root.path());
 }
 
 #[test]
@@ -282,7 +298,8 @@ mod unix {
         let root = tempdir().unwrap();
         let source = root.path().join("source");
         fs::create_dir(&source).unwrap();
-        let unreadable = source.join("unreadable.txt");
+        fs::write(source.join("a-copied-first.txt"), "first").unwrap();
+        let unreadable = source.join("z-unreadable.txt");
         fs::write(&unreadable, "content").unwrap();
         fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
 
@@ -297,6 +314,7 @@ mod unix {
         fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o600)).unwrap();
         assert_rejected(&result);
         assert!(!root.path().join("copy").exists());
+        assert_no_duplicate_staging_entries(root.path());
 
         apply_operation(
             root.path(),
@@ -307,9 +325,10 @@ mod unix {
         )
         .unwrap();
         assert_eq!(
-            fs::read_to_string(root.path().join("copy/unreadable.txt")).unwrap(),
+            fs::read_to_string(root.path().join("copy/z-unreadable.txt")).unwrap(),
             "content"
         );
+        assert_no_duplicate_staging_entries(root.path());
     }
 
     #[test]
@@ -378,6 +397,25 @@ mod unix {
     }
 
     #[test]
+    fn in_root_symlink_alias_destination_is_rejected_without_mutation() {
+        let root = tempdir().unwrap();
+        fs::create_dir(root.path().join("source")).unwrap();
+        fs::write(root.path().join("source/original.txt"), "original").unwrap();
+        symlink(root.path().join("source"), root.path().join("alias")).unwrap();
+
+        assert_rejected(&apply_operation(
+            root.path(),
+            FileOperation::Duplicate {
+                from: "source".into(),
+                to: "alias/copy".into(),
+            },
+        ));
+
+        assert!(!root.path().join("source/copy").exists());
+        assert_no_duplicate_staging_entries(root.path());
+    }
+
+    #[test]
     fn symlinked_parent_outside_root_is_rejected_for_create_and_destination_paths() {
         let root = tempdir().unwrap();
         let outside = tempdir().unwrap();
@@ -411,6 +449,31 @@ mod unix {
             "source"
         );
     }
+}
+
+#[test]
+fn case_insensitive_alias_destination_is_rejected_when_the_filesystem_has_one() {
+    let root = tempdir().unwrap();
+    fs::create_dir(root.path().join("Source")).unwrap();
+    fs::write(root.path().join("Source/original.txt"), "original").unwrap();
+    let canonical_source = fs::canonicalize(root.path().join("Source")).unwrap();
+    let Ok(canonical_alias) = fs::canonicalize(root.path().join("source")) else {
+        return;
+    };
+    if canonical_alias != canonical_source {
+        return;
+    }
+
+    assert_rejected(&apply_operation(
+        root.path(),
+        FileOperation::Duplicate {
+            from: "Source".into(),
+            to: "source/copy".into(),
+        },
+    ));
+
+    assert!(!root.path().join("Source/copy").exists());
+    assert_no_duplicate_staging_entries(root.path());
 }
 
 #[cfg(windows)]
