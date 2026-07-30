@@ -1864,7 +1864,7 @@ git commit -m "feat: open local workspaces"
 - Modify: `crates/strukt-app/src/view.rs`
 - Modify: `crates/strukt-app/src/main.rs`
 
-- [ ] **Step 1: Add view-model assertions**
+- [x] **Step 1: Add view-model assertions**
 
 Add to `main.rs` tests:
 
@@ -1885,7 +1885,7 @@ fn explorer_labels_use_real_relative_paths() {
 }
 ```
 
-- [ ] **Step 2: Run the view test and verify RED**
+- [x] **Step 2: Run the view test and verify RED**
 
 Run:
 
@@ -1895,7 +1895,7 @@ cargo test -p strukt-app explorer_labels_use_real_relative_paths
 
 Expected: FAIL because `file_entry_label` does not exist.
 
-- [ ] **Step 3: Replace representative explorer content**
+- [x] **Step 3: Replace representative explorer content**
 
 In `view.rs`, import `strukt_fs::{FileEntry, FileKind}` and add:
 
@@ -1967,7 +1967,7 @@ the explorer without hiding the open-folder action. Render each `file_warnings`
 entry as a non-blocking warning and show `File list truncated` when
 `filesystem_truncated` is true.
 
-- [ ] **Step 4: Add selected-entry and safe file-operation dialogs**
+- [x] **Step 4: Add selected-entry and safe file-operation dialogs**
 
 Add this UI state in `app.rs`:
 
@@ -2086,7 +2086,7 @@ Expected:
   selected relative path;
 - the UI remains responsive during discovery.
 
-- [ ] **Step 6: Commit the explorer UI**
+- [x] **Step 6: Commit the explorer UI**
 
 ```bash
 git add crates/strukt-app
