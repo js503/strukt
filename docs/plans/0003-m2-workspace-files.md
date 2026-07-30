@@ -1,6 +1,7 @@
 # M2 Workspace and Files Implementation Plan
 
-- Status: Ready
+- Status: In progress
+- Tracking issue: [#3 — M2: Local workspace and files](https://github.com/js503/strukt/issues/3)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > superpowers:subagent-driven-development (recommended) or
@@ -157,8 +158,6 @@ notify = "8.2.0"
 rfd = "0.17.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1"
-strukt-fs = { path = "crates/strukt-fs" }
-strukt-persistence = { path = "crates/strukt-persistence" }
 strukt-workspace = { path = "crates/strukt-workspace" }
 tempfile = "3.27.0"
 tokio = { version = "1", features = ["rt", "sync"] }
@@ -410,7 +409,9 @@ git commit -m "feat: add local workspace identity"
 
 - [ ] **Step 1: Add the persistence crate and failing round-trip test**
 
-Add `crates/strukt-persistence` to `workspace.members`.
+Add `crates/strukt-persistence` to `workspace.members` and add
+`strukt-persistence = { path = "crates/strukt-persistence" }` to
+`workspace.dependencies`.
 
 Create `crates/strukt-persistence/Cargo.toml`:
 
@@ -622,7 +623,8 @@ git commit -m "feat: persist local workspace state"
 
 - [ ] **Step 1: Add the filesystem crate and failing discovery tests**
 
-Add `crates/strukt-fs` to `workspace.members`.
+Add `crates/strukt-fs` to `workspace.members` and add
+`strukt-fs = { path = "crates/strukt-fs" }` to `workspace.dependencies`.
 
 Create `crates/strukt-fs/Cargo.toml`:
 

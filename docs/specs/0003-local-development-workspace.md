@@ -8,6 +8,8 @@
   [`../decisions/0001-native-ui-framework.md`](../decisions/0001-native-ui-framework.md)
 - First implementation plan:
   [`../plans/0003-m2-workspace-files.md`](../plans/0003-m2-workspace-files.md)
+- First-slice tracking issue:
+  [#3 — M2: Local workspace and files](https://github.com/js503/strukt/issues/3)
 - Spatial reference:
   [`../mockups/workspace-shell/focus-context.html`](../mockups/workspace-shell/focus-context.html)
 

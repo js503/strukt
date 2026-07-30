@@ -7,7 +7,7 @@ Milestone order, dependencies, outcomes, and exit criteria are defined in
 |---|---|---|---|---|---|---|
 | M0 | Product and architecture foundation | Complete | [`specs/0001-workspace-shell-and-remote-development.md`](specs/0001-workspace-shell-and-remote-development.md) | — | — | — |
 | M1 | Native shell foundation | Complete | [`specs/0001-workspace-shell-and-remote-development.md`](specs/0001-workspace-shell-and-remote-development.md), [`specs/0002-m1-windows-smoke-validation.md`](specs/0002-m1-windows-smoke-validation.md) | [`plans/0001-native-shell-foundation.md`](plans/0001-native-shell-foundation.md), [`plans/0002-m1-windows-smoke-validation.md`](plans/0002-m1-windows-smoke-validation.md) | [#1](https://github.com/js503/strukt/issues/1) | [#2](https://github.com/js503/strukt/pull/2) |
-| M2 | Local development workspace | Planned | [`specs/0003-local-development-workspace.md`](specs/0003-local-development-workspace.md) | [`plans/0003-m2-workspace-files.md`](plans/0003-m2-workspace-files.md) | Not created | Not created |
+| M2 | Local development workspace | In progress | [`specs/0003-local-development-workspace.md`](specs/0003-local-development-workspace.md) | [`plans/0003-m2-workspace-files.md`](plans/0003-m2-workspace-files.md) | [#3](https://github.com/js503/strukt/issues/3) | Not created |
 | M3 | Local persistent sessions | Not planned | Not created | Not created | Not created | Not created |
 | M4 | SSH remote workspace | Not planned | Not created | Not created | Not created | Not created |
 | M5 | Remote persistent sessions | Not planned | Not created | Not created | Not created | Not created |
