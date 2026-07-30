@@ -1,4 +1,5 @@
 use std::fs;
+#[cfg(not(windows))]
 use std::io::ErrorKind;
 use std::path::Path;
 
@@ -6,6 +7,7 @@ use strukt_fs::{FileOperation, OperationError, apply_operation as apply_with_roo
 use strukt_workspace::WorkspaceRoot;
 use tempfile::tempdir;
 
+#[cfg(not(windows))]
 fn assert_already_exists(result: Result<(), OperationError>) {
     match result {
         Err(OperationError::Io(error)) => assert_eq!(error.kind(), ErrorKind::AlreadyExists),
@@ -74,6 +76,7 @@ fn trash_fails_closed_when_a_confined_os_adapter_is_unavailable() {
     );
 }
 
+#[cfg(not(windows))]
 #[test]
 fn create_rename_and_duplicate_stay_inside_the_workspace() {
     let root = tempdir().unwrap();
@@ -137,6 +140,7 @@ fn permanent_delete_requires_an_explicit_operation() {
     assert!(!root.path().join("delete.txt").exists());
 }
 
+#[cfg(not(windows))]
 #[test]
 fn rename_move_and_duplicate_never_overwrite_existing_destinations() {
     for operation in ["rename", "move", "duplicate"] {
@@ -169,6 +173,46 @@ fn rename_move_and_duplicate_never_overwrite_existing_destinations() {
             fs::read_to_string(root.path().join("destination.txt")).unwrap(),
             "destination"
         );
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn rename_move_and_duplicate_fail_closed_without_a_confined_atomic_primitive() {
+    for operation in ["rename", "move", "duplicate"] {
+        let root_dir = tempdir().unwrap();
+        fs::write(root_dir.path().join("source.txt"), "source").unwrap();
+        let root = WorkspaceRoot::open(root_dir.path()).unwrap();
+        let operation = match operation {
+            "rename" => FileOperation::Rename {
+                from: "source.txt".into(),
+                to: "renamed.txt".into(),
+            },
+            "move" => FileOperation::Move {
+                from: "source.txt".into(),
+                to: "moved.txt".into(),
+            },
+            "duplicate" => FileOperation::Duplicate {
+                from: "source.txt".into(),
+                to: "copy.txt".into(),
+            },
+            _ => unreachable!(),
+        };
+
+        assert!(matches!(
+            apply_with_root(&root, operation),
+            Err(OperationError::AtomicNoReplaceUnavailable {
+                platform: "windows"
+            })
+        ));
+        assert_eq!(
+            fs::read_to_string(root_dir.path().join("source.txt")).unwrap(),
+            "source"
+        );
+        assert!(!root_dir.path().join("renamed.txt").exists());
+        assert!(!root_dir.path().join("moved.txt").exists());
+        assert!(!root_dir.path().join("copy.txt").exists());
+        assert_no_duplicate_staging_entries(root_dir.path());
     }
 }
 

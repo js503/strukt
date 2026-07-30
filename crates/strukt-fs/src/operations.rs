@@ -111,6 +111,7 @@ fn scoped(relative: &Path) -> Result<PathBuf, OperationError> {
 }
 
 fn rename_noreplace(root: &Dir, source: &Path, destination: &Path) -> Result<(), OperationError> {
+    atomic_noreplace_supported()?;
     rename_noreplace_with_hook(root, source, destination, || Ok(()))
 }
 
@@ -152,17 +153,28 @@ fn atomic_rename_noreplace(
 
 #[cfg(windows)]
 fn atomic_rename_noreplace(
-    source_parent: &Dir,
-    source_name: &Path,
-    destination_parent: &Dir,
-    destination_name: &Path,
+    _source_parent: &Dir,
+    _source_name: &Path,
+    _destination_parent: &Dir,
+    _destination_name: &Path,
 ) -> Result<(), OperationError> {
-    // MoveFileExW without MOVEFILE_REPLACE_EXISTING is an atomic no-replace
-    // publication on Windows. cap-std performs this operation relative to the
-    // two already-open parent capabilities.
-    source_parent
-        .rename(source_name, destination_parent, destination_name)
-        .map_err(OperationError::Io)
+    // cap-std's Windows rename reconstructs ambient paths from the retained
+    // parent handles before calling std::fs::rename. That cannot guarantee
+    // confinement if a parent is replaced concurrently. Until a safe
+    // handle-relative Windows publication primitive is available, fail closed.
+    atomic_noreplace_supported()
+}
+
+#[cfg(unix)]
+fn atomic_noreplace_supported() -> Result<(), OperationError> {
+    Ok(())
+}
+
+#[cfg(windows)]
+fn atomic_noreplace_supported() -> Result<(), OperationError> {
+    Err(OperationError::AtomicNoReplaceUnavailable {
+        platform: "windows",
+    })
 }
 
 fn trash_confined(_root: &Dir, path: &Path) -> Result<(), OperationError> {
@@ -193,6 +205,7 @@ fn delete_permanently(root: &Dir, path: &Path) -> Result<(), OperationError> {
 }
 
 fn duplicate(root: &Dir, source: &Path, destination: &Path) -> Result<(), OperationError> {
+    atomic_noreplace_supported()?;
     duplicate_with_hook(root, source, destination, &mut || Ok(()))
 }
 
@@ -569,13 +582,15 @@ pub enum OperationError {
     SymlinkCopy(PathBuf),
     #[error("workspace root changed after it was opened")]
     WorkspaceChanged,
+    #[error("atomic capability-confined no-replace publication is unavailable on {platform}")]
+    AtomicNoReplaceUnavailable { platform: &'static str },
     #[error("file operation failed: {0}")]
     Io(#[source] io::Error),
     #[error("cannot safely move {path} to Trash: {reason}")]
     TrashUnavailable { path: PathBuf, reason: &'static str },
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 mod tests {
     use std::fs;
 
