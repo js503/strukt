@@ -333,7 +333,7 @@ fn welcome_canvas(app: &StruktApp) -> iced::widget::Column<'_, Message> {
             ),
         ]
         .spacing(6);
-        if !path.is_dir() {
+        if recent_workspace_offers_locate(path) {
             actions = actions.push(button("Locate").on_press_maybe(
                 actions_enabled.then(|| Message::LocateRecentWorkspace(path.clone())),
             ));
@@ -349,6 +349,10 @@ fn welcome_canvas(app: &StruktApp) -> iced::widget::Column<'_, Message> {
         recent,
     ]
     .spacing(12)
+}
+
+pub(crate) const fn recent_workspace_offers_locate(_path: &std::path::Path) -> bool {
+    true
 }
 
 fn quick_open_canvas(app: &StruktApp) -> iced::widget::Column<'_, Message> {
@@ -367,6 +371,7 @@ fn quick_open_canvas(app: &StruktApp) -> iced::widget::Column<'_, Message> {
             button("Close").on_press(Message::ToggleQuickOpen),
         ],
         text_input("Quick Open", &app.quick_open_query)
+            .id(quick_open_input_id())
             .on_input(Message::QuickOpenChanged)
             .on_submit(Message::ToggleQuickOpen),
         button(if app.quick_open_include_ignored {
@@ -378,6 +383,10 @@ fn quick_open_canvas(app: &StruktApp) -> iced::widget::Column<'_, Message> {
         scrollable(results).height(Fill),
     ]
     .spacing(10)
+}
+
+pub(crate) fn quick_open_input_id() -> iced::widget::Id {
+    iced::widget::Id::new("strukt.quick-open.input")
 }
 
 fn search_canvas(app: &StruktApp) -> iced::widget::Column<'_, Message> {

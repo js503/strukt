@@ -721,7 +721,11 @@ impl StruktApp {
                 self.quick_open_visible = !self.quick_open_visible;
                 self.quick_open_query.clear();
                 self.quick_open_results = quick_open_candidates(&self.files, "", 50);
-                return Task::none();
+                return if self.quick_open_visible {
+                    iced::widget::operation::focus(crate::view::quick_open_input_id())
+                } else {
+                    Task::none()
+                };
             }
             Message::QuickOpenChanged(query) => {
                 let files = if self.quick_open_include_ignored && !self.quick_open_files.is_empty()

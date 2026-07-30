@@ -902,9 +902,21 @@ mod tests {
         let mut app = StruktApp::default();
         let explorer_visible = app.shell.explorer_visible;
 
-        let _ = app.update(key_pressed("p", key::Code::KeyP, Modifiers::COMMAND));
+        let focus = app.update(key_pressed("p", key::Code::KeyP, Modifiers::COMMAND));
 
         assert!(app.quick_open_visible);
+        assert_eq!(focus.units(), 1);
         assert_eq!(app.shell.explorer_visible, explorer_visible);
+
+        let close = app.update(Message::ToggleQuickOpen);
+        assert!(!app.quick_open_visible);
+        assert_eq!(close.units(), 0);
+    }
+
+    #[test]
+    fn every_recent_workspace_offers_locate_even_when_the_path_exists() {
+        let existing = tempdir().unwrap();
+
+        assert!(crate::view::recent_workspace_offers_locate(existing.path()));
     }
 }
