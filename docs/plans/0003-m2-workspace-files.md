@@ -1620,7 +1620,7 @@ git commit -m "feat: add scoped workspace file operations"
 - Modify: `crates/strukt-app/src/app.rs`
 - Create: `crates/strukt-app/src/workspace.rs`
 
-- [ ] **Step 1: Add app dependencies and failing reducer tests**
+- [x] **Step 1: Add app dependencies and failing reducer tests**
 
 Add these dependencies to `crates/strukt-app/Cargo.toml`:
 
@@ -1667,7 +1667,7 @@ fn visibility_messages_refresh_discovery_options() {
 }
 ```
 
-- [ ] **Step 2: Run focused app tests and verify RED**
+- [x] **Step 2: Run focused app tests and verify RED**
 
 Run:
 
@@ -1678,7 +1678,7 @@ cargo test -p strukt-app visibility_messages_refresh_discovery_options
 
 Expected: FAIL because workspace orchestration, messages, and state do not exist.
 
-- [ ] **Step 3: Implement workspace opening service**
+- [x] **Step 3: Implement workspace opening service**
 
 Create `crates/strukt-app/src/workspace.rs`:
 
@@ -1716,7 +1716,7 @@ pub fn open_workspace(path: PathBuf) -> Result<OpenedWorkspace, String> {
 }
 ```
 
-- [ ] **Step 4: Add app state, messages, and background tasks**
+- [x] **Step 4: Add app state, messages, and background tasks**
 
 In `app.rs`, add:
 
@@ -1837,7 +1837,7 @@ if let Some(workspace) = &mut self.workspace {
 
 Keep the existing shell, theme, keyboard, and smoke-test paths unchanged.
 
-- [ ] **Step 5: Run app and workspace tests**
+- [x] **Step 5: Run app and workspace tests**
 
 Run:
 
@@ -1850,7 +1850,7 @@ cargo test -p strukt-persistence
 
 Expected: all focused tests PASS.
 
-- [ ] **Step 6: Commit app orchestration**
+- [x] **Step 6: Commit app orchestration**
 
 ```bash
 git add crates/strukt-app Cargo.toml Cargo.lock
