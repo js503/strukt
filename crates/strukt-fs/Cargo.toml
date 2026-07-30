@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+cap-std.workspace = true
 ignore.workspace = true
 notify.workspace = true
 serde.workspace = true

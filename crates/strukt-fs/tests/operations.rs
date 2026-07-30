@@ -163,9 +163,154 @@ fn empty_or_current_directory_targets_cannot_mutate_the_workspace_root() {
 
 #[cfg(unix)]
 mod unix {
-    use std::os::unix::fs::symlink;
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::process::{Command, Stdio};
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     use super::*;
+
+    const FIFO_HELPER_ROOT: &str = "STRUKT_FS_FIFO_HELPER_ROOT";
+
+    #[test]
+    fn duplicate_preserves_executable_permissions() {
+        let root = tempdir().unwrap();
+        let source = root.path().join("script.sh");
+        fs::write(&source, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
+
+        apply_operation(
+            root.path(),
+            FileOperation::Duplicate {
+                from: "script.sh".into(),
+                to: "script-copy.sh".into(),
+            },
+        )
+        .unwrap();
+
+        let copied_mode = fs::metadata(root.path().join("script-copy.sh"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(copied_mode & 0o777, 0o755);
+    }
+
+    #[test]
+    fn duplicate_preserves_directory_permissions_after_copying_children() {
+        let root = tempdir().unwrap();
+        let source = root.path().join("source");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("child.txt"), "child").unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o555)).unwrap();
+
+        apply_operation(
+            root.path(),
+            FileOperation::Duplicate {
+                from: "source".into(),
+                to: "copy".into(),
+            },
+        )
+        .unwrap();
+
+        let copied_mode = fs::metadata(root.path().join("copy"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(copied_mode & 0o777, 0o555);
+        assert_eq!(
+            fs::read_to_string(root.path().join("copy/child.txt")).unwrap(),
+            "child"
+        );
+    }
+
+    #[test]
+    fn special_fifo_is_rejected_promptly_without_creating_a_destination() {
+        let root = tempdir().unwrap();
+        let fifo = root.path().join("source.fifo");
+        let status = Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("run mkfifo");
+        assert!(status.success());
+
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "unix::fifo_duplicate_helper", "--nocapture"])
+            .env(FIFO_HELPER_ROOT, root.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success(), "FIFO helper rejected incorrectly");
+                break;
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("FIFO duplicate did not return promptly");
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(!root.path().join("copy.fifo").exists());
+    }
+
+    #[test]
+    fn fifo_duplicate_helper() {
+        let Some(root) = std::env::var_os(FIFO_HELPER_ROOT) else {
+            return;
+        };
+        let root = Path::new(&root).to_path_buf();
+        match apply_operation(
+            &root,
+            FileOperation::Duplicate {
+                from: "source.fifo".into(),
+                to: "copy.fifo".into(),
+            },
+        ) {
+            Err(OperationError::Io(error)) => assert_eq!(error.kind(), ErrorKind::InvalidInput),
+            other => panic!("expected InvalidInput IO error, got {other:?}"),
+        }
+        assert!(!root.join("copy.fifo").exists());
+    }
+
+    #[test]
+    fn failed_directory_duplicate_removes_its_destination_for_retry() {
+        let root = tempdir().unwrap();
+        let source = root.path().join("source");
+        fs::create_dir(&source).unwrap();
+        let unreadable = source.join("unreadable.txt");
+        fs::write(&unreadable, "content").unwrap();
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = apply_operation(
+            root.path(),
+            FileOperation::Duplicate {
+                from: "source".into(),
+                to: "copy".into(),
+            },
+        );
+
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_rejected(&result);
+        assert!(!root.path().join("copy").exists());
+
+        apply_operation(
+            root.path(),
+            FileOperation::Duplicate {
+                from: "source".into(),
+                to: "copy".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(root.path().join("copy/unreadable.txt")).unwrap(),
+            "content"
+        );
+    }
 
     #[test]
     fn duplicate_rejects_symlinks_that_escape_the_workspace() {
@@ -250,12 +395,48 @@ mod unix {
                 to: "outside-parent/moved.txt".into(),
             },
         ));
+        assert_rejected(&apply_operation(
+            root.path(),
+            FileOperation::Duplicate {
+                from: "outside-parent/secret.txt".into(),
+                to: "copied-secret.txt".into(),
+            },
+        ));
 
         assert!(!outside.path().join("created.txt").exists());
         assert!(!outside.path().join("moved.txt").exists());
+        assert!(!root.path().join("copied-secret.txt").exists());
         assert_eq!(
             fs::read_to_string(root.path().join("source.txt")).unwrap(),
             "source"
         );
     }
+}
+
+#[cfg(windows)]
+#[test]
+fn permanent_delete_of_an_outside_directory_symlink_removes_only_the_link() {
+    use std::os::windows::fs::symlink_dir;
+
+    let root = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    fs::write(outside.path().join("preserved.txt"), "preserved").unwrap();
+    if let Err(error) = symlink_dir(outside.path(), root.path().join("outside-link")) {
+        if error.raw_os_error() == Some(1314) {
+            return;
+        }
+        panic!("failed to create Windows directory symlink: {error}");
+    }
+
+    apply_operation(
+        root.path(),
+        FileOperation::DeletePermanently("outside-link".into()),
+    )
+    .unwrap();
+
+    assert!(!root.path().join("outside-link").exists());
+    assert_eq!(
+        fs::read_to_string(outside.path().join("preserved.txt")).unwrap(),
+        "preserved"
+    );
 }

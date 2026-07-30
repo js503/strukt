@@ -20,6 +20,7 @@ repository = "https://github.com/js503/strukt"
 [workspace.dependencies]
 atomic-write-file = "0.3.0"
 blake3 = "1.8.5"
+cap-std = "4.0.2"
 directories = "6.0.0"
 iced = { version = "0.14.0", features = ["advanced", "tokio", "wgpu"] }
 ignore = "0.4.31"

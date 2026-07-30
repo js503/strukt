@@ -1,8 +1,14 @@
-use std::fs::{self, File, OpenOptions};
 use std::io::{self, ErrorKind};
 use std::path::{Component, Path, PathBuf};
 
+use cap_std::ambient_authority;
+#[cfg(windows)]
+use cap_std::fs::MetadataExt;
+use cap_std::fs::{Dir, File, Metadata, OpenOptions, Permissions};
 use thiserror::Error;
+
+#[cfg(windows)]
+const WINDOWS_FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FileOperation {
@@ -15,73 +21,70 @@ pub enum FileOperation {
     DeletePermanently(PathBuf),
 }
 
-/// Applies one file operation beneath a canonical local workspace root.
+/// Applies one file operation beneath an open local workspace capability.
+///
+/// Paths used for filesystem mutations are resolved relative to the capability
+/// rather than through ambient process authority. The operating-system Trash
+/// API only accepts ambient paths, so [`FileOperation::MoveToTrash`] validates
+/// the target's parent through the capability immediately before its ambient
+/// handoff, but remains best-effort under adversarial concurrent parent
+/// replacement.
 ///
 /// # Errors
 ///
-/// Returns [`OperationError::OutsideRoot`] when a path escapes through its
-/// components or a resolved parent, [`OperationError::SymlinkCopy`] when a
-/// duplicate would follow a symbolic link, and the corresponding IO or trash
-/// error when the requested filesystem operation fails.
+/// Returns [`OperationError::OutsideRoot`] when a path lexically escapes,
+/// [`OperationError::SymlinkCopy`] when a duplicate encounters a symbolic
+/// link, and the corresponding IO or trash error when the requested operation
+/// fails.
 pub fn apply_operation(
     root: impl AsRef<Path>,
     operation: FileOperation,
 ) -> Result<(), OperationError> {
-    let root = canonical_directory(root.as_ref())?;
+    let root_path = root.as_ref();
+    let root = Dir::open_ambient_dir(root_path, ambient_authority()).map_err(OperationError::Io)?;
 
     match operation {
         FileOperation::CreateFile(path) => {
-            OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(scoped(&root, &path)?)
+            let path = scoped(&path)?;
+            root.open_with(path, OpenOptions::new().write(true).create_new(true))
                 .map_err(OperationError::Io)?;
         }
         FileOperation::CreateDirectory(path) => {
-            fs::create_dir(scoped(&root, &path)?).map_err(OperationError::Io)?;
+            root.create_dir(scoped(&path)?)
+                .map_err(OperationError::Io)?;
         }
         FileOperation::Rename { from, to } | FileOperation::Move { from, to } => {
-            let source = scoped(&root, &from)?;
-            let destination = scoped(&root, &to)?;
-            ensure_vacant(&destination)?;
+            let source = scoped(&from)?;
+            let destination = scoped(&to)?;
+            ensure_vacant(&root, &destination)?;
 
-            // `std` has no portable atomic no-replace rename. This preflight
-            // minimizes the race while keeping normal local-workspace behavior
-            // consistent across supported platforms.
-            fs::rename(source, destination).map_err(OperationError::Io)?;
+            // Neither `std` nor cap-std offers a portable atomic no-replace
+            // rename. This capability-scoped preflight minimizes the
+            // publication race for normal local-workspace use.
+            root.rename(source, &root, destination)
+                .map_err(OperationError::Io)?;
         }
         FileOperation::Duplicate { from, to } => {
-            let source = scoped(&root, &from)?;
-            let destination = scoped(&root, &to)?;
-            ensure_vacant(&destination)?;
+            let source = scoped(&from)?;
+            let destination = scoped(&to)?;
+            ensure_vacant(&root, &destination)?;
             duplicate(&root, &source, &destination)?;
         }
         FileOperation::MoveToTrash(path) => {
-            trash::delete(scoped(&root, &path)?).map_err(OperationError::Trash)?;
+            let path = scoped(&path)?;
+            validate_parent(&root, &path)?;
+            trash::delete(root_path.join(path)).map_err(OperationError::Trash)?;
         }
         FileOperation::DeletePermanently(path) => {
-            let target = scoped(&root, &path)?;
-            let metadata = fs::symlink_metadata(&target).map_err(OperationError::Io)?;
-            if metadata.file_type().is_dir() {
-                fs::remove_dir_all(target).map_err(OperationError::Io)?;
-            } else {
-                fs::remove_file(target).map_err(OperationError::Io)?;
-            }
+            let path = scoped(&path)?;
+            delete_permanently(&root, &path)?;
         }
     }
 
     Ok(())
 }
 
-fn canonical_directory(root: &Path) -> Result<PathBuf, OperationError> {
-    let root = root.canonicalize().map_err(OperationError::Io)?;
-    if !root.is_dir() {
-        return Err(invalid_input("workspace root must be a directory"));
-    }
-    Ok(root)
-}
-
-fn scoped(root: &Path, relative: &Path) -> Result<PathBuf, OperationError> {
+fn scoped(relative: &Path) -> Result<PathBuf, OperationError> {
     let mut normalized = PathBuf::new();
     for component in relative.components() {
         match component {
@@ -98,24 +101,23 @@ fn scoped(root: &Path, relative: &Path) -> Result<PathBuf, OperationError> {
             "operation target must name an entry inside the workspace",
         ));
     }
-
-    let target = root.join(normalized);
-    let parent = target
-        .parent()
-        .ok_or_else(|| OperationError::OutsideRoot(relative.to_path_buf()))?;
-    let resolved_parent = parent.canonicalize().map_err(OperationError::Io)?;
-    if !resolved_parent.starts_with(root) {
-        return Err(OperationError::OutsideRoot(relative.to_path_buf()));
-    }
-
-    let file_name = target
-        .file_name()
-        .ok_or_else(|| invalid_input("operation target must name a workspace entry"))?;
-    Ok(resolved_parent.join(file_name))
+    Ok(normalized)
 }
 
-fn ensure_vacant(path: &Path) -> Result<(), OperationError> {
-    match fs::symlink_metadata(path) {
+fn validate_parent(root: &Dir, path: &Path) -> Result<(), OperationError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| OperationError::OutsideRoot(path.to_path_buf()))?;
+    if parent.as_os_str().is_empty() {
+        root.dir_metadata().map_err(OperationError::Io)?;
+    } else {
+        root.open_dir(parent).map_err(OperationError::Io)?;
+    }
+    Ok(())
+}
+
+fn ensure_vacant(root: &Dir, path: &Path) -> Result<(), OperationError> {
+    match root.symlink_metadata(path) {
         Ok(_) => Err(OperationError::Io(io::Error::new(
             ErrorKind::AlreadyExists,
             format!("destination already exists: {}", path.display()),
@@ -125,17 +127,38 @@ fn ensure_vacant(path: &Path) -> Result<(), OperationError> {
     }
 }
 
-fn duplicate(root: &Path, source: &Path, destination: &Path) -> Result<(), OperationError> {
-    let metadata = checked_copy_metadata(root, source)?;
-    let resolved_source = source.canonicalize().map_err(OperationError::Io)?;
-    if metadata.is_dir() && destination.starts_with(&resolved_source) {
+fn delete_permanently(root: &Dir, path: &Path) -> Result<(), OperationError> {
+    let metadata = root.symlink_metadata(path).map_err(OperationError::Io)?;
+    let file_type = metadata.file_type();
+    if file_type.is_dir() {
+        root.remove_dir_all(path).map_err(OperationError::Io)?;
+    } else {
+        #[cfg(windows)]
+        // FILE_ATTRIBUTE_DIRECTORY marks directory reparse points, including
+        // directory symlinks, which Windows removes with directory semantics.
+        if file_type.is_symlink()
+            && metadata.file_attributes() & WINDOWS_FILE_ATTRIBUTE_DIRECTORY != 0
+        {
+            root.remove_dir(path).map_err(OperationError::Io)?;
+            return Ok(());
+        }
+        root.remove_file(path).map_err(OperationError::Io)?;
+    }
+    Ok(())
+}
+
+fn duplicate(root: &Dir, source: &Path, destination: &Path) -> Result<(), OperationError> {
+    let plan = preflight_copy(root, source)?;
+    if matches!(
+        plan.first().map(|entry| entry.kind),
+        Some(CopyKind::Directory)
+    ) && destination.starts_with(source)
+    {
         return Err(invalid_input(
             "cannot duplicate a directory into itself or its descendant",
         ));
     }
 
-    let mut plan = Vec::new();
-    preflight_copy(root, source, Path::new(""), &mut plan)?;
     execute_copy_plan(root, destination, &plan)
 }
 
@@ -149,76 +172,144 @@ struct CopyEntry {
     source: PathBuf,
     relative: PathBuf,
     kind: CopyKind,
+    permissions: Permissions,
 }
 
-fn preflight_copy(
-    root: &Path,
-    source: &Path,
-    relative: &Path,
-    plan: &mut Vec<CopyEntry>,
-) -> Result<(), OperationError> {
-    let metadata = checked_copy_metadata(root, source)?;
-    if metadata.is_dir() {
+fn preflight_copy(root: &Dir, source: &Path) -> Result<Vec<CopyEntry>, OperationError> {
+    let mut plan = Vec::new();
+    let mut pending = vec![(source.to_path_buf(), PathBuf::new())];
+
+    while let Some((path, relative)) = pending.pop() {
+        let metadata = checked_copy_metadata(root, &path)?;
+        let kind = if metadata.is_dir() {
+            CopyKind::Directory
+        } else {
+            CopyKind::File
+        };
         plan.push(CopyEntry {
-            source: source.to_path_buf(),
-            relative: relative.to_path_buf(),
-            kind: CopyKind::Directory,
+            source: path.clone(),
+            relative,
+            kind,
+            permissions: metadata.permissions(),
         });
-        for child in fs::read_dir(source).map_err(OperationError::Io)? {
-            let child = child.map_err(OperationError::Io)?;
-            preflight_copy(root, &child.path(), &relative.join(child.file_name()), plan)?;
+
+        if matches!(kind, CopyKind::Directory) {
+            let entry_index = plan.len() - 1;
+            let relative = plan[entry_index].relative.clone();
+            let mut children = root
+                .read_dir(&path)
+                .map_err(OperationError::Io)?
+                .map(|entry| entry.map_err(OperationError::Io))
+                .collect::<Result<Vec<_>, _>>()?;
+            children.sort_by_key(cap_std::fs::DirEntry::file_name);
+            for child in children.into_iter().rev() {
+                let name = child.file_name();
+                pending.push((path.join(&name), relative.join(name)));
+            }
         }
-    } else {
-        plan.push(CopyEntry {
-            source: source.to_path_buf(),
-            relative: relative.to_path_buf(),
-            kind: CopyKind::File,
-        });
     }
-    Ok(())
+
+    Ok(plan)
 }
 
-fn checked_copy_metadata(root: &Path, source: &Path) -> Result<fs::Metadata, OperationError> {
-    let metadata = fs::symlink_metadata(source).map_err(OperationError::Io)?;
+fn checked_copy_metadata(root: &Dir, source: &Path) -> Result<Metadata, OperationError> {
+    let metadata = root.symlink_metadata(source).map_err(OperationError::Io)?;
     if metadata.file_type().is_symlink() {
         return Err(OperationError::SymlinkCopy(source.to_path_buf()));
     }
-
-    let resolved = source.canonicalize().map_err(OperationError::Io)?;
-    if !resolved.starts_with(root) {
-        return Err(OperationError::OutsideRoot(source.to_path_buf()));
+    if !metadata.is_dir() && !metadata.is_file() {
+        return Err(invalid_input(
+            "duplicate source must contain only regular files and directories",
+        ));
     }
     Ok(metadata)
 }
 
 fn execute_copy_plan(
-    root: &Path,
+    root: &Dir,
     destination: &Path,
     plan: &[CopyEntry],
 ) -> Result<(), OperationError> {
-    for entry in plan {
-        checked_copy_metadata(root, &entry.source)?;
-        let target = if entry.relative.as_os_str().is_empty() {
-            destination.to_path_buf()
-        } else {
-            destination.join(&entry.relative)
-        };
-        match entry.kind {
-            CopyKind::Directory => {
-                fs::create_dir(target).map_err(OperationError::Io)?;
-            }
-            CopyKind::File => {
-                let mut source_file = File::open(&entry.source).map_err(OperationError::Io)?;
-                let mut destination_file = OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(target)
-                    .map_err(OperationError::Io)?;
-                io::copy(&mut source_file, &mut destination_file).map_err(OperationError::Io)?;
+    let root_kind = plan
+        .first()
+        .map(|entry| entry.kind)
+        .ok_or_else(|| invalid_input("duplicate source produced an empty copy plan"))?;
+    let mut created_destination = false;
+
+    let result = (|| {
+        for entry in plan {
+            let target = copy_target(destination, &entry.relative);
+            match entry.kind {
+                CopyKind::Directory => {
+                    root.create_dir(&target).map_err(OperationError::Io)?;
+                    if entry.relative.as_os_str().is_empty() {
+                        created_destination = true;
+                    }
+                }
+                CopyKind::File => {
+                    let mut source_file = open_regular_source(root, &entry.source)?;
+                    let mut destination_file = root
+                        .open_with(&target, OpenOptions::new().write(true).create_new(true))
+                        .map_err(OperationError::Io)?;
+                    if entry.relative.as_os_str().is_empty() {
+                        created_destination = true;
+                    }
+                    io::copy(&mut source_file, &mut destination_file)
+                        .map_err(OperationError::Io)?;
+                    destination_file
+                        .set_permissions(entry.permissions.clone())
+                        .map_err(OperationError::Io)?;
+                }
             }
         }
+
+        for entry in plan.iter().rev() {
+            if matches!(entry.kind, CopyKind::Directory) {
+                root.set_permissions(
+                    copy_target(destination, &entry.relative),
+                    entry.permissions.clone(),
+                )
+                .map_err(OperationError::Io)?;
+            }
+        }
+        Ok(())
+    })();
+
+    if result.is_err() && created_destination {
+        cleanup_duplicate(root, destination, root_kind);
     }
-    Ok(())
+    result
+}
+
+fn open_regular_source(root: &Dir, source: &Path) -> Result<File, OperationError> {
+    let mut options = OpenOptions::new();
+    options.read(true)._cap_fs_ext_nonblock(true);
+    let file = root
+        .open_with(source, &options)
+        .map_err(OperationError::Io)?;
+    let opened_metadata = file.metadata().map_err(OperationError::Io)?;
+    if !opened_metadata.is_file() {
+        return Err(invalid_input(
+            "duplicate source changed to a non-regular file",
+        ));
+    }
+    checked_copy_metadata(root, source)?;
+    Ok(file)
+}
+
+fn copy_target(destination: &Path, relative: &Path) -> PathBuf {
+    if relative.as_os_str().is_empty() {
+        destination.to_path_buf()
+    } else {
+        destination.join(relative)
+    }
+}
+
+fn cleanup_duplicate(root: &Dir, destination: &Path, kind: CopyKind) {
+    let _ = match kind {
+        CopyKind::Directory => root.remove_dir_all(destination),
+        CopyKind::File => root.remove_file(destination),
+    };
 }
 
 fn invalid_input(message: &'static str) -> OperationError {
