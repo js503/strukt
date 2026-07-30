@@ -144,7 +144,7 @@ Responsibilities:
 - Create: `crates/strukt-workspace/tests/workspace_identity.rs`
 - Create: `crates/strukt-workspace/tests/workspace_state.rs`
 
-- [ ] **Step 1: Add the crate manifest and failing identity test**
+- [x] **Step 1: Add the crate manifest and failing identity test**
 
 Add `crates/strukt-workspace` to `workspace.members`. Add these workspace
 dependencies:
@@ -224,7 +224,7 @@ fn regular_files_are_not_workspace_roots() {
 }
 ```
 
-- [ ] **Step 2: Run the identity test and verify RED**
+- [x] **Step 2: Run the identity test and verify RED**
 
 Run:
 
@@ -235,7 +235,7 @@ cargo test -p strukt-workspace --test workspace_identity
 Expected: FAIL because `identity.rs`, `state.rs`, and the exported workspace types do
 not exist.
 
-- [ ] **Step 3: Implement normalized workspace identity**
+- [x] **Step 3: Implement normalized workspace identity**
 
 Create `crates/strukt-workspace/src/identity.rs`:
 
@@ -362,7 +362,7 @@ impl WorkspaceState {
 }
 ```
 
-- [ ] **Step 4: Add and pass workspace-state tests**
+- [x] **Step 4: Add and pass workspace-state tests**
 
 Create `crates/strukt-workspace/tests/workspace_state.rs`:
 
@@ -390,7 +390,7 @@ cargo test -p strukt-workspace
 
 Expected: all workspace tests PASS.
 
-- [ ] **Step 5: Commit workspace identity**
+- [x] **Step 5: Commit workspace identity**
 
 ```bash
 git add Cargo.toml Cargo.lock crates/strukt-workspace
