@@ -27,9 +27,10 @@ mod tests {
     use iced::keyboard::{self, Key, Location, Modifiers, key};
     use strukt_core::CapabilityId;
     use strukt_fs::{DiscoveryReport, FileEntry, FileKind};
+    use strukt_persistence::WorkspaceStore;
     use strukt_shell::Activity;
     use strukt_workspace::{WorkspaceRoot, WorkspaceState};
-    use tempfile::tempdir;
+    use tempfile::{TempDir, tempdir};
 
     use crate::app::{LaunchMode, Message, StruktApp};
 
@@ -67,6 +68,12 @@ mod tests {
 
     fn workspace_state(path: &std::path::Path) -> WorkspaceState {
         WorkspaceState::new(WorkspaceRoot::open(path).unwrap())
+    }
+
+    fn open_workspace(project: &TempDir) -> crate::workspace::OpenedWorkspace {
+        let app_data = tempdir().unwrap();
+        let store = WorkspaceStore::at(app_data.path());
+        crate::workspace::open_workspace_with_store(project.path().to_path_buf(), &store).unwrap()
     }
 
     #[test]
@@ -158,7 +165,7 @@ mod tests {
     fn opened_workspace_replaces_the_representative_file_view() {
         let project = tempdir().unwrap();
         std::fs::write(project.path().join("README.md"), "strukt").unwrap();
-        let opened = crate::workspace::open_workspace(project.path().to_path_buf()).unwrap();
+        let opened = open_workspace(&project);
         let mut app = StruktApp::default();
 
         let _ = app.update(Message::WorkspaceOpened(Ok(opened)));
@@ -194,8 +201,33 @@ mod tests {
     fn opening_a_workspace_does_not_create_repository_metadata() {
         let project = tempdir().unwrap();
 
-        let _ = crate::workspace::open_workspace(project.path().to_path_buf()).unwrap();
+        let _ = open_workspace(&project);
 
+        assert!(!project.path().join(".strukt").exists());
+    }
+
+    #[test]
+    fn workspace_opening_restores_explorer_state_from_the_injected_store() {
+        let app_data = tempdir().unwrap();
+        let project = tempdir().unwrap();
+        std::fs::write(project.path().join(".hidden"), "visible").unwrap();
+        let store = WorkspaceStore::at(app_data.path());
+        let mut state = workspace_state(project.path());
+        state.explorer.show_hidden = true;
+        store.save(&state).unwrap();
+
+        let opened =
+            crate::workspace::open_workspace_with_store(project.path().to_path_buf(), &store)
+                .unwrap();
+
+        assert_eq!(opened.state, state);
+        assert!(
+            opened
+                .discovery
+                .entries
+                .iter()
+                .any(|entry| entry.relative_path == std::path::Path::new(".hidden"))
+        );
         assert!(!project.path().join(".strukt").exists());
     }
 
@@ -215,12 +247,24 @@ mod tests {
         let mut app = StruktApp::default();
         app.workspace = Some(workspace_state(project.path()));
 
-        let _ = app.update(Message::ToggleHiddenFiles);
-        let _ = app.update(Message::ToggleIgnoredFiles);
-        let _ = app.update(Message::FilesRefreshed {
-            generation: 2,
-            result: Ok(discovery(&["current.rs"])),
-        });
+        assert_eq!(app.update(Message::ToggleHiddenFiles).units(), 1);
+        assert_eq!(app.update(Message::ToggleIgnoredFiles).units(), 0);
+        assert_eq!(
+            app.update(Message::FilesRefreshed {
+                generation: 1,
+                result: Ok(discovery(&["obsolete.rs"])),
+            })
+            .units(),
+            1
+        );
+        assert_eq!(
+            app.update(Message::FilesRefreshed {
+                generation: 2,
+                result: Ok(discovery(&["current.rs"])),
+            })
+            .units(),
+            0
+        );
         let _ = app.update(Message::FilesRefreshed {
             generation: 1,
             result: Ok(discovery(&["stale.rs"])),
@@ -231,6 +275,61 @@ mod tests {
         });
 
         assert_eq!(app.files, vec![file_entry("current.rs")]);
+        assert_eq!(app.workspace_error, None);
+    }
+
+    #[test]
+    fn workspace_open_error_survives_a_successful_in_flight_refresh() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        assert_eq!(app.update(Message::ToggleHiddenFiles).units(), 1);
+
+        let _ = app.update(Message::WorkspaceOpened(Err("cannot open B".to_owned())));
+        let _ = app.update(Message::FilesRefreshed {
+            generation: 1,
+            result: Ok(discovery(&["from-a.rs"])),
+        });
+
+        assert_eq!(app.workspace_error.as_deref(), Some("cannot open B"));
+        assert_eq!(app.files, vec![file_entry("from-a.rs")]);
+    }
+
+    #[test]
+    fn rapid_visibility_toggles_coalesce_to_one_follow_up_refresh() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+
+        assert_eq!(app.update(Message::ToggleHiddenFiles).units(), 1);
+        assert_eq!(app.update(Message::ToggleIgnoredFiles).units(), 0);
+        assert_eq!(app.update(Message::ToggleHiddenFiles).units(), 0);
+        assert_eq!(
+            app.update(Message::FilesRefreshed {
+                generation: 1,
+                result: Ok(discovery(&["obsolete.rs"])),
+            })
+            .units(),
+            1
+        );
+        assert_eq!(
+            app.update(Message::FilesRefreshed {
+                generation: 1,
+                result: Err("duplicate stale completion".to_owned()),
+            })
+            .units(),
+            0
+        );
+        assert_eq!(
+            app.update(Message::FilesRefreshed {
+                generation: 3,
+                result: Ok(discovery(&["latest.rs"])),
+            })
+            .units(),
+            0
+        );
+
+        assert_eq!(app.files, vec![file_entry("latest.rs")]);
         assert_eq!(app.workspace_error, None);
     }
 
@@ -257,7 +356,7 @@ mod tests {
         let mut app = StruktApp::default();
         app.workspace = Some(workspace_state(first.path()));
         let _ = app.update(Message::ToggleHiddenFiles);
-        let opened = crate::workspace::open_workspace(second.path().to_path_buf()).unwrap();
+        let opened = open_workspace(&second);
 
         let _ = app.update(Message::WorkspaceOpened(Ok(opened)));
         let expected_files = app.files.clone();
@@ -267,6 +366,41 @@ mod tests {
         });
 
         assert_eq!(app.files, expected_files);
+        assert_eq!(
+            app.workspace.as_ref().unwrap().root.path(),
+            second.path().canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn new_workspace_toggle_waits_for_the_old_refresh_to_finish() {
+        let first = tempdir().unwrap();
+        let second = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(first.path()));
+        assert_eq!(app.update(Message::ToggleHiddenFiles).units(), 1);
+        let opened = open_workspace(&second);
+
+        let _ = app.update(Message::WorkspaceOpened(Ok(opened)));
+        assert_eq!(app.update(Message::ToggleIgnoredFiles).units(), 0);
+        assert_eq!(
+            app.update(Message::FilesRefreshed {
+                generation: 1,
+                result: Ok(discovery(&["old-workspace.rs"])),
+            })
+            .units(),
+            1
+        );
+        assert_eq!(
+            app.update(Message::FilesRefreshed {
+                generation: 3,
+                result: Ok(discovery(&["new-workspace.rs"])),
+            })
+            .units(),
+            0
+        );
+
+        assert_eq!(app.files, vec![file_entry("new-workspace.rs")]);
         assert_eq!(
             app.workspace.as_ref().unwrap().root.path(),
             second.path().canonicalize().unwrap()

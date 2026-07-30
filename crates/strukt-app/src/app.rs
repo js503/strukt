@@ -51,7 +51,11 @@ pub struct StruktApp {
     pub workspace_error: Option<String>,
     launch_mode: LaunchMode,
     open_folder_in_flight: bool,
+    open_error: Option<String>,
+    refresh_error: Option<String>,
     refresh_generation: u64,
+    refresh_in_flight: Option<u64>,
+    refresh_pending: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -119,7 +123,11 @@ impl StruktApp {
             workspace_error: None,
             launch_mode,
             open_folder_in_flight: false,
+            open_error: None,
+            refresh_error: None,
             refresh_generation: 0,
+            refresh_in_flight: None,
+            refresh_pending: false,
         }
     }
 }
@@ -132,6 +140,8 @@ impl StruktApp {
                     return Task::none();
                 }
                 self.open_folder_in_flight = true;
+                self.open_error = None;
+                self.recompute_workspace_error();
                 return Task::perform(
                     async {
                         rfd::AsyncFileDialog::new()
@@ -168,36 +178,48 @@ impl StruktApp {
                 self.file_warnings = opened.discovery.warnings;
                 self.filesystem_truncated = opened.discovery.truncated;
                 self.workspace = Some(opened.state);
-                self.workspace_error = None;
+                self.open_error = None;
+                self.refresh_error = None;
+                self.recompute_workspace_error();
                 self.open_folder_in_flight = false;
                 self.refresh_generation = self.refresh_generation.wrapping_add(1);
+                self.refresh_pending = false;
                 return Task::none();
             }
             Message::WorkspaceOpened(Err(error)) => {
-                self.workspace_error = Some(error);
+                self.open_error = Some(error);
+                self.recompute_workspace_error();
                 self.open_folder_in_flight = false;
                 return Task::none();
             }
             Message::ToggleHiddenFiles => {
                 self.explorer_options.show_hidden = !self.explorer_options.show_hidden;
-                return self.refresh_files();
+                return self.request_file_refresh();
             }
             Message::ToggleIgnoredFiles => {
                 self.explorer_options.show_ignored = !self.explorer_options.show_ignored;
-                return self.refresh_files();
+                return self.request_file_refresh();
             }
             Message::FilesRefreshed { generation, result } => {
-                if generation != self.refresh_generation {
+                if self.refresh_in_flight != Some(generation) {
                     return Task::none();
                 }
-                match result {
-                    Ok(report) => {
-                        self.files = report.entries;
-                        self.file_warnings = report.warnings;
-                        self.filesystem_truncated = report.truncated;
-                        self.workspace_error = None;
+                self.refresh_in_flight = None;
+                if generation == self.refresh_generation {
+                    match result {
+                        Ok(report) => {
+                            self.files = report.entries;
+                            self.file_warnings = report.warnings;
+                            self.filesystem_truncated = report.truncated;
+                            self.refresh_error = None;
+                        }
+                        Err(error) => self.refresh_error = Some(error),
                     }
-                    Err(error) => self.workspace_error = Some(error),
+                    self.recompute_workspace_error();
+                }
+                if self.refresh_pending {
+                    self.refresh_pending = false;
+                    return self.start_file_refresh();
                 }
                 return Task::none();
             }
@@ -243,17 +265,37 @@ impl StruktApp {
         Task::none()
     }
 
-    fn refresh_files(&mut self) -> Task<Message> {
+    fn recompute_workspace_error(&mut self) {
+        self.workspace_error = self
+            .open_error
+            .clone()
+            .or_else(|| self.refresh_error.clone());
+    }
+
+    fn request_file_refresh(&mut self) -> Task<Message> {
+        self.refresh_generation = self.refresh_generation.wrapping_add(1);
         let Some(workspace) = &mut self.workspace else {
             return Task::none();
         };
-
         workspace.explorer.show_hidden = self.explorer_options.show_hidden;
         workspace.explorer.show_ignored = self.explorer_options.show_ignored;
+
+        if self.refresh_in_flight.is_some() {
+            self.refresh_pending = true;
+            Task::none()
+        } else {
+            self.start_file_refresh()
+        }
+    }
+
+    fn start_file_refresh(&mut self) -> Task<Message> {
+        let Some(workspace) = &self.workspace else {
+            return Task::none();
+        };
         let root = workspace.root.path().to_path_buf();
         let options = self.explorer_options;
-        self.refresh_generation = self.refresh_generation.wrapping_add(1);
         let generation = self.refresh_generation;
+        self.refresh_in_flight = Some(generation);
 
         Task::perform(
             async move {
