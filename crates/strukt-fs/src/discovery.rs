@@ -73,7 +73,10 @@ pub fn discover_report(
     let root = root.as_ref().canonicalize().map_err(DiscoveryError::Io)?;
     let metadata = fs::metadata(&root).map_err(DiscoveryError::Io)?;
     if !metadata.is_dir() {
-        return Err(DiscoveryError::NotDirectory(root));
+        return Err(DiscoveryError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("discovery root is not a directory: {}", root.display()),
+        )));
     }
 
     let mut entries = Vec::new();
@@ -256,8 +259,6 @@ pub enum DiscoveryError {
     Io(#[source] std::io::Error),
     #[error("filesystem walk failed: {0}")]
     Walk(#[source] ignore::Error),
-    #[error("discovery root is not a directory: {0}")]
-    NotDirectory(PathBuf),
     #[error("entry escaped workspace root: {0}")]
     OutsideRoot(PathBuf),
     #[error("entry has no file type: {0}")]

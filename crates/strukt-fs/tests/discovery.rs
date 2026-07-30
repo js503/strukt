@@ -128,7 +128,7 @@ fn regular_files_are_not_discovery_roots() {
 
     assert!(matches!(
         discover_report(file, DiscoveryOptions::default()),
-        Err(DiscoveryError::NotDirectory(_))
+        Err(DiscoveryError::Io(error)) if error.kind() == std::io::ErrorKind::InvalidInput
     ));
 }
 
