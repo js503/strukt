@@ -61,6 +61,7 @@ fn workspace_id_rejects_malformed_representations() {
     assert!(serde_json::from_str::<WorkspaceId>(&format!(r#""{}""#, "g".repeat(64))).is_err());
 }
 
+#[cfg(unix)]
 #[test]
 fn retained_capability_rejects_a_replaced_root_path() {
     let parent = tempdir().unwrap();
@@ -78,24 +79,70 @@ fn retained_capability_rejects_a_replaced_root_path() {
 
 #[cfg(windows)]
 #[test]
-fn retained_capability_rejects_a_root_path_replaced_by_a_directory_symlink() {
-    use std::os::windows::fs::symlink_dir;
+fn retained_capability_prevents_a_root_path_replacement() {
+    let parent = tempdir().unwrap();
+    let path = parent.path().join("workspace");
+    let original = parent.path().join("original");
+    let replacement = parent.path().join("replacement");
+    std::fs::create_dir(&path).unwrap();
+    std::fs::write(path.join("original.txt"), "original").unwrap();
+    std::fs::create_dir(&replacement).unwrap();
+    std::fs::write(replacement.join("replacement.txt"), "replacement").unwrap();
+    let root = WorkspaceRoot::open(&path).unwrap();
 
+    let error = std::fs::rename(&path, &original).unwrap_err();
+
+    assert_eq!(error.raw_os_error(), Some(32));
+    assert!(!original.exists());
+    assert_eq!(
+        std::fs::read_to_string(path.join("original.txt")).unwrap(),
+        "original"
+    );
+    assert_eq!(
+        std::fs::read_to_string(replacement.join("replacement.txt")).unwrap(),
+        "replacement"
+    );
+    assert!(root.validate_location().is_ok());
+    assert!(
+        root.try_clone_capability()
+            .unwrap()
+            .open("original.txt")
+            .is_ok()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn retained_capability_prevents_a_directory_symlink_replacement() {
     let parent = tempdir().unwrap();
     let path = parent.path().join("workspace");
     let moved = parent.path().join("moved");
+    let outside = parent.path().join("outside");
     std::fs::create_dir(&path).unwrap();
+    std::fs::write(path.join("inside.txt"), "inside").unwrap();
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("outside.txt"), "outside").unwrap();
     let root = WorkspaceRoot::open(&path).unwrap();
 
-    std::fs::rename(&path, &moved).unwrap();
-    if let Err(error) = symlink_dir(&moved, &path) {
-        if error.raw_os_error() == Some(1314) {
-            return;
-        }
-        panic!("failed to create Windows directory symlink: {error}");
-    }
+    let error = std::fs::rename(&path, &moved).unwrap_err();
 
-    assert!(root.validate_location().is_err());
+    assert_eq!(error.raw_os_error(), Some(32));
+    assert!(!moved.exists());
+    assert_eq!(
+        std::fs::read_to_string(path.join("inside.txt")).unwrap(),
+        "inside"
+    );
+    assert_eq!(
+        std::fs::read_to_string(outside.join("outside.txt")).unwrap(),
+        "outside"
+    );
+    assert!(root.validate_location().is_ok());
+    assert!(
+        root.try_clone_capability()
+            .unwrap()
+            .open("inside.txt")
+            .is_ok()
+    );
 }
 
 #[cfg(unix)]
