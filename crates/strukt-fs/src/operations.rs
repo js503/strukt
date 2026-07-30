@@ -350,6 +350,7 @@ fn create_staging(parent: &Dir) -> Result<Dir, OperationError> {
         let name = format!("{STAGING_PREFIX}{}-{id}", std::process::id());
         match parent.create_dir(&name) {
             Ok(()) => {
+                #[cfg(unix)]
                 if let Err(error) = make_staging_private(parent, Path::new(&name)) {
                     let cleanup_result = parent.remove_dir_all(&name);
                     return Err(match cleanup_result {
@@ -357,6 +358,8 @@ fn create_staging(parent: &Dir) -> Result<Dir, OperationError> {
                         Err(cleanup_error) => combined_cleanup_error(&error, &cleanup_error),
                     });
                 }
+                #[cfg(not(unix))]
+                make_staging_private(parent, Path::new(&name));
                 return parent.open_dir(&name).map_err(|open_error| {
                     let cleanup_result = parent.remove_dir_all(&name);
                     match cleanup_result {
@@ -377,14 +380,17 @@ fn create_staging(parent: &Dir) -> Result<Dir, OperationError> {
     )))
 }
 
+#[cfg(unix)]
 fn make_staging_private(parent: &Dir, name: &Path) -> Result<(), OperationError> {
-    #[cfg(unix)]
     parent
         .set_permissions(name, Permissions::from_mode(0o700))
         .map_err(OperationError::Io)?;
-    #[cfg(not(unix))]
-    let _ = (parent, name);
     Ok(())
+}
+
+#[cfg(not(unix))]
+fn make_staging_private(parent: &Dir, name: &Path) {
+    let _ = (parent, name);
 }
 
 #[derive(Clone, Copy)]
@@ -495,10 +501,14 @@ fn execute_copy_plan(
                 .map_err(OperationError::Io)?;
         }
     }
+    #[cfg(unix)]
     set_restrictive_staging_root(destination_root, destination, plan)?;
+    #[cfg(not(unix))]
+    set_restrictive_staging_root(destination_root, destination, plan);
     Ok(())
 }
 
+#[cfg(unix)]
 fn set_restrictive_staging_root(
     destination_root: &Dir,
     destination: &Path,
@@ -511,13 +521,15 @@ fn set_restrictive_staging_root(
         return Ok(());
     }
 
-    #[cfg(unix)]
     destination_root
         .set_permissions(destination, Permissions::from_mode(0o700))
         .map_err(OperationError::Io)?;
-    #[cfg(not(unix))]
-    let _ = (destination_root, destination);
     Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_restrictive_staging_root(destination_root: &Dir, destination: &Path, plan: &[CopyEntry]) {
+    let _ = (destination_root, destination, plan);
 }
 
 fn open_regular_source(root: &Dir, source: &Path) -> Result<File, OperationError> {

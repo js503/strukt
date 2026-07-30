@@ -606,12 +606,14 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::rc::Rc;
 
-    use super::{
-        DiscoveryError, DiscoveryOptions, HiddenAttributeCache, Warnings,
-        discover_report_for_root_inner,
-    };
+    #[cfg(unix)]
+    use super::{DiscoveryError, DiscoveryOptions, discover_report_for_root_inner};
+    use super::{HiddenAttributeCache, Warnings};
+    #[cfg(unix)]
     use crate::CancellationToken;
+    #[cfg(unix)]
     use strukt_workspace::WorkspaceRoot;
+    #[cfg(unix)]
     use tempfile::tempdir;
 
     #[test]

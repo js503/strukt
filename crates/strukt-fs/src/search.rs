@@ -162,7 +162,7 @@ fn search_content_with_budget(
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn search_content_with_hook(
     root: &WorkspaceRoot,
     needle: &str,
@@ -372,10 +372,9 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::{
-        SearchError, SearchOptions, classify_entry_io, search_content_with_budget,
-        search_content_with_hook,
-    };
+    #[cfg(unix)]
+    use super::search_content_with_hook;
+    use super::{SearchError, SearchOptions, classify_entry_io, search_content_with_budget};
     use strukt_workspace::WorkspaceRoot;
 
     #[test]
