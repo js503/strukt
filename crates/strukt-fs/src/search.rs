@@ -55,10 +55,21 @@ pub fn quick_open_candidates(
     query: &str,
     max_results: usize,
 ) -> Vec<QuickOpenCandidate> {
+    quick_open_candidates_with_ignored(entries, query, max_results, true)
+}
+
+#[must_use]
+pub fn quick_open_candidates_with_ignored(
+    entries: &[FileEntry],
+    query: &str,
+    max_results: usize,
+    include_ignored: bool,
+) -> Vec<QuickOpenCandidate> {
     let query = query.to_lowercase();
     let mut candidates: Vec<_> = entries
         .iter()
         .filter(|entry| entry.kind == FileKind::File)
+        .filter(|entry| include_ignored || !entry.ignored)
         .filter_map(|entry| {
             let path = entry.relative_path.to_string_lossy().to_lowercase();
             subsequence_score(&path, &query).map(|score| QuickOpenCandidate {

@@ -73,6 +73,13 @@ mod tests {
         }
     }
 
+    fn ignored_file_entry(path: &str) -> FileEntry {
+        FileEntry {
+            ignored: true,
+            ..file_entry(path)
+        }
+    }
+
     #[test]
     fn explorer_labels_use_real_relative_paths() {
         let label = crate::view::file_entry_label(&FileEntry {
@@ -906,6 +913,45 @@ mod tests {
         assert!(app.quick_open_include_ignored);
         assert!(app.search_include_ignored);
         assert!(!app.explorer_options.show_ignored);
+    }
+
+    #[test]
+    fn quick_open_excludes_ignored_files_when_explorer_shows_them_across_refresh_and_reopen() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        app.explorer_options.show_ignored = true;
+        app.files = vec![
+            file_entry("visible.txt"),
+            ignored_file_entry("ignored-secret.txt"),
+        ];
+
+        let _ = app.update(Message::ToggleQuickOpen);
+        assert_eq!(
+            app.quick_open_results
+                .iter()
+                .map(|candidate| candidate.relative_path.as_path())
+                .collect::<Vec<_>>(),
+            vec![std::path::Path::new("visible.txt")]
+        );
+
+        let _ = app.update(Message::ToggleQuickOpen);
+        let _ = app.update(Message::ToggleHiddenFiles);
+        let mut refreshed = discovery(&["current.txt"]);
+        refreshed.entries.push(ignored_file_entry("ignored-current.txt"));
+        let _ = app.update(Message::FilesRefreshed {
+            generation: 1,
+            result: Ok(refreshed),
+        });
+        let _ = app.update(Message::ToggleQuickOpen);
+
+        assert_eq!(
+            app.quick_open_results
+                .iter()
+                .map(|candidate| candidate.relative_path.as_path())
+                .collect::<Vec<_>>(),
+            vec![std::path::Path::new("current.txt")]
+        );
     }
 
     #[test]
