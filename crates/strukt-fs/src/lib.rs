@@ -9,3 +9,7 @@ pub use discovery::{
     DiscoveryError, DiscoveryOptions, DiscoveryReport, FileEntry, FileKind, discover,
     discover_report,
 };
+pub use search::{
+    QuickOpenCandidate, SearchError, SearchMatch, SearchOptions, SearchResult,
+    quick_open_candidates, search_content,
+};
