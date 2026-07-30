@@ -1220,7 +1220,7 @@ git commit -m "feat: add bounded workspace search"
 - Modify: `crates/strukt-fs/src/watcher.rs`
 - Create: `crates/strukt-fs/tests/watcher.rs`
 
-- [ ] **Step 1: Write failing watcher normalization tests**
+- [x] **Step 1: Write failing watcher normalization tests**
 
 Create `crates/strukt-fs/tests/watcher.rs`:
 
@@ -1250,7 +1250,7 @@ fn watcher_errors_mark_the_workspace_stale() {
 }
 ```
 
-- [ ] **Step 2: Run watcher tests and verify RED**
+- [x] **Step 2: Run watcher tests and verify RED**
 
 Run:
 
@@ -1260,7 +1260,7 @@ cargo test -p strukt-fs --test watcher
 
 Expected: FAIL because watch types and normalization are absent.
 
-- [ ] **Step 3: Implement watcher contract and notify adapter**
+- [x] **Step 3: Implement watcher contract and notify adapter**
 
 Replace `crates/strukt-fs/src/watcher.rs` with:
 
@@ -1331,7 +1331,7 @@ pub enum WatcherError {
 
 Export watcher types and `normalize_notify_event` from `lib.rs`.
 
-- [ ] **Step 4: Run watcher tests and verify GREEN**
+- [x] **Step 4: Run watcher tests and verify GREEN**
 
 Run:
 
@@ -1341,7 +1341,7 @@ cargo test -p strukt-fs --test watcher
 
 Expected: both watcher tests PASS.
 
-- [ ] **Step 5: Commit watcher support**
+- [x] **Step 5: Commit watcher support**
 
 ```bash
 git add crates/strukt-fs
