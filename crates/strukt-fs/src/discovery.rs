@@ -1,4 +1,6 @@
 use std::cmp::Ordering;
+#[cfg(any(windows, test))]
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -64,8 +66,10 @@ pub fn discover(
 ///
 /// # Errors
 ///
-/// Returns [`DiscoveryError`] when the root cannot be canonicalized or an entry
-/// cannot be represented relative to that root.
+/// Returns [`DiscoveryError::Io`] with [`std::io::ErrorKind::InvalidInput`] when
+/// the canonicalized root is not a directory. Other errors are returned when
+/// the root cannot be canonicalized or an entry cannot be represented relative
+/// to that root.
 pub fn discover_report(
     root: impl AsRef<Path>,
     options: DiscoveryOptions,
@@ -85,6 +89,9 @@ pub fn discover_report(
     let mut accepted = options
         .show_ignored
         .then(|| AcceptedCursor::new(&root, options));
+    #[cfg(windows)]
+    let mut hidden_attributes =
+        HiddenAttributeCache::new(options.show_hidden, windows_hidden_attribute);
     for result in walker(&root, options) {
         let entry = match result {
             Ok(entry) => entry,
@@ -117,7 +124,9 @@ pub fn discover_report(
         } else {
             FileKind::File
         };
-        let hidden = is_hidden(&root, &relative_path);
+        let hidden = has_dot_component(&relative_path);
+        #[cfg(windows)]
+        let hidden = hidden || hidden_attributes.is_hidden(&root, &relative_path);
         entries.push(FileEntry {
             ignored,
             relative_path,
@@ -219,38 +228,60 @@ fn walker(root: &Path, options: DiscoveryOptions) -> ignore::Walk {
     builder.build()
 }
 
-fn is_hidden(root: &Path, relative_path: &Path) -> bool {
-    if relative_path
+fn has_dot_component(relative_path: &Path) -> bool {
+    relative_path
         .components()
         .any(|component| component.as_os_str().to_string_lossy().starts_with('.'))
-    {
-        return true;
-    }
-
-    has_windows_hidden_attribute(root, relative_path)
 }
 
-#[cfg(not(windows))]
-fn has_windows_hidden_attribute(_root: &Path, _relative_path: &Path) -> bool {
-    false
+#[cfg(any(windows, test))]
+struct HiddenAttributeCache<F> {
+    enabled: bool,
+    classifier: F,
+    attributes: HashMap<PathBuf, bool>,
+}
+
+#[cfg(any(windows, test))]
+impl<F> HiddenAttributeCache<F>
+where
+    F: FnMut(&Path) -> bool,
+{
+    fn new(enabled: bool, classifier: F) -> Self {
+        Self {
+            enabled,
+            classifier,
+            attributes: HashMap::new(),
+        }
+    }
+
+    fn is_hidden(&mut self, root: &Path, relative_path: &Path) -> bool {
+        if !self.enabled {
+            return false;
+        }
+
+        let mut path = root.to_path_buf();
+        for component in relative_path.components() {
+            path.push(component.as_os_str());
+            let hidden = *self
+                .attributes
+                .entry(path.clone())
+                .or_insert_with(|| (self.classifier)(&path));
+            if hidden {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 #[cfg(windows)]
-fn has_windows_hidden_attribute(root: &Path, relative_path: &Path) -> bool {
+fn windows_hidden_attribute(path: &Path) -> bool {
     use std::os::windows::fs::MetadataExt;
 
     const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
 
-    let mut path = root.to_path_buf();
-    for component in relative_path.components() {
-        path.push(component.as_os_str());
-        if fs::symlink_metadata(&path)
-            .is_ok_and(|metadata| metadata.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0)
-        {
-            return true;
-        }
-    }
-    false
+    fs::symlink_metadata(path)
+        .is_ok_and(|metadata| metadata.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0)
 }
 
 #[derive(Debug, Error)]
@@ -267,7 +298,12 @@ pub enum DiscoveryError {
 
 #[cfg(test)]
 mod tests {
-    use super::Warnings;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+    use std::rc::Rc;
+
+    use super::{HiddenAttributeCache, Warnings};
 
     #[test]
     fn duplicate_warning_messages_are_reported_once() {
@@ -278,5 +314,38 @@ mod tests {
         warnings.push(&warning);
 
         assert_eq!(warnings.values.len(), 1);
+    }
+
+    #[test]
+    fn hidden_attribute_cache_inspects_shared_ancestors_once() {
+        let calls = Rc::new(RefCell::new(HashMap::<PathBuf, usize>::new()));
+        let classifier_calls = Rc::clone(&calls);
+        let mut cache = HiddenAttributeCache::new(true, move |path: &Path| {
+            *classifier_calls
+                .borrow_mut()
+                .entry(path.to_path_buf())
+                .or_default() += 1;
+            path.ends_with("shared")
+        });
+        let root = Path::new("/workspace");
+
+        assert!(cache.is_hidden(root, Path::new("shared/first.txt")));
+        assert!(cache.is_hidden(root, Path::new("shared/second.txt")));
+
+        assert_eq!(calls.borrow()[&root.join("shared")], 1);
+        assert_eq!(calls.borrow().len(), 1);
+    }
+
+    #[test]
+    fn hidden_attribute_cache_bypasses_classifier_when_hidden_files_are_not_shown() {
+        let calls = Rc::new(RefCell::new(0));
+        let classifier_calls = Rc::clone(&calls);
+        let mut cache = HiddenAttributeCache::new(false, move |_path: &Path| {
+            *classifier_calls.borrow_mut() += 1;
+            true
+        });
+
+        assert!(!cache.is_hidden(Path::new("/workspace"), Path::new("hidden/file.txt")));
+        assert_eq!(*calls.borrow(), 0);
     }
 }
