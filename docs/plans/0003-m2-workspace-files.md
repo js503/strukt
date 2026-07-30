@@ -2103,7 +2103,7 @@ git commit -m "feat: render real workspace files"
 - Modify: `crates/strukt-app/src/main.rs`
 - Modify: `crates/strukt-persistence/src/workspace_store.rs`
 
-- [ ] **Step 1: Write failing restoration and stale-state tests**
+- [x] **Step 1: Write failing restoration and stale-state tests**
 
 Add to `main.rs` tests:
 
@@ -2135,7 +2135,7 @@ fn recent_workspace_path_is_persisted_after_open() {
 }
 ```
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run:
 
@@ -2145,7 +2145,7 @@ cargo test -p strukt-app stale_watcher_events_mark_the_workspace_for_rescan
 
 Expected: FAIL because `Message::FileEvent` is absent.
 
-- [ ] **Step 3: Add watcher polling and coalesced refresh**
+- [x] **Step 3: Add watcher polling and coalesced refresh**
 
 Extend application workspace state with `Option<WorkspaceWatcher>`. Remove
 `#[derive(Debug)]` from `StruktApp` because the native watcher backend is intentionally
@@ -2173,7 +2173,7 @@ discovery refresh. On `FileEvent::Stale(reason)`, set `stale_filesystem = true`,
 display `reason`, and schedule a full discovery refresh. Clear the stale flag only
 after `FilesRefreshed(Ok(_))`.
 
-- [ ] **Step 4: Persist after state-changing actions and restore the last workspace**
+- [x] **Step 4: Persist after state-changing actions and restore the last workspace**
 
 Add a `recent.json` record to `WorkspaceStore`:
 
@@ -2328,7 +2328,7 @@ picker and then calls `WorkspaceStore::relink_recent`. `Remove` calls
 `WorkspaceStore::remove_recent`. Both store operations run in `spawn_blocking` and
 refresh `recent_workspaces` from `RecentWorkspacesUpdated`.
 
-- [ ] **Step 5: Add Quick Open and bounded workspace search UI**
+- [x] **Step 5: Add Quick Open and bounded workspace search UI**
 
 Add Quick Open application state:
 
@@ -2429,7 +2429,7 @@ Manually validate:
 
 Expected: tests PASS and all seven manual checks succeed.
 
-- [ ] **Step 7: Commit watch, search, and restoration**
+- [x] **Step 7: Commit watch, search, and restoration**
 
 ```bash
 git add crates/strukt-app crates/strukt-persistence
