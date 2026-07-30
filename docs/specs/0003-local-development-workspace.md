@@ -6,6 +6,8 @@
   [`0001-workspace-shell-and-remote-development.md`](0001-workspace-shell-and-remote-development.md)
 - Architecture decision:
   [`../decisions/0001-native-ui-framework.md`](../decisions/0001-native-ui-framework.md)
+- First implementation plan:
+  [`../plans/0003-m2-workspace-files.md`](../plans/0003-m2-workspace-files.md)
 - Spatial reference:
   [`../mockups/workspace-shell/focus-context.html`](../mockups/workspace-shell/focus-context.html)
 
