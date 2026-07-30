@@ -4,6 +4,7 @@ members = [
   "crates/strukt-core",
   "crates/strukt-shell",
   "crates/strukt-theme",
+  "crates/strukt-persistence",
   "crates/strukt-workspace",
 ]
 resolver = "3"
@@ -26,6 +27,7 @@ rfd = "0.17.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1"
 strukt-core = { path = "crates/strukt-core" }
+strukt-persistence = { path = "crates/strukt-persistence" }
 strukt-shell = { path = "crates/strukt-shell" }
 strukt-theme = { path = "crates/strukt-theme" }
 strukt-workspace = { path = "crates/strukt-workspace" }
