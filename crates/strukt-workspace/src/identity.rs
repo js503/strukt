@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use thiserror::Error;
 
-#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
 pub struct WorkspaceId(String);
 
 impl WorkspaceId {
@@ -13,7 +13,25 @@ impl WorkspaceId {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+impl<'de> Deserialize<'de> for WorkspaceId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        let is_lowercase_hex = value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+        if value.len() != 64 || !is_lowercase_hex {
+            return Err(D::Error::custom(
+                "workspace ID must be 64 lowercase hexadecimal characters",
+            ));
+        }
+        Ok(Self(value))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WorkspaceRoot {
     id: WorkspaceId,
     path: PathBuf,
@@ -26,7 +44,8 @@ impl WorkspaceRoot {
     /// # Errors
     ///
     /// Returns [`WorkspaceError::Access`] when the path cannot be canonicalized,
-    /// or [`WorkspaceError::NotDirectory`] when the canonical path is not a directory.
+    /// [`WorkspaceError::NotDirectory`] when the canonical path is not a directory,
+    /// or [`WorkspaceError::NonUtf8Path`] when it is not valid UTF-8.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, WorkspaceError> {
         let requested = path.as_ref();
         let path = requested
@@ -35,11 +54,17 @@ impl WorkspaceRoot {
                 path: requested.to_path_buf(),
                 source,
             })?;
-        if !path.is_dir() {
+        let metadata = std::fs::metadata(&path).map_err(|source| WorkspaceError::Access {
+            path: path.clone(),
+            source,
+        })?;
+        if !metadata.is_dir() {
             return Err(WorkspaceError::NotDirectory(path));
         }
-        let identity_bytes = path.to_string_lossy();
-        let id = WorkspaceId(blake3::hash(identity_bytes.as_bytes()).to_hex().to_string());
+        let identity = path
+            .to_str()
+            .ok_or_else(|| WorkspaceError::NonUtf8Path(path.clone()))?;
+        let id = WorkspaceId(blake3::hash(identity.as_bytes()).to_hex().to_string());
         let display_name = path
             .file_name()
             .and_then(|name| name.to_str())
@@ -68,6 +93,34 @@ impl WorkspaceRoot {
     }
 }
 
+impl<'de> Deserialize<'de> for WorkspaceRoot {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct SerializedWorkspaceRoot {
+            id: WorkspaceId,
+            path: PathBuf,
+            display_name: String,
+        }
+
+        let serialized = SerializedWorkspaceRoot::deserialize(deserializer)?;
+        let root = Self::open(&serialized.path).map_err(D::Error::custom)?;
+        if root.id != serialized.id {
+            return Err(D::Error::custom(
+                "workspace ID does not match the canonical path",
+            ));
+        }
+        if root.display_name != serialized.display_name {
+            return Err(D::Error::custom(
+                "workspace display name does not match the canonical path",
+            ));
+        }
+        Ok(root)
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum WorkspaceError {
     #[error("cannot access workspace path {path}: {source}")]
@@ -78,4 +131,6 @@ pub enum WorkspaceError {
     },
     #[error("workspace root is not a directory: {0}")]
     NotDirectory(PathBuf),
+    #[error("workspace root path is not valid UTF-8: {0}")]
+    NonUtf8Path(PathBuf),
 }
