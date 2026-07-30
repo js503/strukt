@@ -19,6 +19,7 @@ use strukt_workspace::{WorkspaceRoot, WorkspaceState};
 use crate::workspace::{OpenedWorkspace, open_workspace_without_store};
 
 const SMOKE_TEST_DURATION: Duration = Duration::from_secs(3);
+pub(crate) const MAX_WATCHER_EVENTS_PER_POLL: usize = 64;
 pub(crate) const WORKSPACE_FILES_SMOKE_SUCCESS: &str =
     "strukt workspace files smoke: open, discovery, and persistence passed";
 
@@ -605,23 +606,19 @@ impl StruktApp {
                 let Some(root) = self.watcher_root.clone() else {
                     return Task::none();
                 };
-                let mut stale_reason = None;
-                let mut changed = false;
-                if let Some(watcher) = &self.watcher {
-                    while let Some(event) = watcher.try_recv() {
-                        match event {
-                            FileEvent::Changed(paths) => changed |= !paths.is_empty(),
-                            FileEvent::Stale(reason) => stale_reason = Some(reason),
-                        }
-                    }
-                }
-                if let Some(reason) = stale_reason {
+                let batch = self
+                    .watcher
+                    .as_ref()
+                    .map_or_else(WatcherBatch::default, |watcher| {
+                        drain_watcher_batch(|| watcher.try_recv())
+                    });
+                if let Some(reason) = batch.stale_reason {
                     return self.update(Message::FileEvent {
                         workspace_root: root,
                         event: FileEvent::Stale(reason),
                     });
                 }
-                if changed {
+                if batch.changed {
                     return self.update(Message::FileEvent {
                         workspace_root: root,
                         event: FileEvent::Changed(Vec::new()),
@@ -1411,6 +1408,30 @@ impl StruktApp {
         }
         Subscription::batch(subscriptions)
     }
+}
+
+#[derive(Debug, Default, Eq, PartialEq)]
+pub(crate) struct WatcherBatch {
+    pub(crate) changed: bool,
+    pub(crate) stale_reason: Option<String>,
+    pub(crate) drained: usize,
+}
+
+pub(crate) fn drain_watcher_batch(
+    mut next_event: impl FnMut() -> Option<FileEvent>,
+) -> WatcherBatch {
+    let mut batch = WatcherBatch::default();
+    for _ in 0..MAX_WATCHER_EVENTS_PER_POLL {
+        let Some(event) = next_event() else {
+            break;
+        };
+        batch.drained += 1;
+        match event {
+            FileEvent::Changed(paths) => batch.changed |= !paths.is_empty(),
+            FileEvent::Stale(reason) => batch.stale_reason = Some(reason),
+        }
+    }
+    batch
 }
 
 pub(crate) fn run_workspace_files_smoke(root: PathBuf) -> Result<(), String> {

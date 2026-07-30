@@ -843,6 +843,37 @@ mod tests {
     }
 
     #[test]
+    fn watcher_polling_bounds_each_batch_and_preserves_stale_events_across_batches() {
+        use std::collections::VecDeque;
+
+        let mut events = VecDeque::new();
+        for index in 0..super::app::MAX_WATCHER_EVENTS_PER_POLL {
+            events.push_back(strukt_fs::FileEvent::Changed(vec![
+                PathBuf::from(format!("{index}.txt")),
+            ]));
+        }
+        events.push_back(strukt_fs::FileEvent::Stale("overflow".to_owned()));
+        events.push_back(strukt_fs::FileEvent::Changed(vec![
+            PathBuf::from("after.txt"),
+        ]));
+
+        let first = super::app::drain_watcher_batch(|| events.pop_front());
+        assert_eq!(
+            first.drained,
+            super::app::MAX_WATCHER_EVENTS_PER_POLL
+        );
+        assert!(first.changed);
+        assert_eq!(first.stale_reason, None);
+        assert_eq!(events.len(), 2);
+
+        let second = super::app::drain_watcher_batch(|| events.pop_front());
+        assert_eq!(second.drained, 2);
+        assert!(second.changed);
+        assert_eq!(second.stale_reason.as_deref(), Some("overflow"));
+        assert!(events.is_empty());
+    }
+
+    #[test]
     fn stale_search_completion_cannot_replace_newer_results() {
         let project = tempdir().unwrap();
         let mut app = StruktApp::default();
