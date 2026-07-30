@@ -22,7 +22,8 @@ that later local-terminal and remote-workspace plans can reuse.
 **Tech Stack:** Rust 1.97.1, Rust 2024 edition, Iced 0.14, Tokio,
 `atomic-write-file 0.3.0`, `ignore 0.4.31`, `notify 8.2.0`, `rfd 0.17.2`,
 `directories 6.0.0`, `blake3 1.8.5`, `serde 1.0.229`, `serde_json 1`,
-`tempfile 3.27.0`, `trash 5.2.6`, `cap-std 4.0.2`, Cargo tests, GitHub Actions.
+`tempfile 3.27.0`, `trash 5.2.6`, `cap-std 4.0.2`, `cap-fs-ext 4.0.2`,
+Cargo tests, GitHub Actions.
 
 ---
 
@@ -1452,13 +1453,16 @@ Expected: FAIL because operations are not implemented.
 
 - [ ] **Step 3: Implement root-scoped operations**
 
-Add `cap-std = "4.0.2"` to `workspace.dependencies` and
-`cap-std.workspace = true` to `strukt-fs`. File operations must resolve and mutate
-paths relative to an open `cap_std::fs::Dir` for the workspace root. This prevents
-symlink or junction ancestor swaps from redirecting create, copy, rename, and
-permanent-delete operations outside the workspace. The platform Trash API accepts
-only ambient paths; `MoveToTrash` therefore retains a documented best-effort
-validation boundary under adversarial concurrent path mutation.
+Add `cap-std = "4.0.2"` and `cap-fs-ext = "4.0.2"` to
+`workspace.dependencies`, then enable both workspace dependencies in `strukt-fs`.
+File operations must resolve and mutate paths relative to an open
+`cap_std::fs::Dir` for the workspace root. This prevents symlink or junction
+ancestor swaps from redirecting create, copy, rename, and permanent-delete
+operations outside the workspace. Use the public `cap-fs-ext` extension traits for
+nonblocking/no-follow behavior rather than `cap-std`'s doc-hidden hooks. The
+platform Trash API accepts only ambient paths; `MoveToTrash` therefore retains a
+documented best-effort validation boundary under adversarial concurrent path
+mutation.
 
 Replace `crates/strukt-fs/src/operations.rs` with:
 
@@ -1583,8 +1587,10 @@ The final implementation must also:
 
 - preserve permissions when duplicating regular files and directories;
 - reject special files before copying;
-- clean up destination artifacts created by a failed duplicate so retry remains
-  possible;
+- copy into a unique private same-parent staging entry, publish only after the copy
+  succeeds, and report cleanup failures so retry state is never silently lost;
+- resolve the destination parent through the capability and reject case-insensitive,
+  symlink, and junction aliases that place a directory copy inside its source;
 - use Windows directory-link removal semantics for directory symlinks; and
 - reject destination conflicts without adding public error variants.
 
