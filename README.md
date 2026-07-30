@@ -25,9 +25,9 @@ software engineering: one context, every tool, and any model.
 
 ## Status
 
-- Stage: native shell foundation implementation
-- Current foundation: GPU-rendered Focus + Context workspace shell
-- Milestone: M1 in progress
+- Stage: local development workspace implementation
+- Current foundation: native shell plus real local workspace and file workflows
+- Milestones: M1 complete; M2 in progress
 
 ## Key Docs
 
@@ -49,15 +49,40 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-The current executable is a shell foundation. File entries, terminal output, and AI
-context are representative views; real filesystem, PTY, SSH, and provider behavior
-belong to later milestones.
+The native application can open a real local folder and expose its files through the
+explorer. Hidden and ignored visibility are independent, persisted workspace
+preferences. The explorer supports create and explicit permanent-delete workflows
+through a retained workspace capability. Rename and duplicate use no-replace
+publication on Unix and macOS; they currently fail closed on Windows until a safe
+atomic adapter is available. OS Trash also currently fails closed as unavailable
+and never falls back to permanent deletion. Quick open, bounded content search,
+native filesystem watching, recent workspaces, and workspace restoration all use
+the same local workspace state.
+
+Workspace state is stored in the platform application-data directory, not in the
+opened repository; `strukt` does not create a `.strukt` directory in a workspace.
+Editor buffers, language intelligence, and local terminal execution remain later M2
+workstreams. SSH and persistent local or remote sessions belong to later milestones.
+
+The deterministic workspace-files smoke mode expects a folder containing
+`strukt-smoke.txt`:
+
+```bash
+fixture="$(mktemp -d)"
+printf 'strukt\n' > "$fixture/strukt-smoke.txt"
+cargo run -p strukt-app -- --workspace-files-smoke "$fixture"
+```
+
+It opens and discovers the fixture, persists and reloads a workspace snapshot in an
+isolated temporary store, prints a stable success marker, and exits.
 
 ## Verification
 
 - Run `forj check .` to verify the governed repository manifest.
 - Follow the verification requirements in the active spec and implementation plan.
 - See `docs/evidence/m1-native-shell-validation.md` for native-window validation.
+- See `docs/evidence/m2-workspace-files-validation.md` for workspace/files
+  validation and current platform limitations.
 
 ## Pull Request Expectations
 

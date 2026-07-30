@@ -31,6 +31,32 @@ jobs:
         run: cargo test --workspace
       - name: Build native application
         run: cargo build -p strukt-app
+      - name: Smoke local workspace files
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          fixture="$(mktemp -d)"
+          printf 'strukt\n' > "$fixture/strukt-smoke.txt"
+          cargo run -p strukt-app -- --workspace-files-smoke "$fixture" |
+            tee workspace-files-smoke.log
+          grep -F "strukt workspace files smoke: open, discovery, and persistence passed" \
+            workspace-files-smoke.log
+      - name: Smoke local workspace files
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP "strukt-workspace-files-smoke"
+          New-Item -ItemType Directory -Force -Path $fixture | Out-Null
+          Set-Content -Path (Join-Path $fixture "strukt-smoke.txt") -Value "strukt"
+          $output = & cargo run -p strukt-app -- --workspace-files-smoke $fixture 2>&1
+          $output | Write-Output
+          if ($LASTEXITCODE -ne 0) {
+            throw "workspace files smoke exited with code $LASTEXITCODE"
+          }
+          if (($output -join "`n") -notmatch
+              "strukt workspace files smoke: open, discovery, and persistence passed") {
+            throw "workspace files smoke marker missing"
+          }
       - name: Smoke launch native Windows application
         if: runner.os == 'Windows'
         shell: pwsh
