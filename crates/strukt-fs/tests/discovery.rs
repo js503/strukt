@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use strukt_fs::{DiscoveryOptions, discover, discover_report};
+use strukt_fs::{DiscoveryError, DiscoveryOptions, discover, discover_report};
 use tempfile::tempdir;
 
 #[test]
@@ -58,6 +58,29 @@ fn explicit_visibility_reveals_hidden_and_ignored_files() {
 }
 
 #[test]
+fn explicit_visibility_reveals_files_ignored_by_dot_ignore() {
+    let root = tempdir().unwrap();
+    fs::write(root.path().join(".ignore"), "generated.txt\n").unwrap();
+    fs::write(root.path().join("generated.txt"), "generated").unwrap();
+
+    let entries = discover(
+        root.path(),
+        DiscoveryOptions {
+            show_hidden: true,
+            show_ignored: true,
+            ..DiscoveryOptions::default()
+        },
+    )
+    .unwrap();
+
+    let generated = entries
+        .iter()
+        .find(|entry| entry.relative_path == Path::new("generated.txt"))
+        .expect(".ignore-hidden file should be revealed");
+    assert!(generated.ignored);
+}
+
+#[test]
 fn entry_limits_return_a_visible_partial_report() {
     let root = tempdir().unwrap();
     fs::write(root.path().join("one.txt"), "one").unwrap();
@@ -74,4 +97,78 @@ fn entry_limits_return_a_visible_partial_report() {
 
     assert_eq!(report.entries.len(), 1);
     assert!(report.truncated);
+}
+
+#[test]
+fn entry_limits_retain_the_lexicographically_first_entry() {
+    for _ in 0..10 {
+        let root = tempdir().unwrap();
+        fs::write(root.path().join("z-last.txt"), "last").unwrap();
+        fs::write(root.path().join("a-first.txt"), "first").unwrap();
+
+        let report = discover_report(
+            root.path(),
+            DiscoveryOptions {
+                max_entries: 1,
+                ..DiscoveryOptions::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(report.entries[0].relative_path, Path::new("a-first.txt"));
+        assert!(report.truncated);
+    }
+}
+
+#[test]
+fn regular_files_are_not_discovery_roots() {
+    let root = tempdir().unwrap();
+    let file = root.path().join("main.rs");
+    fs::write(&file, "fn main() {}").unwrap();
+
+    assert!(matches!(
+        discover_report(file, DiscoveryOptions::default()),
+        Err(DiscoveryError::NotDirectory(_))
+    ));
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_hidden_attributes_mark_entries_and_descendants_hidden() {
+    use std::process::Command;
+
+    let root = tempdir().unwrap();
+    let hidden_directory = root.path().join("generated");
+    fs::create_dir(&hidden_directory).unwrap();
+    fs::write(hidden_directory.join("output.txt"), "generated").unwrap();
+    let status = Command::new("attrib")
+        .arg("+H")
+        .arg(&hidden_directory)
+        .status()
+        .expect("run attrib");
+    assert!(status.success());
+
+    let entries = discover(
+        root.path(),
+        DiscoveryOptions {
+            show_hidden: true,
+            ..DiscoveryOptions::default()
+        },
+    )
+    .unwrap();
+
+    assert!(
+        entries
+            .iter()
+            .find(|entry| entry.relative_path == Path::new("generated"))
+            .expect("hidden directory should be revealed")
+            .hidden
+    );
+    assert!(
+        entries
+            .iter()
+            .find(|entry| entry.relative_path == Path::new("generated/output.txt"))
+            .expect("descendant of hidden directory should be revealed")
+            .hidden
+    );
 }
