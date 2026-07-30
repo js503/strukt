@@ -13,3 +13,4 @@ pub use search::{
     QuickOpenCandidate, SearchError, SearchMatch, SearchOptions, SearchResult,
     quick_open_candidates, search_content,
 };
+pub use watcher::{FileEvent, WatcherError, WorkspaceWatcher, normalize_notify_event};
