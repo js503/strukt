@@ -868,6 +868,33 @@ mod tests {
     }
 
     #[test]
+    fn replacing_clearing_and_switching_workspace_cancel_active_search_work() {
+        let first = tempdir().unwrap();
+        let second = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(first.path()));
+
+        let _ = app.update(Message::SearchChanged("old".to_owned()));
+        let old = app.search_cancellation_for_test();
+        assert!(!old.is_cancelled());
+
+        let _ = app.update(Message::SearchChanged("new".to_owned()));
+        let new = app.search_cancellation_for_test();
+        assert!(old.is_cancelled());
+        assert!(!new.is_cancelled());
+
+        let _ = app.update(Message::SearchChanged(String::new()));
+        let cleared = app.search_cancellation_for_test();
+        assert!(new.is_cancelled());
+        assert!(!cleared.is_cancelled());
+
+        let _ = app.update(Message::SearchChanged("workspace".to_owned()));
+        let before_switch = app.search_cancellation_for_test();
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&second))));
+        assert!(before_switch.is_cancelled());
+    }
+
+    #[test]
     fn quick_open_ignored_results_are_guarded_by_workspace_identity() {
         let first = tempdir().unwrap();
         let second = tempdir().unwrap();

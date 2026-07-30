@@ -9,6 +9,8 @@ use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::CancellationToken;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DiscoveryOptions {
     pub show_hidden: bool,
@@ -74,6 +76,17 @@ pub fn discover_report(
     root: impl AsRef<Path>,
     options: DiscoveryOptions,
 ) -> Result<DiscoveryReport, DiscoveryError> {
+    discover_report_cancellable(root, options, &CancellationToken::new())
+}
+
+pub fn discover_report_cancellable(
+    root: impl AsRef<Path>,
+    options: DiscoveryOptions,
+    cancellation: &CancellationToken,
+) -> Result<DiscoveryReport, DiscoveryError> {
+    if cancellation.is_cancelled() {
+        return Err(DiscoveryError::Cancelled);
+    }
     let root = root.as_ref().canonicalize().map_err(DiscoveryError::Io)?;
     let metadata = fs::metadata(&root).map_err(DiscoveryError::Io)?;
     if !metadata.is_dir() {
@@ -93,6 +106,9 @@ pub fn discover_report(
     let mut hidden_attributes =
         HiddenAttributeCache::new(options.show_hidden, windows_hidden_attribute);
     for result in walker(&root, options) {
+        if cancellation.is_cancelled() {
+            return Err(DiscoveryError::Cancelled);
+        }
         let entry = match result {
             Ok(entry) => entry,
             Err(error) => {
@@ -110,7 +126,7 @@ pub fn discover_report(
 
         let relative_path = relative_path(&root, entry.path())?;
         let ignored = if let Some(accepted) = &mut accepted {
-            !accepted.contains(&relative_path, &mut warnings)?
+            !accepted.contains(&relative_path, &mut warnings, cancellation)?
         } else {
             false
         };
@@ -164,8 +180,16 @@ impl<'a> AcceptedCursor<'a> {
         }
     }
 
-    fn contains(&mut self, target: &Path, warnings: &mut Warnings) -> Result<bool, DiscoveryError> {
+    fn contains(
+        &mut self,
+        target: &Path,
+        warnings: &mut Warnings,
+        cancellation: &CancellationToken,
+    ) -> Result<bool, DiscoveryError> {
         loop {
+            if cancellation.is_cancelled() {
+                return Err(DiscoveryError::Cancelled);
+            }
             if let Some(next) = &self.next {
                 match next.as_path().cmp(target) {
                     Ordering::Less => self.next = None,
@@ -286,6 +310,8 @@ fn windows_hidden_attribute(path: &Path) -> bool {
 
 #[derive(Debug, Error)]
 pub enum DiscoveryError {
+    #[error("filesystem discovery was cancelled")]
+    Cancelled,
     #[error("filesystem IO failed: {0}")]
     Io(#[source] std::io::Error),
     #[error("filesystem walk failed: {0}")]

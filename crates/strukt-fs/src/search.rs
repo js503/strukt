@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 use strukt_workspace::WorkspaceRoot;
 use thiserror::Error;
 
-use crate::{DiscoveryError, DiscoveryOptions, FileEntry, FileKind, discover_report};
+use crate::{
+    CancellationToken, DiscoveryError, DiscoveryOptions, FileEntry, FileKind,
+    discover_report_cancellable,
+};
 
 const MAX_TOTAL_SEARCH_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_PREVIEW_BYTES: usize = 512;
@@ -115,16 +118,42 @@ pub fn search_content(
     needle: &str,
     options: SearchOptions,
 ) -> Result<SearchResult, SearchError> {
-    search_content_with_budget(root, needle, options, MAX_TOTAL_SEARCH_BYTES)
+    search_content_cancellable(root, needle, options, &CancellationToken::new())
 }
 
+pub fn search_content_cancellable(
+    root: &WorkspaceRoot,
+    needle: &str,
+    options: SearchOptions,
+    cancellation: &CancellationToken,
+) -> Result<SearchResult, SearchError> {
+    search_content_inner(
+        root,
+        needle,
+        options,
+        MAX_TOTAL_SEARCH_BYTES,
+        cancellation,
+        || {},
+        || {},
+    )
+}
+
+#[cfg(test)]
 fn search_content_with_budget(
     root: &WorkspaceRoot,
     needle: &str,
     options: SearchOptions,
     total_budget: u64,
 ) -> Result<SearchResult, SearchError> {
-    search_content_inner(root, needle, options, total_budget, || {})
+    search_content_inner(
+        root,
+        needle,
+        options,
+        total_budget,
+        &CancellationToken::new(),
+        || {},
+        || {},
+    )
 }
 
 #[cfg(test)]
@@ -139,7 +168,29 @@ fn search_content_with_hook(
         needle,
         options,
         MAX_TOTAL_SEARCH_BYTES,
+        &CancellationToken::new(),
         after_discovery,
+        || {},
+    )
+}
+
+#[cfg(test)]
+fn search_content_with_progress_hook(
+    root: &WorkspaceRoot,
+    needle: &str,
+    options: SearchOptions,
+    cancellation: &CancellationToken,
+    after_discovery: impl FnOnce(),
+    after_chunk: impl FnMut(),
+) -> Result<SearchResult, SearchError> {
+    search_content_inner(
+        root,
+        needle,
+        options,
+        MAX_TOTAL_SEARCH_BYTES,
+        cancellation,
+        after_discovery,
+        after_chunk,
     )
 }
 
@@ -148,14 +199,21 @@ fn search_content_inner(
     needle: &str,
     options: SearchOptions,
     total_budget: u64,
+    cancellation: &CancellationToken,
     after_discovery: impl FnOnce(),
+    mut after_chunk: impl FnMut(),
 ) -> Result<SearchResult, SearchError> {
+    check_cancellation(cancellation)?;
     workspace
         .validate_location()
         .map_err(|_| SearchError::WorkspaceChanged)?;
-    let report =
-        discover_report(workspace.path(), options.discovery).map_err(SearchError::Discovery)?;
+    let report = discover_report_cancellable(workspace.path(), options.discovery, cancellation)
+        .map_err(|error| match error {
+            DiscoveryError::Cancelled => SearchError::Cancelled,
+            error => SearchError::Discovery(error),
+        })?;
     after_discovery();
+    check_cancellation(cancellation)?;
     workspace
         .validate_location()
         .map_err(|_| SearchError::WorkspaceChanged)?;
@@ -171,6 +229,7 @@ fn search_content_inner(
         .filter(|entry| entry.kind == FileKind::File);
 
     for entry in entries {
+        check_cancellation(cancellation)?;
         if remaining_budget == 0 {
             incomplete = true;
             break;
@@ -200,9 +259,19 @@ fn search_content_inner(
         }
 
         let mut bytes = Vec::new();
-        let read_result = file
-            .take(effective_limit.saturating_add(1))
-            .read_to_end(&mut bytes);
+        let mut file = file.take(effective_limit.saturating_add(1));
+        let mut buffer = [0_u8; 64 * 1024];
+        let read_result = loop {
+            check_cancellation(cancellation)?;
+            match file.read(&mut buffer) {
+                Ok(0) => break Ok(()),
+                Ok(read) => {
+                    bytes.extend_from_slice(&buffer[..read]);
+                    after_chunk();
+                }
+                Err(error) => break Err(error),
+            }
+        };
         let bytes_read = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
         remaining_budget = remaining_budget.saturating_sub(bytes_read);
         if classify_entry_io(read_result)?.is_none() || bytes_read > effective_limit {
@@ -220,6 +289,7 @@ fn search_content_inner(
         };
 
         for (index, line) in content.lines().enumerate() {
+            check_cancellation(cancellation)?;
             if line.contains(needle) {
                 if matches.len() == options.max_results {
                     return Ok(SearchResult {
@@ -240,6 +310,14 @@ fn search_content_inner(
         matches,
         truncated: incomplete || remaining_budget == 0,
     })
+}
+
+fn check_cancellation(cancellation: &CancellationToken) -> Result<(), SearchError> {
+    if cancellation.is_cancelled() {
+        Err(SearchError::Cancelled)
+    } else {
+        Ok(())
+    }
 }
 
 fn open_for_search(root: &Dir, path: &Path) -> std::io::Result<File> {
@@ -270,6 +348,8 @@ fn bounded_preview(line: &str) -> String {
 
 #[derive(Debug, Error)]
 pub enum SearchError {
+    #[error("content search was cancelled")]
+    Cancelled,
     #[error("workspace root changed after it was opened")]
     WorkspaceChanged,
     #[error("file discovery failed: {0}")]
@@ -345,6 +425,30 @@ mod tests {
 
         assert_eq!(result.matches.len(), 1);
         assert!(result.truncated);
+    }
+
+    #[test]
+    fn cancellation_stops_search_during_chunked_file_processing() {
+        let root = tempdir().unwrap();
+        fs::write(root.path().join("large.txt"), vec![b'x'; 256 * 1024]).unwrap();
+        let workspace = WorkspaceRoot::open(root.path()).unwrap();
+        let cancellation = crate::CancellationToken::new();
+        let mut chunks = 0;
+
+        let result = super::search_content_with_progress_hook(
+            &workspace,
+            "needle",
+            SearchOptions::default(),
+            &cancellation,
+            || {},
+            || {
+                chunks += 1;
+                cancellation.cancel();
+            },
+        );
+
+        assert!(matches!(result, Err(SearchError::Cancelled)));
+        assert_eq!(chunks, 1);
     }
 
     #[cfg(unix)]

@@ -6,9 +6,10 @@ use iced::keyboard::{self, Key};
 use iced::{Subscription, Task, Theme, time};
 use strukt_core::{CapabilityDescriptor, CapabilityId, CapabilityRegistry};
 use strukt_fs::{
-    DiscoveryOptions, DiscoveryReport, FileEntry, FileEvent, FileKind, FileOperation,
-    QuickOpenCandidate, SearchOptions, SearchResult, WorkspaceWatcher, apply_operation,
-    discover_report, quick_open_candidates_with_ignored, search_content,
+    CancellationToken, DiscoveryOptions, DiscoveryReport, FileEntry, FileEvent, FileKind,
+    FileOperation, QuickOpenCandidate, SearchOptions, SearchResult, WorkspaceWatcher,
+    apply_operation, discover_report, quick_open_candidates_with_ignored,
+    search_content_cancellable,
 };
 use strukt_persistence::{RecentWorkspaces, WorkspaceStore};
 use strukt_shell::{Activity, ShellAction, ShellState};
@@ -102,6 +103,7 @@ pub struct StruktApp {
     active_recent_roots: Vec<WorkspaceRoot>,
     persistence_error: Option<String>,
     search_generation: u64,
+    search_cancellation: CancellationToken,
     filesystem_revision: u64,
     quick_open_generation: u64,
     quick_open_scan_in_flight: Option<(u64, PathBuf, u64)>,
@@ -283,6 +285,7 @@ impl StruktApp {
             active_recent_roots: Vec::new(),
             persistence_error: None,
             search_generation: 0,
+            search_cancellation: CancellationToken::new(),
             filesystem_revision: 0,
             quick_open_generation: 0,
             quick_open_scan_in_flight: None,
@@ -399,6 +402,8 @@ impl StruktApp {
                 self.filesystem_revision = self.filesystem_revision.wrapping_add(1);
                 self.invalidate_quick_open_cache();
                 self.search_generation = self.search_generation.wrapping_add(1);
+                self.search_cancellation.cancel();
+                self.search_cancellation = CancellationToken::new();
                 self.quick_open_visible = false;
                 self.quick_open_results.clear();
                 self.search_results.matches.clear();
@@ -1195,6 +1200,8 @@ impl StruktApp {
     }
 
     fn schedule_search(&mut self, query: String) -> Task<Message> {
+        self.search_cancellation.cancel();
+        self.search_cancellation = CancellationToken::new();
         self.search_generation = self.search_generation.wrapping_add(1);
         self.search_query.clone_from(&query);
         self.search_results = SearchResult {
@@ -1246,10 +1253,12 @@ impl StruktApp {
                 ..self.explorer_options
             },
         };
+        let cancellation = self.search_cancellation.clone();
         Task::perform(
             async move {
                 let result = tokio::task::spawn_blocking(move || {
-                    search_content(&task_root, &query, options).map_err(|error| error.to_string())
+                    search_content_cancellable(&task_root, &query, options, &cancellation)
+                        .map_err(|error| error.to_string())
                 })
                 .await
                 .map_err(|error| error.to_string())
@@ -1262,6 +1271,11 @@ impl StruktApp {
                 result,
             },
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn search_cancellation_for_test(&self) -> CancellationToken {
+        self.search_cancellation.clone()
     }
 
     fn can_begin_operation(&self) -> bool {
