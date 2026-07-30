@@ -621,7 +621,7 @@ git commit -m "feat: persist local workspace state"
 - Create: `crates/strukt-fs/src/discovery.rs`
 - Create: `crates/strukt-fs/tests/discovery.rs`
 
-- [ ] **Step 1: Add the filesystem crate and failing discovery tests**
+- [x] **Step 1: Add the filesystem crate and failing discovery tests**
 
 Add `crates/strukt-fs` to `workspace.members` and add
 `strukt-fs = { path = "crates/strukt-fs" }` to `workspace.dependencies`.
@@ -746,7 +746,7 @@ fn entry_limits_return_a_visible_partial_report() {
 }
 ```
 
-- [ ] **Step 2: Run discovery tests and verify RED**
+- [x] **Step 2: Run discovery tests and verify RED**
 
 Run:
 
@@ -756,7 +756,7 @@ cargo test -p strukt-fs --test discovery
 
 Expected: FAIL because the filesystem modules and discovery types do not exist.
 
-- [ ] **Step 3: Implement bounded ignore-aware discovery**
+- [x] **Step 3: Implement bounded ignore-aware discovery**
 
 Create `crates/strukt-fs/src/discovery.rs`:
 
@@ -954,7 +954,7 @@ Create empty, compiling module files for later tasks:
 Temporarily export only discovery types from `lib.rs`; add the remaining exports in
 their owning tasks.
 
-- [ ] **Step 4: Run discovery tests and verify GREEN**
+- [x] **Step 4: Run discovery tests and verify GREEN**
 
 Run:
 
@@ -964,7 +964,7 @@ cargo test -p strukt-fs --test discovery
 
 Expected: both discovery tests PASS.
 
-- [ ] **Step 5: Commit discovery**
+- [x] **Step 5: Commit discovery**
 
 ```bash
 git add Cargo.toml Cargo.lock crates/strukt-fs
