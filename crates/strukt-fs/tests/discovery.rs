@@ -84,6 +84,70 @@ fn explicit_visibility_reveals_files_ignored_by_dot_ignore() {
 }
 
 #[test]
+fn built_in_heavy_directories_and_descendants_are_effectively_ignored() {
+    let root = tempdir().unwrap();
+    fs::create_dir_all(root.path().join("target/debug")).unwrap();
+    fs::write(root.path().join("target/debug/strukt"), "binary").unwrap();
+    fs::create_dir_all(root.path().join("node_modules/package")).unwrap();
+    fs::write(root.path().join("node_modules/package/index.js"), "module").unwrap();
+    let workspace = WorkspaceRoot::open(root.path()).unwrap();
+
+    for entries in [
+        discover(
+            root.path(),
+            DiscoveryOptions {
+                show_ignored: true,
+                ..DiscoveryOptions::default()
+            },
+        )
+        .unwrap(),
+        discover_report_for_root(
+            &workspace,
+            DiscoveryOptions {
+                show_ignored: true,
+                ..DiscoveryOptions::default()
+            },
+        )
+        .unwrap()
+        .entries,
+    ] {
+        for path in [
+            Path::new("target"),
+            Path::new("target/debug"),
+            Path::new("target/debug/strukt"),
+            Path::new("node_modules"),
+            Path::new("node_modules/package"),
+            Path::new("node_modules/package/index.js"),
+        ] {
+            assert!(
+                entries
+                    .iter()
+                    .find(|entry| entry.relative_path == path)
+                    .unwrap_or_else(|| panic!("heavy entry should be visible: {}", path.display()))
+                    .ignored,
+                "heavy entry should be classified as ignored: {}",
+                path.display()
+            );
+        }
+    }
+
+    for entries in [
+        discover(root.path(), DiscoveryOptions::default()).unwrap(),
+        discover_report_for_root(&workspace, DiscoveryOptions::default())
+            .unwrap()
+            .entries,
+    ] {
+        assert!(
+            entries.iter().all(|entry| {
+                !entry.relative_path.starts_with("target")
+                    && !entry.relative_path.starts_with("node_modules")
+            }),
+            "default discovery must hide built-in heavy trees"
+        );
+    }
+}
+
+#[test]
 fn capability_discovery_preserves_nested_ignore_visibility() {
     let root = tempdir().unwrap();
     fs::create_dir(root.path().join("nested")).unwrap();

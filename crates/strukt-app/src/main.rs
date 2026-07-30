@@ -1069,6 +1069,99 @@ mod tests {
     }
 
     #[test]
+    fn quick_open_filters_real_heavy_trees_across_query_refresh_and_reopen() {
+        let project = tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join("target/debug")).unwrap();
+        std::fs::write(
+            project.path().join("target/debug/generated.rs"),
+            "generated",
+        )
+        .unwrap();
+        std::fs::create_dir_all(project.path().join("node_modules/package")).unwrap();
+        std::fs::write(
+            project.path().join("node_modules/package/index.js"),
+            "package",
+        )
+        .unwrap();
+        std::fs::write(project.path().join("visible.rs"), "visible").unwrap();
+
+        let app_data = tempdir().unwrap();
+        let store = WorkspaceStore::at(app_data.path());
+        let mut state = workspace_state(project.path());
+        state.explorer.show_ignored = true;
+        store.save(&state).unwrap();
+        let opened =
+            crate::workspace::open_workspace_with_store(project.path().to_path_buf(), &store)
+                .unwrap();
+        let root = opened.state.root.path().to_path_buf();
+        let mut app = StruktApp::default();
+        let _ = app.update(Message::WorkspaceOpened(Ok(opened)));
+
+        for path in [
+            std::path::Path::new("target/debug/generated.rs"),
+            std::path::Path::new("node_modules/package/index.js"),
+        ] {
+            assert!(
+                app.files
+                    .iter()
+                    .find(|entry| entry.relative_path == path)
+                    .expect("explorer should contain the heavy entry")
+                    .ignored
+            );
+        }
+
+        let _ = app.update(Message::ToggleQuickOpen);
+        assert_eq!(
+            app.quick_open_results
+                .iter()
+                .map(|entry| entry.relative_path.as_path())
+                .collect::<Vec<_>>(),
+            vec![std::path::Path::new("visible.rs")]
+        );
+        let _ = app.update(Message::QuickOpenChanged("generated".to_owned()));
+        assert!(app.quick_open_results.is_empty());
+
+        let report = strukt_fs::discover_report_for_root(
+            &WorkspaceRoot::open(project.path()).unwrap(),
+            DiscoveryOptions {
+                show_ignored: true,
+                ..DiscoveryOptions::default()
+            },
+        )
+        .unwrap();
+        let _ = app.update(Message::ToggleQuickOpen);
+        let _ = app.update(Message::FilesRefreshed {
+            generation: 2,
+            result: Ok(report.clone()),
+        });
+        let _ = app.update(Message::ToggleQuickOpen);
+        assert_eq!(
+            app.quick_open_results
+                .iter()
+                .map(|entry| entry.relative_path.as_path())
+                .collect::<Vec<_>>(),
+            vec![std::path::Path::new("visible.rs")]
+        );
+
+        let _ = app.update(Message::ToggleQuickOpenIgnored);
+        let _ = app.update(Message::QuickOpenFilesLoaded {
+            generation: 3,
+            workspace_root: root,
+            filesystem_revision: 2,
+            result: Ok(report.entries),
+        });
+        assert!(
+            app.quick_open_results
+                .iter()
+                .any(|entry| entry.relative_path
+                    == std::path::Path::new("target/debug/generated.rs"))
+        );
+        assert!(app.quick_open_results.iter().any(|entry| {
+            entry.relative_path == std::path::Path::new("node_modules/package/index.js")
+        }));
+    }
+
+    #[test]
     fn quick_open_reuses_a_valid_ignored_cache_after_close_and_reopen() {
         let project = tempdir().unwrap();
         let root = project.path().canonicalize().unwrap();

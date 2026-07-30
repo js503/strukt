@@ -137,11 +137,12 @@ pub fn discover_report_cancellable(
         }
 
         let relative_path = relative_path(&root, entry.path())?;
-        let ignored = if let Some(accepted) = &mut accepted {
+        let ignored_by_rules = if let Some(accepted) = &mut accepted {
             !accepted.contains(&relative_path, &mut warnings, cancellation)?
         } else {
             false
         };
+        let effectively_ignored = ignored_by_rules || has_heavy_component(&relative_path);
         let file_type = entry
             .file_type()
             .ok_or_else(|| DiscoveryError::MissingType(entry.path().to_path_buf()))?;
@@ -156,7 +157,7 @@ pub fn discover_report_cancellable(
         #[cfg(windows)]
         let hidden = hidden || hidden_attributes.is_hidden(&root, &relative_path);
         entries.push(FileEntry {
-            ignored,
+            ignored: effectively_ignored,
             relative_path,
             kind,
             depth: entry.depth(),
@@ -277,10 +278,11 @@ fn walk_capability(
         let file_type = entry.file_type().map_err(DiscoveryError::Io)?;
         let is_directory = file_type.is_dir();
         let hidden = has_dot_component(&relative_path) || capability_hidden(&entry)?;
-        let is_ignored = ignored_by(ignores, &logical_root.join(&relative_path), is_directory);
-        let heavy = matches!(name.to_str(), Some(".git" | "node_modules" | "target"));
+        let ignored_by_rules =
+            ignored_by(ignores, &logical_root.join(&relative_path), is_directory);
+        let effectively_ignored = ignored_by_rules || has_heavy_component(&relative_path);
         if (!context.options.show_hidden && hidden)
-            || (!context.options.show_ignored && (is_ignored || heavy))
+            || (!context.options.show_ignored && effectively_ignored)
         {
             continue;
         }
@@ -297,7 +299,7 @@ fn walk_capability(
             kind,
             depth: depth + 1,
             hidden,
-            ignored: is_ignored,
+            ignored: effectively_ignored,
         });
 
         if is_directory {
@@ -531,6 +533,15 @@ fn has_dot_component(relative_path: &Path) -> bool {
     relative_path
         .components()
         .any(|component| component.as_os_str().to_string_lossy().starts_with('.'))
+}
+
+fn has_heavy_component(relative_path: &Path) -> bool {
+    relative_path.components().any(|component| {
+        matches!(
+            component.as_os_str().to_str(),
+            Some(".git" | "node_modules" | "target")
+        )
+    })
 }
 
 #[cfg(any(windows, test))]
