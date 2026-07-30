@@ -979,7 +979,7 @@ git commit -m "feat: discover local workspace files"
 - Modify: `crates/strukt-fs/src/search.rs`
 - Create: `crates/strukt-fs/tests/search.rs`
 
-- [ ] **Step 1: Write failing search tests**
+- [x] **Step 1: Write failing search tests**
 
 Create `crates/strukt-fs/tests/search.rs`:
 
@@ -1040,7 +1040,7 @@ fn quick_open_ranks_subsequence_path_matches() {
 }
 ```
 
-- [ ] **Step 2: Run search tests and verify RED**
+- [x] **Step 2: Run search tests and verify RED**
 
 Run:
 
@@ -1050,7 +1050,7 @@ cargo test -p strukt-fs --test search
 
 Expected: FAIL because search types are not defined.
 
-- [ ] **Step 3: Implement bounded UTF-8 content search**
+- [x] **Step 3: Implement bounded UTF-8 content search**
 
 Replace `crates/strukt-fs/src/search.rs` with:
 
@@ -1195,7 +1195,7 @@ pub enum SearchError {
 Export `QuickOpenCandidate`, `SearchError`, `SearchMatch`, `SearchOptions`,
 `SearchResult`, `quick_open_candidates`, and `search_content` from `lib.rs`.
 
-- [ ] **Step 4: Run search and crate tests**
+- [x] **Step 4: Run search and crate tests**
 
 Run:
 
@@ -1205,7 +1205,7 @@ cargo test -p strukt-fs
 
 Expected: discovery and search tests PASS.
 
-- [ ] **Step 5: Commit search**
+- [x] **Step 5: Commit search**
 
 ```bash
 git add crates/strukt-fs
