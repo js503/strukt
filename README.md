@@ -51,10 +51,13 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 The native application can open a real local folder and expose its files through the
 explorer. Hidden and ignored visibility are independent, persisted workspace
-preferences. The explorer supports create, rename, duplicate, trash, and explicit
-permanent-delete workflows. Quick open, bounded content search, native filesystem
-watching, recent workspaces, and workspace restoration all use the same local
-workspace state.
+preferences. The explorer supports create and explicit permanent-delete workflows
+through a retained workspace capability. Rename and duplicate use no-replace
+publication on Unix and macOS; they currently fail closed on Windows until a safe
+atomic adapter is available. OS Trash also currently fails closed as unavailable
+and never falls back to permanent deletion. Quick open, bounded content search,
+native filesystem watching, recent workspaces, and workspace restoration all use
+the same local workspace state.
 
 Workspace state is stored in the platform application-data directory, not in the
 opened repository; `strukt` does not create a `.strukt` directory in a workspace.
@@ -78,6 +81,8 @@ isolated temporary store, prints a stable success marker, and exits.
 - Run `forj check .` to verify the governed repository manifest.
 - Follow the verification requirements in the active spec and implementation plan.
 - See `docs/evidence/m1-native-shell-validation.md` for native-window validation.
+- See `docs/evidence/m2-workspace-files-validation.md` for workspace/files
+  validation and current platform limitations.
 
 ## Pull Request Expectations
 

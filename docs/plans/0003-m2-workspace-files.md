@@ -1,6 +1,6 @@
 # M2 Workspace and Files Implementation Plan
 
-- Status: In progress
+- Status: Complete
 - Tracking issue: [#3 — M2: Local workspace and files](https://github.com/js503/strukt/issues/3)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
@@ -2065,7 +2065,7 @@ assert_eq!(
 assert_eq!(operation_from_dialog(&ExplorerDialog::CreateFile(String::new())), None);
 ```
 
-- [ ] **Step 5: Run tests and manually validate the explorer**
+- [x] **Step 5: Run tests and manually validate the explorer**
 
 Run:
 
@@ -2408,7 +2408,7 @@ Render each result as `relative/path:line  preview`. Show `Results truncated` wh
 `SearchResult::truncated` is true. An empty query clears results and does not start
 a search.
 
-- [ ] **Step 6: Run integration checks**
+- [x] **Step 6: Run integration checks**
 
 Run:
 
@@ -2447,7 +2447,7 @@ git commit -m "feat: restore and refresh local workspaces"
 - Modify: `docs/roadmap.md`
 - Modify: `docs/tracker.md`
 
-- [ ] **Step 1: Add a deterministic workspace-files smoke mode**
+- [x] **Step 1: Add a deterministic workspace-files smoke mode**
 
 Extend `LaunchMode` with:
 
@@ -2466,7 +2466,7 @@ Parse only the exact pair `--workspace-files-smoke <path>`. In this mode:
 
 Add unit tests that reject missing paths and near-match flags.
 
-- [ ] **Step 2: Add native CI smoke fixtures**
+- [x] **Step 2: Add native CI smoke fixtures**
 
 After the native build step in `.github/workflows/ci.yml`, add a shell-specific step
 on macOS and Ubuntu:
@@ -2505,7 +2505,7 @@ Add the Windows equivalent:
     }
 ```
 
-- [ ] **Step 3: Run the complete local verification gate**
+- [x] **Step 3: Run the complete local verification gate**
 
 Run:
 
@@ -2529,7 +2529,7 @@ Expected:
 - cross-target checks pass;
 - only already-documented transitive future-compatibility warnings may remain.
 
-- [ ] **Step 4: Record evidence and update delivery artifacts**
+- [x] **Step 4: Record evidence and update delivery artifacts**
 
 Create `docs/evidence/m2-workspace-files-validation.md` with:
 
@@ -2549,7 +2549,7 @@ Update:
   the overall M2 milestone in progress;
 - `docs/roadmap.md` only if evidence changes an exit criterion or dependency.
 
-- [ ] **Step 5: Run agentic review**
+- [x] **Step 5: Run agentic review**
 
 Review the complete diff against
 `docs/specs/0003-local-development-workspace.md`, focusing on:
@@ -2566,7 +2566,7 @@ Review the complete diff against
 Fix all critical and important findings. Record accepted minor findings and deferred
 gates in the pull request.
 
-- [ ] **Step 6: Commit completion evidence**
+- [x] **Step 6: Commit completion evidence**
 
 ```bash
 git add .github/workflows/ci.yml README.md docs/evidence \

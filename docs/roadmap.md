@@ -139,6 +139,10 @@ service.
   [`plans/0003-m2-workspace-files.md`](plans/0003-m2-workspace-files.md)
 - First-slice issue:
   [#3 — M2: Local workspace and files](https://github.com/js503/strukt/issues/3)
+- First-slice pull request:
+  [#4 — feat: add local workspace and files](https://github.com/js503/strukt/pull/4)
+- First-slice validation:
+  [`evidence/m2-workspace-files-validation.md`](evidence/m2-workspace-files-validation.md)
 - Workspace reference:
   [`mockups/workspace-shell/focus-context.html`](mockups/workspace-shell/focus-context.html)
 
