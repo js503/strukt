@@ -4,7 +4,7 @@ mod app;
 mod view;
 mod workspace;
 
-use app::{LaunchMode, Message, StruktApp};
+use app::{LaunchMode, StruktApp};
 
 fn main() -> iced::Result {
     let launch_mode = LaunchMode::from_args(std::env::args().skip(1));
@@ -13,9 +13,10 @@ fn main() -> iced::Result {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .expect("workspace files smoke runtime must start");
-        let result = runtime.block_on(app::workspace_files_smoke_task(root.clone()));
-        let mut app = StruktApp::new_with_store(launch_mode, None);
-        let _exit = app.update(Message::WorkspaceFilesSmokeFinished(result));
+        if let Err(error) = runtime.block_on(app::workspace_files_smoke_task(root.clone())) {
+            panic!("strukt workspace files smoke failed: {error}");
+        }
+        println!("{}", app::WORKSPACE_FILES_SMOKE_SUCCESS);
         return Ok(());
     }
 
@@ -490,6 +491,20 @@ mod tests {
         let mut app = StruktApp::new(LaunchMode::SmokeTest);
 
         let task = app.update(Message::SmokeTimeout);
+
+        assert_eq!(task.units(), 1);
+    }
+
+    #[test]
+    fn workspace_files_smoke_completion_requests_runtime_exit() {
+        let mut app = StruktApp::new_with_store(
+            LaunchMode::WorkspaceFilesSmoke {
+                root: PathBuf::from("fixture"),
+            },
+            None,
+        );
+
+        let task = app.update(Message::WorkspaceFilesSmokeFinished(Ok(())));
 
         assert_eq!(task.units(), 1);
     }

@@ -20,7 +20,7 @@ complete.
 | `git diff --check` | Pass |
 | `cargo fmt --all --check` | Pass |
 | `cargo clippy --workspace --all-targets --locked --offline -- -D warnings` | Pass |
-| `cargo test --workspace --locked --offline` | Pass; 124 tests, 0 failures |
+| `cargo test --workspace --locked --offline` | Pass; 125 tests, 0 failures |
 | `cargo build -p strukt-app --locked --offline` | Pass |
 | `cargo run -p strukt-app --locked --offline -- --workspace-files-smoke "$PWD"` with a temporary `strukt-smoke.txt` sentinel | Pass; exact marker emitted and process exited zero |
 | `cargo check -p strukt-app --target x86_64-unknown-linux-gnu --locked --offline` | Pass |
@@ -33,11 +33,14 @@ The deterministic smoke emitted:
 strukt workspace files smoke: open, discovery, and persistence passed
 ```
 
-The smoke opens the supplied folder, discovers the exact workflow-created
-`strukt-smoke.txt` file, saves and reloads the workspace state through an isolated
-temporary application-data store, requests application exit, and leaves no
-workspace-local metadata. Unit coverage also rejects missing paths, extra
-arguments, near-match flags, and near-match sentinel names.
+The smoke runs its filesystem workflow on a headless Tokio runtime. It opens the
+supplied folder, discovers the exact workflow-created `strukt-smoke.txt` file, and
+saves and reloads the workspace state through an isolated temporary application-data
+store. On success the CLI prints the marker and `main` returns zero; the Iced reducer
+separately requests `iced::exit()` when it receives a successful smoke-completion
+message. The workflow leaves no workspace-local metadata. Unit coverage also
+rejects missing paths, extra arguments, near-match flags, and near-match sentinel
+names.
 
 Cargo continues to report the previously documented future-compatibility warning
 for transitive dependency `block 0.1.6`. It does not fail the Rust 1.97.1 gates.
@@ -85,4 +88,3 @@ pending owner/orchestrator execution.
   pending until the editor, language, and terminal foundations exist.
 - Human Windows visual, accessibility, IME, packaging, installation, and complete
   keyboard-workflow validation remain M9 public-alpha gates.
-

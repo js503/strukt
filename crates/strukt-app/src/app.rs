@@ -18,6 +18,8 @@ use strukt_workspace::{WorkspaceRoot, WorkspaceState};
 use crate::workspace::{OpenedWorkspace, open_workspace_without_store};
 
 const SMOKE_TEST_DURATION: Duration = Duration::from_secs(3);
+pub(crate) const WORKSPACE_FILES_SMOKE_SUCCESS: &str =
+    "strukt workspace files smoke: open, discovery, and persistence passed";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub enum LaunchMode {
@@ -949,7 +951,7 @@ impl StruktApp {
                 return iced::exit();
             }
             Message::WorkspaceFilesSmokeFinished(Ok(())) => {
-                println!("strukt workspace files smoke: open, discovery, and persistence passed");
+                println!("{WORKSPACE_FILES_SMOKE_SUCCESS}");
                 return iced::exit();
             }
             Message::WorkspaceFilesSmokeFinished(Err(error)) => {
