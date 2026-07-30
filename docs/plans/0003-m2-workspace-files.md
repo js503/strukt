@@ -407,7 +407,7 @@ git commit -m "feat: add local workspace identity"
 - Create: `crates/strukt-persistence/src/workspace_store.rs`
 - Create: `crates/strukt-persistence/tests/workspace_store.rs`
 
-- [ ] **Step 1: Add the persistence crate and failing round-trip test**
+- [x] **Step 1: Add the persistence crate and failing round-trip test**
 
 Add `crates/strukt-persistence` to `workspace.members` and add
 `strukt-persistence = { path = "crates/strukt-persistence" }` to
@@ -484,7 +484,7 @@ fn malformed_current_snapshot_falls_back_to_last_valid_snapshot() {
 }
 ```
 
-- [ ] **Step 2: Run the test and verify RED**
+- [x] **Step 2: Run the test and verify RED**
 
 Run:
 
@@ -494,7 +494,7 @@ cargo test -p strukt-persistence --test workspace_store
 
 Expected: FAIL because `WorkspaceStore` is not defined.
 
-- [ ] **Step 3: Implement schema versioning and last-valid recovery**
+- [x] **Step 3: Implement schema versioning and last-valid recovery**
 
 Create `crates/strukt-persistence/src/workspace_store.rs`:
 
@@ -594,7 +594,7 @@ The implementation atomically replaces the current snapshot and preserves the
 previous parseable snapshot as a fallback. Task 10 must record that Windows
 replacement semantics pass in hosted CI before the plan is complete.
 
-- [ ] **Step 4: Run persistence tests and verify GREEN**
+- [x] **Step 4: Run persistence tests and verify GREEN**
 
 Run:
 
@@ -604,7 +604,7 @@ cargo test -p strukt-persistence
 
 Expected: both persistence tests PASS.
 
-- [ ] **Step 5: Commit persistence**
+- [x] **Step 5: Commit persistence**
 
 ```bash
 git add Cargo.toml Cargo.lock crates/strukt-persistence
