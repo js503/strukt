@@ -7,9 +7,17 @@ license.workspace = true
 
 [dependencies]
 iced.workspace = true
+rfd.workspace = true
 strukt-core.workspace = true
+strukt-fs.workspace = true
+strukt-persistence.workspace = true
 strukt-shell.workspace = true
 strukt-theme.workspace = true
+strukt-workspace.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
