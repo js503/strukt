@@ -38,7 +38,7 @@ mod tests {
 
     use iced::keyboard::{self, Key, Location, Modifiers, key};
     use strukt_core::CapabilityId;
-    use strukt_fs::{DiscoveryReport, FileEntry, FileKind};
+    use strukt_fs::{DiscoveryOptions, DiscoveryReport, FileEntry, FileKind};
     use strukt_persistence::WorkspaceStore;
     use strukt_shell::Activity;
     use strukt_workspace::{WorkspaceRoot, WorkspaceState};
@@ -563,6 +563,33 @@ mod tests {
     }
 
     #[test]
+    fn workspace_open_schedules_a_post_watcher_reconciliation_without_a_store() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::new_with_store(LaunchMode::Interactive, None);
+
+        let reconciliation = app.update(Message::WorkspaceOpened(Ok(open_workspace(&project))));
+
+        assert_eq!(reconciliation.units(), 1);
+    }
+
+    #[test]
+    fn post_registration_reconciliation_observes_a_change_without_another_watcher_event() {
+        let project = tempdir().unwrap();
+        let opened = open_workspace(&project);
+        assert!(opened.discovery.entries.is_empty());
+        let _watcher = strukt_fs::WorkspaceWatcher::start(opened.state.root.path()).unwrap();
+        std::fs::write(project.path().join("created-during-open.txt"), "late").unwrap();
+
+        let report =
+            strukt_fs::discover_report_for_root(&opened.state.root, DiscoveryOptions::default())
+                .unwrap();
+
+        assert!(report.entries.iter().any(|entry| {
+            entry.relative_path == std::path::Path::new("created-during-open.txt")
+        }));
+    }
+
+    #[test]
     fn visibility_messages_refresh_discovery_options() {
         let project = tempdir().unwrap();
         let mut app = StruktApp::default();
@@ -818,7 +845,7 @@ mod tests {
         );
         assert_eq!(
             app.update(Message::FilesRefreshed {
-                generation: 3,
+                generation: 4,
                 result: Ok(discovery(&["new-workspace.rs"])),
             })
             .units(),
@@ -866,7 +893,7 @@ mod tests {
             event: strukt_fs::FileEvent::Changed(vec!["file.txt".into()]),
         });
 
-        assert_eq!(first.units(), 1);
+        assert_eq!(first.units(), 0);
         assert_eq!(second.units(), 0);
         assert!(app.workspace.as_ref().unwrap().stale_filesystem);
         assert_eq!(app.workspace_error.as_deref(), Some("overflow"));
@@ -878,20 +905,17 @@ mod tests {
 
         let mut events = VecDeque::new();
         for index in 0..super::app::MAX_WATCHER_EVENTS_PER_POLL {
-            events.push_back(strukt_fs::FileEvent::Changed(vec![
-                PathBuf::from(format!("{index}.txt")),
-            ]));
+            events.push_back(strukt_fs::FileEvent::Changed(vec![PathBuf::from(format!(
+                "{index}.txt"
+            ))]));
         }
         events.push_back(strukt_fs::FileEvent::Stale("overflow".to_owned()));
-        events.push_back(strukt_fs::FileEvent::Changed(vec![
-            PathBuf::from("after.txt"),
-        ]));
+        events.push_back(strukt_fs::FileEvent::Changed(vec![PathBuf::from(
+            "after.txt",
+        )]));
 
         let first = super::app::drain_watcher_batch(|| events.pop_front());
-        assert_eq!(
-            first.drained,
-            super::app::MAX_WATCHER_EVENTS_PER_POLL
-        );
+        assert_eq!(first.drained, super::app::MAX_WATCHER_EVENTS_PER_POLL);
         assert!(first.changed);
         assert_eq!(first.stale_reason, None);
         assert_eq!(events.len(), 2);
@@ -1026,7 +1050,9 @@ mod tests {
         let _ = app.update(Message::ToggleQuickOpen);
         let _ = app.update(Message::ToggleHiddenFiles);
         let mut refreshed = discovery(&["current.txt"]);
-        refreshed.entries.push(ignored_file_entry("ignored-current.txt"));
+        refreshed
+            .entries
+            .push(ignored_file_entry("ignored-current.txt"));
         let _ = app.update(Message::FilesRefreshed {
             generation: 1,
             result: Ok(refreshed),
@@ -1227,6 +1253,10 @@ mod tests {
 
         let _ = app.update(Message::FilesRefreshed {
             generation: 2,
+            result: Ok(discovery(&["opening-snapshot.rs"])),
+        });
+        let _ = app.update(Message::FilesRefreshed {
+            generation: 3,
             result: Ok(discovery(&["current.rs"])),
         });
 

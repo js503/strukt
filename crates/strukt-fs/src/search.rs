@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use crate::{
     CancellationToken, DiscoveryError, DiscoveryOptions, FileEntry, FileKind,
-    discover_report_cancellable,
+    discover_report_for_root_cancellable,
 };
 
 const MAX_TOTAL_SEARCH_BYTES: u64 = 64 * 1024 * 1024;
@@ -121,6 +121,12 @@ pub fn search_content(
     search_content_cancellable(root, needle, options, &CancellationToken::new())
 }
 
+/// Searches workspace content and cooperatively stops obsolete work.
+///
+/// # Errors
+///
+/// Returns [`SearchError::Cancelled`] when cancellation is observed, or the
+/// same workspace, discovery, and IO errors as [`search_content`].
 pub fn search_content_cancellable(
     root: &WorkspaceRoot,
     needle: &str,
@@ -207,11 +213,11 @@ fn search_content_inner(
     workspace
         .validate_location()
         .map_err(|_| SearchError::WorkspaceChanged)?;
-    let report = discover_report_cancellable(workspace.path(), options.discovery, cancellation)
+    let report = discover_report_for_root_cancellable(workspace, options.discovery, cancellation)
         .map_err(|error| match error {
-            DiscoveryError::Cancelled => SearchError::Cancelled,
-            error => SearchError::Discovery(error),
-        })?;
+        DiscoveryError::Cancelled => SearchError::Cancelled,
+        error => SearchError::Discovery(error),
+    })?;
     after_discovery();
     check_cancellation(cancellation)?;
     workspace
@@ -260,7 +266,7 @@ fn search_content_inner(
 
         let mut bytes = Vec::new();
         let mut file = file.take(effective_limit.saturating_add(1));
-        let mut buffer = [0_u8; 64 * 1024];
+        let mut buffer = vec![0_u8; 64 * 1024].into_boxed_slice();
         let read_result = loop {
             check_cancellation(cancellation)?;
             match file.read(&mut buffer) {

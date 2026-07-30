@@ -3,10 +3,16 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
+use cap_std::fs::Dir;
+#[cfg(windows)]
+use cap_std::fs::MetadataExt as _;
 use ignore::WalkBuilder;
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use serde::{Deserialize, Serialize};
+use strukt_workspace::WorkspaceRoot;
 use thiserror::Error;
 
 use crate::CancellationToken;
@@ -79,6 +85,12 @@ pub fn discover_report(
     discover_report_cancellable(root, options, &CancellationToken::new())
 }
 
+/// Discovers entries beneath a path and cooperatively stops when cancelled.
+///
+/// # Errors
+///
+/// Returns [`DiscoveryError::Cancelled`] when cancellation is observed, and
+/// otherwise returns the same errors as [`discover_report`].
 pub fn discover_report_cancellable(
     root: impl AsRef<Path>,
     options: DiscoveryOptions,
@@ -159,6 +171,266 @@ pub fn discover_report_cancellable(
     })
 }
 
+/// Discovers entries through a retained workspace directory capability.
+///
+/// # Errors
+///
+/// Returns [`DiscoveryError::WorkspaceChanged`] when the display path no longer
+/// names the retained root, plus IO and representation errors encountered while
+/// enumerating the retained directory.
+pub fn discover_report_for_root(
+    root: &WorkspaceRoot,
+    options: DiscoveryOptions,
+) -> Result<DiscoveryReport, DiscoveryError> {
+    discover_report_for_root_cancellable(root, options, &CancellationToken::new())
+}
+
+/// Capability-confined discovery with cooperative cancellation.
+///
+/// # Errors
+///
+/// Returns [`DiscoveryError::Cancelled`] when cancellation is observed,
+/// [`DiscoveryError::WorkspaceChanged`] when the retained root moves or is
+/// replaced, plus IO and representation errors encountered during enumeration.
+pub fn discover_report_for_root_cancellable(
+    root: &WorkspaceRoot,
+    options: DiscoveryOptions,
+    cancellation: &CancellationToken,
+) -> Result<DiscoveryReport, DiscoveryError> {
+    discover_report_for_root_inner(root, options, cancellation, || {})
+}
+
+fn discover_report_for_root_inner(
+    root: &WorkspaceRoot,
+    options: DiscoveryOptions,
+    cancellation: &CancellationToken,
+    after_capability_clone: impl FnOnce(),
+) -> Result<DiscoveryReport, DiscoveryError> {
+    check_cancellation(cancellation)?;
+    root.validate_location()
+        .map_err(|_| DiscoveryError::WorkspaceChanged)?;
+    let capability = root
+        .try_clone_capability()
+        .map_err(|_| DiscoveryError::WorkspaceChanged)?;
+    after_capability_clone();
+    check_cancellation(cancellation)?;
+
+    let mut context = CapabilityDiscovery {
+        options,
+        cancellation,
+        entries: Vec::new(),
+        warnings: Warnings::default(),
+        truncated: false,
+    };
+    let mut ignores = load_root_ignores(&capability, root.path(), &mut context.warnings);
+    walk_capability(
+        &capability,
+        Path::new(""),
+        root.path(),
+        0,
+        &mut ignores,
+        &mut context,
+    )?;
+    root.validate_location()
+        .map_err(|_| DiscoveryError::WorkspaceChanged)?;
+
+    Ok(DiscoveryReport {
+        entries: context.entries,
+        warnings: context.warnings.values,
+        truncated: context.truncated,
+    })
+}
+
+struct CapabilityDiscovery<'a> {
+    options: DiscoveryOptions,
+    cancellation: &'a CancellationToken,
+    entries: Vec<FileEntry>,
+    warnings: Warnings,
+    truncated: bool,
+}
+
+fn walk_capability(
+    directory: &Dir,
+    relative_directory: &Path,
+    logical_root: &Path,
+    depth: usize,
+    ignores: &mut Vec<Gitignore>,
+    context: &mut CapabilityDiscovery<'_>,
+) -> Result<(), DiscoveryError> {
+    check_cancellation(context.cancellation)?;
+    let mut entries = directory
+        .entries()
+        .map_err(DiscoveryError::Io)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(DiscoveryError::Io)?;
+    entries.sort_by_key(cap_std::fs::DirEntry::file_name);
+
+    for entry in entries {
+        check_cancellation(context.cancellation)?;
+        if context.entries.len() == context.options.max_entries {
+            context.truncated = true;
+            return Ok(());
+        }
+
+        let name = entry.file_name();
+        let relative_path = relative_directory.join(&name);
+        let file_type = entry.file_type().map_err(DiscoveryError::Io)?;
+        let is_directory = file_type.is_dir();
+        let hidden = has_dot_component(&relative_path) || capability_hidden(&entry)?;
+        let is_ignored = ignored_by(ignores, &logical_root.join(&relative_path), is_directory);
+        let heavy = matches!(name.to_str(), Some(".git" | "node_modules" | "target"));
+        if (!context.options.show_hidden && hidden)
+            || (!context.options.show_ignored && (is_ignored || heavy))
+        {
+            continue;
+        }
+
+        let kind = if is_directory {
+            FileKind::Directory
+        } else if file_type.is_symlink() {
+            FileKind::Symlink
+        } else {
+            FileKind::File
+        };
+        context.entries.push(FileEntry {
+            relative_path: relative_path.clone(),
+            kind,
+            depth: depth + 1,
+            hidden,
+            ignored: is_ignored,
+        });
+
+        if is_directory {
+            let child = entry.open_dir().map_err(DiscoveryError::Io)?;
+            let added = load_directory_ignores(
+                &child,
+                &logical_root.join(&relative_path),
+                &mut context.warnings,
+            );
+            let previous_len = ignores.len();
+            ignores.extend(added);
+            walk_capability(
+                &child,
+                &relative_path,
+                logical_root,
+                depth + 1,
+                ignores,
+                context,
+            )?;
+            ignores.truncate(previous_len);
+            if context.truncated {
+                return Ok(());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn load_root_ignores(
+    directory: &Dir,
+    logical_root: &Path,
+    warnings: &mut Warnings,
+) -> Vec<Gitignore> {
+    let mut ignores = Vec::new();
+    if let Some(exclude) = load_ignore_file(
+        directory,
+        Path::new(".git/info/exclude"),
+        logical_root,
+        warnings,
+    ) {
+        ignores.push(exclude);
+    }
+    ignores.extend(load_directory_ignores(directory, logical_root, warnings));
+    ignores
+}
+
+fn load_directory_ignores(
+    directory: &Dir,
+    logical_directory: &Path,
+    warnings: &mut Warnings,
+) -> Vec<Gitignore> {
+    [".gitignore", ".ignore"]
+        .into_iter()
+        .filter_map(|name| {
+            load_ignore_file(directory, Path::new(name), logical_directory, warnings)
+        })
+        .collect()
+}
+
+fn load_ignore_file(
+    directory: &Dir,
+    relative_path: &Path,
+    logical_directory: &Path,
+    warnings: &mut Warnings,
+) -> Option<Gitignore> {
+    let contents = match directory.read_to_string(relative_path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            warnings.push_message(format!(
+                "could not read {}: {error}",
+                logical_directory.join(relative_path).display()
+            ));
+            return None;
+        }
+    };
+    let source = logical_directory.join(relative_path);
+    let mut builder = GitignoreBuilder::new(logical_directory);
+    for line in contents.lines() {
+        if let Err(error) = builder.add_line(Some(source.clone()), line) {
+            warnings.push_message(error.to_string());
+        }
+    }
+    match builder.build() {
+        Ok(ignore) => Some(ignore),
+        Err(error) => {
+            warnings.push_message(error.to_string());
+            None
+        }
+    }
+}
+
+fn ignored_by(ignores: &[Gitignore], path: &Path, is_directory: bool) -> bool {
+    for ignore in ignores.iter().rev() {
+        let matched = ignore.matched_path_or_any_parents(path, is_directory);
+        if matched.is_ignore() {
+            return true;
+        }
+        if matched.is_whitelist() {
+            return false;
+        }
+    }
+    false
+}
+
+#[cfg(windows)]
+fn capability_hidden(entry: &cap_std::fs::DirEntry) -> Result<bool, DiscoveryError> {
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+    Ok(entry
+        .metadata()
+        .map_err(DiscoveryError::Io)?
+        .file_attributes()
+        & FILE_ATTRIBUTE_HIDDEN
+        != 0)
+}
+
+#[cfg(not(windows))]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the cross-platform helper can fail when Windows metadata is inspected"
+)]
+fn capability_hidden(_entry: &cap_std::fs::DirEntry) -> Result<bool, DiscoveryError> {
+    Ok(false)
+}
+
+fn check_cancellation(cancellation: &CancellationToken) -> Result<(), DiscoveryError> {
+    if cancellation.is_cancelled() {
+        Err(DiscoveryError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
 struct AcceptedCursor<'a> {
     root: &'a Path,
     walk: ignore::Walk,
@@ -218,7 +490,10 @@ struct Warnings {
 
 impl Warnings {
     fn push(&mut self, error: &ignore::Error) {
-        let warning = error.to_string();
+        self.push_message(error.to_string());
+    }
+
+    fn push_message(&mut self, warning: String) {
         if self.seen.insert(warning.clone()) {
             self.values.push(warning);
         }
@@ -312,6 +587,8 @@ fn windows_hidden_attribute(path: &Path) -> bool {
 pub enum DiscoveryError {
     #[error("filesystem discovery was cancelled")]
     Cancelled,
+    #[error("workspace root changed after it was opened")]
+    WorkspaceChanged,
     #[error("filesystem IO failed: {0}")]
     Io(#[source] std::io::Error),
     #[error("filesystem walk failed: {0}")]
@@ -329,7 +606,13 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::rc::Rc;
 
-    use super::{HiddenAttributeCache, Warnings};
+    use super::{
+        DiscoveryError, DiscoveryOptions, HiddenAttributeCache, Warnings,
+        discover_report_for_root_inner,
+    };
+    use crate::CancellationToken;
+    use strukt_workspace::WorkspaceRoot;
+    use tempfile::tempdir;
 
     #[test]
     fn duplicate_warning_messages_are_reported_once() {
@@ -373,5 +656,29 @@ mod tests {
 
         assert!(!cache.is_hidden(Path::new("/workspace"), Path::new("hidden/file.txt")));
         assert_eq!(*calls.borrow(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn capability_discovery_rejects_a_root_replaced_during_enumeration() {
+        let parent = tempdir().unwrap();
+        let root_path = parent.path().join("workspace");
+        let moved_path = parent.path().join("moved");
+        std::fs::create_dir(&root_path).unwrap();
+        std::fs::write(root_path.join("safe.txt"), "safe").unwrap();
+        let root = WorkspaceRoot::open(&root_path).unwrap();
+
+        let result = discover_report_for_root_inner(
+            &root,
+            DiscoveryOptions::default(),
+            &CancellationToken::new(),
+            || {
+                std::fs::rename(&root_path, &moved_path).unwrap();
+                std::fs::create_dir(&root_path).unwrap();
+                std::fs::write(root_path.join("secret.txt"), "secret").unwrap();
+            },
+        );
+
+        assert!(matches!(result, Err(DiscoveryError::WorkspaceChanged)));
     }
 }

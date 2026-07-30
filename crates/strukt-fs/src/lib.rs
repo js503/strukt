@@ -9,7 +9,8 @@ mod watcher;
 pub use cancellation::CancellationToken;
 pub use discovery::{
     DiscoveryError, DiscoveryOptions, DiscoveryReport, FileEntry, FileKind, discover,
-    discover_report, discover_report_cancellable,
+    discover_report, discover_report_cancellable, discover_report_for_root,
+    discover_report_for_root_cancellable,
 };
 pub use operations::{FileOperation, OperationError, apply_operation};
 pub use search::{

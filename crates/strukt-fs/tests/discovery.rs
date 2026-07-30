@@ -1,7 +1,10 @@
 use std::fs;
 use std::path::Path;
 
-use strukt_fs::{DiscoveryError, DiscoveryOptions, discover, discover_report};
+use strukt_fs::{
+    DiscoveryError, DiscoveryOptions, discover, discover_report, discover_report_for_root,
+};
+use strukt_workspace::WorkspaceRoot;
 use tempfile::tempdir;
 
 #[test]
@@ -78,6 +81,42 @@ fn explicit_visibility_reveals_files_ignored_by_dot_ignore() {
         .find(|entry| entry.relative_path == Path::new("generated.txt"))
         .expect(".ignore-hidden file should be revealed");
     assert!(generated.ignored);
+}
+
+#[test]
+fn capability_discovery_preserves_nested_ignore_visibility() {
+    let root = tempdir().unwrap();
+    fs::create_dir(root.path().join("nested")).unwrap();
+    fs::write(root.path().join("nested/.gitignore"), "generated.txt\n").unwrap();
+    fs::write(root.path().join("nested/generated.txt"), "generated").unwrap();
+    fs::write(root.path().join("nested/source.txt"), "source").unwrap();
+    let workspace = WorkspaceRoot::open(root.path()).unwrap();
+
+    let hidden = discover_report_for_root(&workspace, DiscoveryOptions::default()).unwrap();
+    assert!(
+        hidden
+            .entries
+            .iter()
+            .all(|entry| entry.relative_path != Path::new("nested/generated.txt"))
+    );
+
+    let visible = discover_report_for_root(
+        &workspace,
+        DiscoveryOptions {
+            show_hidden: true,
+            show_ignored: true,
+            ..DiscoveryOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        visible
+            .entries
+            .iter()
+            .find(|entry| entry.relative_path == Path::new("nested/generated.txt"))
+            .expect("ignored file should be visible")
+            .ignored
+    );
 }
 
 #[test]

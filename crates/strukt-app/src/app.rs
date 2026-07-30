@@ -8,7 +8,7 @@ use strukt_core::{CapabilityDescriptor, CapabilityId, CapabilityRegistry};
 use strukt_fs::{
     CancellationToken, DiscoveryOptions, DiscoveryReport, FileEntry, FileEvent, FileKind,
     FileOperation, QuickOpenCandidate, SearchOptions, SearchResult, WorkspaceWatcher,
-    apply_operation, discover_report, quick_open_candidates_with_ignored,
+    apply_operation, discover_report_for_root, quick_open_candidates_with_ignored,
     search_content_cancellable,
 };
 use strukt_persistence::{RecentWorkspaces, WorkspaceStore};
@@ -410,7 +410,9 @@ impl StruktApp {
                 self.quick_open_results.clear();
                 self.search_results.matches.clear();
                 self.search_results.truncated = false;
-                return self.request_persistence(true);
+                let persistence = self.request_persistence(true);
+                let reconciliation = self.request_file_refresh();
+                return Task::batch([persistence, reconciliation]);
             }
             Message::WorkspaceOpened(Err(error)) => {
                 self.open_error = Some(error);
@@ -784,15 +786,14 @@ impl StruktApp {
                 return if self.quick_open_visible {
                     let files = self.quick_open_source();
                     let has_source = files.is_some();
-                    let results =
-                        files.map_or_else(Vec::new, |files| {
-                            quick_open_candidates_with_ignored(
-                                files,
-                                "",
-                                50,
-                                self.quick_open_include_ignored,
-                            )
-                        });
+                    let results = files.map_or_else(Vec::new, |files| {
+                        quick_open_candidates_with_ignored(
+                            files,
+                            "",
+                            50,
+                            self.quick_open_include_ignored,
+                        )
+                    });
                     self.quick_open_results = results;
                     let focus = iced::widget::operation::focus(crate::view::quick_open_input_id());
                     if self.quick_open_include_ignored && !has_source {
@@ -805,16 +806,14 @@ impl StruktApp {
                 };
             }
             Message::QuickOpenChanged(query) => {
-                self.quick_open_results = self
-                    .quick_open_source()
-                    .map_or_else(Vec::new, |files| {
-                        quick_open_candidates_with_ignored(
-                            files,
-                            &query,
-                            50,
-                            self.quick_open_include_ignored,
-                        )
-                    });
+                self.quick_open_results = self.quick_open_source().map_or_else(Vec::new, |files| {
+                    quick_open_candidates_with_ignored(
+                        files,
+                        &query,
+                        50,
+                        self.quick_open_include_ignored,
+                    )
+                });
                 self.quick_open_query = query;
                 return Task::none();
             }
@@ -843,13 +842,12 @@ impl StruktApp {
                 self.quick_open_scan_in_flight = None;
                 match result {
                     Ok(files) => {
-                        self.quick_open_results =
-                            quick_open_candidates_with_ignored(
-                                &files,
-                                &self.quick_open_query,
-                                50,
-                                self.quick_open_include_ignored,
-                            );
+                        self.quick_open_results = quick_open_candidates_with_ignored(
+                            &files,
+                            &self.quick_open_query,
+                            50,
+                            self.quick_open_include_ignored,
+                        );
                         self.quick_open_cache = Some(QuickOpenCache {
                             workspace_root,
                             filesystem_revision,
@@ -1124,12 +1122,7 @@ impl StruktApp {
             self.quick_open_generation = self.quick_open_generation.wrapping_add(1);
             self.quick_open_scan_in_flight = None;
             self.quick_open_results =
-                quick_open_candidates_with_ignored(
-                    &self.files,
-                    &self.quick_open_query,
-                    50,
-                    false,
-                );
+                quick_open_candidates_with_ignored(&self.files, &self.quick_open_query, 50, false);
             return Task::none();
         }
         if let Some(files) = self.quick_open_source() {
@@ -1146,10 +1139,10 @@ impl StruktApp {
     }
 
     fn start_quick_open_scan(&mut self) -> Task<Message> {
-        let Some(workspace_root) = self
+        let Some((workspace_root, task_root)) = self
             .workspace
             .as_ref()
-            .map(|workspace| workspace.root.path().to_path_buf())
+            .map(|workspace| (workspace.root.path().to_path_buf(), workspace.root.clone()))
         else {
             return Task::none();
         };
@@ -1173,9 +1166,8 @@ impl StruktApp {
         };
         Task::perform(
             async move {
-                let task_root = workspace_root.clone();
                 let result = tokio::task::spawn_blocking(move || {
-                    discover_report(&task_root, options)
+                    discover_report_for_root(&task_root, options)
                         .map(|report| report.entries)
                         .map_err(|error| error.to_string())
                 })
@@ -1378,19 +1370,21 @@ impl StruktApp {
         let Some(workspace) = &self.workspace else {
             return Task::none();
         };
-        let root = workspace.root.path().to_path_buf();
+        let root = workspace.root.clone();
         let options = self.explorer_options;
         let generation = self.refresh_generation;
         self.refresh_in_flight = Some(generation);
 
         Task::perform(
             async move {
-                let result =
-                    match tokio::task::spawn_blocking(move || discover_report(root, options)).await
-                    {
-                        Ok(result) => result.map_err(|error| error.to_string()),
-                        Err(error) => Err(error.to_string()),
-                    };
+                let result = match tokio::task::spawn_blocking(move || {
+                    discover_report_for_root(&root, options)
+                })
+                .await
+                {
+                    Ok(result) => result.map_err(|error| error.to_string()),
+                    Err(error) => Err(error.to_string()),
+                };
                 (generation, result)
             },
             |(generation, result)| Message::FilesRefreshed { generation, result },

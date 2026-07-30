@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use strukt_fs::{DiscoveryOptions, DiscoveryReport, discover_report};
+use strukt_fs::{DiscoveryOptions, DiscoveryReport, discover_report_for_root};
 use strukt_persistence::WorkspaceStore;
 use strukt_workspace::{WorkspaceRoot, WorkspaceState};
 
@@ -31,8 +31,8 @@ pub(crate) fn open_workspace_without_store(path: PathBuf) -> Result<OpenedWorksp
 }
 
 fn discover_workspace(state: WorkspaceState) -> Result<OpenedWorkspace, String> {
-    let discovery = discover_report(
-        state.root.path(),
+    let discovery = discover_report_for_root(
+        &state.root,
         DiscoveryOptions {
             show_hidden: state.explorer.show_hidden,
             show_ignored: state.explorer.show_ignored,
