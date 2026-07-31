@@ -7,6 +7,7 @@ members = [
   "crates/strukt-persistence",
   "crates/strukt-workspace",
   "crates/strukt-fs",
+  "crates/strukt-editor",
 ]
 resolver = "3"
 
@@ -27,10 +28,13 @@ iced = { version = "0.14.0", features = ["advanced", "tokio", "wgpu"] }
 ignore = "0.4.31"
 notify = "8.2.0"
 rfd = "0.17.2"
+regex = "1"
+ropey = "1.6.1"
 rustix = { version = "1.1.4", features = ["fs"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1"
 strukt-core = { path = "crates/strukt-core" }
+strukt-editor = { path = "crates/strukt-editor" }
 strukt-fs = { path = "crates/strukt-fs" }
 strukt-persistence = { path = "crates/strukt-persistence" }
 strukt-shell = { path = "crates/strukt-shell" }

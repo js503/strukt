@@ -1,0 +1,15 @@
+[package]
+name = "strukt-editor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ropey.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

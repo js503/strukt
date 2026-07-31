@@ -91,7 +91,7 @@ The implementation sequence is:
 - Create: `crates/strukt-editor/src/transaction.rs`
 - Create: `crates/strukt-editor/tests/transactions.rs`
 
-- [ ] **Step 1: Register the crate and dependencies**
+- [x] **Step 1: Register the crate and dependencies**
 
 Add `crates/strukt-editor` to the workspace and add:
 
@@ -104,7 +104,7 @@ strukt-editor = { path = "crates/strukt-editor" }
 The crate depends on `ropey`, `serde`, `thiserror`, and the workspace lints. It must
 not depend on Iced, filesystem APIs, or persistence.
 
-- [ ] **Step 2: Write failing position and transaction tests**
+- [x] **Step 2: Write failing position and transaction tests**
 
 Cover:
 
@@ -135,7 +135,7 @@ fn transaction_rejects_overlap_and_stale_revision() {
 Also test Unicode scalar boundaries, CRLF detection, multiple non-overlapping
 replacements, and inverse-transaction round trips.
 
-- [ ] **Step 3: Run the focused tests and observe failure**
+- [x] **Step 3: Run the focused tests and observe failure**
 
 ```bash
 cargo test -p strukt-editor --test transactions
@@ -143,7 +143,7 @@ cargo test -p strukt-editor --test transactions
 
 Expected: compilation fails because the editor types do not exist.
 
-- [ ] **Step 4: Implement positions, rope buffer, and transactions**
+- [x] **Step 4: Implement positions, rope buffer, and transactions**
 
 Define:
 
@@ -177,7 +177,7 @@ pub struct AppliedTransaction {
 all ranges before mutation, applies replacements from the end toward the start, and
 returns a complete inverse transaction. No partial transaction may be observable.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 cargo fmt --all --check
