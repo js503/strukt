@@ -1,5 +1,8 @@
 # M2.2 Editor Implementation Plan
 
+- Status: In progress
+- Tracking issue: [#5 — M2.2: Native editor](https://github.com/js503/strukt/issues/5)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use

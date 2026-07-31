@@ -4,6 +4,7 @@
 - Milestone: M2 — Local development workspace
 - Parent spec: [`0003-local-development-workspace.md`](0003-local-development-workspace.md)
 - Depends on: M2.1 workspace and files slice
+- Tracking issue: [#5 — M2.2: Native editor](https://github.com/js503/strukt/issues/5)
 
 ## Summary
 
