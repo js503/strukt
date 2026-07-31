@@ -3239,12 +3239,15 @@ dependencies = [
 name = "strukt-fs"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "cap-fs-ext",
  "cap-std",
  "ignore",
  "notify",
  "rustix 1.1.4",
  "serde",
+ "strukt-editor",
+ "strukt-platform",
  "strukt-workspace",
  "tempfile",
  "thiserror 2.0.19",
@@ -3261,6 +3264,14 @@ dependencies = [
  "strukt-workspace",
  "tempfile",
  "thiserror 2.0.19",
+]
+
+[[package]]
+name = "strukt-platform"
+version = "0.1.0"
+dependencies = [
+ "cap-std",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

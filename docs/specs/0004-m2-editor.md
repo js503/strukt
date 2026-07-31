@@ -290,6 +290,10 @@ is asynchronous and cannot block the native window from appearing.
 - All workspace reads and writes use retained capabilities and normalized relative
   paths. Editor commands never accept an ambient absolute target.
 - Symlink and workspace-root replacement checks follow the M2.1 authority model.
+- Windows staged publication uses one narrowly audited platform adapter around
+  `SetFileInformationByHandle`; it renames the already-open staging handle relative
+  to the retained destination-directory handle. All other workspace crates retain
+  the workspace-wide unsafe-code prohibition.
 - Recovery content stays outside the repository and is encrypted and authenticated
   with a platform-protected key.
 - Clipboard operations occur only after explicit user commands.

@@ -1,0 +1,68 @@
+#![cfg(windows)]
+
+use std::ffi::OsStr;
+use std::io;
+use std::mem::{offset_of, size_of};
+use std::os::windows::ffi::OsStrExt;
+use std::os::windows::io::AsRawHandle;
+
+use cap_std::fs::{Dir, File, OpenOptions, OpenOptionsExt};
+use windows_sys::Win32::Foundation::GENERIC_WRITE;
+use windows_sys::Win32::Storage::FileSystem::{
+    DELETE, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FileRenameInfo, SetFileInformationByHandle,
+};
+
+/// Grants a newly-created staging file the access required for handle-relative
+/// publication. The caller must still request write and create-new behavior.
+pub fn prepare_rename_source(options: &mut OpenOptions) {
+    options.access_mode(GENERIC_WRITE | DELETE);
+}
+
+/// Atomically replaces one entry in `parent` by renaming an already-open
+/// staging file relative to the retained parent directory handle.
+///
+/// # Errors
+///
+/// Returns the Windows error reported by `SetFileInformationByHandle`.
+pub fn atomic_replace(source: &File, parent: &Dir, destination: &OsStr) -> io::Result<()> {
+    let name: Vec<u16> = destination.encode_wide().collect();
+    let name_bytes = name
+        .len()
+        .checked_mul(size_of::<u16>())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "file name is too long"))?;
+    let buffer_bytes = offset_of!(FILE_RENAME_INFO, FileName)
+        .checked_add(name_bytes)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "file name is too long"))?;
+    let words = buffer_bytes.div_ceil(size_of::<usize>());
+    let mut storage = vec![0usize; words];
+    let info = storage.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+
+    // SAFETY: `storage` is pointer-aligned and sized for the fixed header plus
+    // `name_bytes`. Both handles are borrowed and valid for the duration of the
+    // call. `FileNameLength` excludes a terminator, as required by Win32.
+    unsafe {
+        info.write(FILE_RENAME_INFO {
+            Anonymous: FILE_RENAME_INFO_0 {
+                ReplaceIfExists: true,
+            },
+            RootDirectory: parent.as_raw_handle(),
+            FileNameLength: u32::try_from(name_bytes).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "file name is too long")
+            })?,
+            FileName: [0],
+        });
+        std::ptr::copy_nonoverlapping(name.as_ptr(), (*info).FileName.as_mut_ptr(), name.len());
+        let result = SetFileInformationByHandle(
+            source.as_raw_handle(),
+            FileRenameInfo,
+            info.cast(),
+            u32::try_from(buffer_bytes).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "file name is too long")
+            })?,
+        );
+        if result == 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}

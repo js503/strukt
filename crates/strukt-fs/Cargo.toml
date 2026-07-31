@@ -8,12 +8,17 @@ license.workspace = true
 [dependencies]
 cap-fs-ext.workspace = true
 cap-std.workspace = true
+blake3.workspace = true
 ignore.workspace = true
 notify.workspace = true
 rustix.workspace = true
 serde.workspace = true
+strukt-editor.workspace = true
 strukt-workspace.workspace = true
 thiserror.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+strukt-platform.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

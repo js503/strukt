@@ -68,6 +68,10 @@ The implementation sequence is:
 
 - `crates/strukt-fs/src/document.rs`: confined reads, binary/size classification,
   disk revisions, staged saves, and save conflicts.
+- `crates/strukt-platform/src/lib.rs`: narrowly audited Windows handle-relative
+  atomic replacement adapter. This crate is the sole exception to the workspace
+  unsafe-code prohibition because the Win32 API has no safe standard-library
+  binding; it denies unsafe operations outside explicit reviewed blocks.
 - `crates/strukt-persistence/src/editor_store.rs`: editor layout snapshots and
   encrypted recovery envelopes.
 - `crates/strukt-app/src/editor.rs`: Iced/domain adapter, surface instances, focus,
@@ -293,13 +297,13 @@ git commit -m "feat: model editor documents and tabs"
 - Modify: `crates/strukt-fs/src/lib.rs`
 - Create: `crates/strukt-fs/tests/document_io.rs`
 
-- [ ] **Step 1: Write failing read-classification tests**
+- [x] **Step 1: Write failing read-classification tests**
 
 Test normal UTF-8, CRLF, initial-8-KiB NUL detection, invalid UTF-8, 4 MiB editable
 limit, first-1-MiB large preview, full-size reporting, explicit override, traversal,
 symlink escape, root replacement, and FIFO rejection.
 
-- [ ] **Step 2: Write failing save tests**
+- [x] **Step 2: Write failing save tests**
 
 Test expected revision success, external change conflict, staged-write failure,
 permission preservation, traversal rejection, symlink-parent replacement, root
@@ -323,7 +327,7 @@ fn changed_disk_revision_is_never_knowingly_overwritten() {
 }
 ```
 
-- [ ] **Step 3: Implement confined read and save contracts**
+- [x] **Step 3: Implement confined read and save contracts**
 
 Define `ReadOptions`, `DocumentRead`, `DocumentKind`, `DiskRevision`, `SaveRequest`,
 `SaveMode::{IfUnchanged, Force}`, `SaveOutcome`, and `DocumentIoError`. `Force` is
@@ -332,7 +336,7 @@ Reuse the retained `WorkspaceRoot` capability
 and the staged no-escape patterns from file operations. Never fall back to an
 ambient absolute path.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```bash
 cargo test -p strukt-fs --test document_io
