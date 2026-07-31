@@ -16,3 +16,18 @@ fn terminal_and_connection_tokens_are_semantic() {
     assert_ne!(theme.terminal_background, theme.panel);
     assert_ne!(theme.connection_remote, theme.status_warning);
 }
+
+#[test]
+fn editor_and_syntax_tokens_are_semantic_and_mode_specific() {
+    let light = ThemeTokens::builtin(ThemeMode::Light);
+    let dark = ThemeTokens::builtin(ThemeMode::Dark);
+
+    assert_ne!(light.editor_background, dark.editor_background);
+    assert_ne!(light.syntax_keyword, dark.syntax_keyword);
+    assert_ne!(dark.editor_selection, dark.editor_active_line);
+    assert_ne!(dark.editor_gutter, dark.editor_foreground);
+    assert_ne!(dark.editor_dirty, dark.editor_conflict);
+    assert_ne!(dark.editor_conflict, dark.editor_missing);
+    assert_ne!(dark.syntax_comment, dark.syntax_string);
+    assert_ne!(dark.syntax_type, dark.syntax_function);
+}

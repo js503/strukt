@@ -3,6 +3,7 @@
 mod buffer;
 mod document;
 mod find;
+mod grammar;
 mod history;
 mod position;
 mod tabs;
@@ -13,6 +14,7 @@ pub use document::{
     DiskRevision, Document, DocumentError, DocumentId, DocumentStatus, RelativeDocumentPath,
 };
 pub use find::{FindError, FindMatch, FindOptions, FindQuery, FindResult};
+pub use grammar::{GrammarDescriptor, GrammarRegistry, PLAIN_TEXT_GRAMMAR};
 pub use history::{EditKind, History, HistoryBudget, HistoryEntry, HistoryError};
 pub use position::CharRange;
 pub use tabs::{

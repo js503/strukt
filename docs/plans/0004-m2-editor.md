@@ -426,13 +426,13 @@ git commit -m "feat: persist encrypted editor recovery"
 - Modify: `crates/strukt-theme/tests/builtin_themes.rs`
 - Modify: `Cargo.toml`
 
-- [ ] **Step 1: Write failing registry and theme tests**
+- [x] **Step 1: Write failing registry and theme tests**
 
 Test exact file names, case-insensitive extensions where appropriate, overrides,
 unknown fallback, all bundled languages, distinct light/dark syntax colors, and
 semantic selection/gutter/conflict colors.
 
-- [ ] **Step 2: Implement descriptors and tokens**
+- [x] **Step 2: Implement descriptors and tokens**
 
 Define a static `GrammarDescriptor` registry for Rust, JavaScript, TypeScript,
 Python, JSON, TOML, Markdown, shell, YAML, HTML, CSS, and plain text. The descriptor
@@ -442,7 +442,7 @@ highlighter token name as data; it contains no parser executable.
 Add semantic theme fields for editor background/foreground, gutter, active line,
 selection, matching bracket, dirty, conflict, missing, and syntax categories.
 
-- [ ] **Step 3: Enable Iced highlighting and verify**
+- [x] **Step 3: Enable Iced highlighting and verify**
 
 Add the Iced `highlighter` feature in the workspace dependency. Run:
 
