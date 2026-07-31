@@ -147,6 +147,10 @@ service.
   [`specs/0004-m2-editor.md`](specs/0004-m2-editor.md)
 - Second-slice editor plan:
   [`plans/0004-m2-editor.md`](plans/0004-m2-editor.md)
+- Second-slice editor issue:
+  [#5 — M2.2: Native editor](https://github.com/js503/strukt/issues/5)
+- Second-slice editor pull request:
+  [#6 — feat: add M2 native editor](https://github.com/js503/strukt/pull/6)
 - Workspace reference:
   [`mockups/workspace-shell/focus-context.html`](mockups/workspace-shell/focus-context.html)
 
