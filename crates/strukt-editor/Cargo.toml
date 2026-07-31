@@ -10,7 +10,11 @@ repository.workspace = true
 regex.workspace = true
 ropey.workspace = true
 serde.workspace = true
+strukt-workspace.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true

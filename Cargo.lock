@@ -3230,6 +3230,8 @@ dependencies = [
  "regex",
  "ropey",
  "serde",
+ "serde_json",
+ "strukt-workspace",
  "thiserror 2.0.19",
 ]
 

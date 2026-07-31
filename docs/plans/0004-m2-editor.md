@@ -245,7 +245,7 @@ git commit -m "feat: add editor history and find"
 - Create: `crates/strukt-editor/tests/documents.rs`
 - Create: `crates/strukt-editor/tests/tabs.rs`
 
-- [ ] **Step 1: Write failing document-state tests**
+- [x] **Step 1: Write failing document-state tests**
 
 Cover unique `DocumentId`, normalized relative paths, dirty baseline transitions,
 read-only refusal, clean reload, dirty conflict, missing-file recovery, stale event
@@ -264,19 +264,19 @@ fn dirty_external_change_preserves_local_content() {
 }
 ```
 
-- [ ] **Step 2: Write failing preview-tab tests**
+- [x] **Step 2: Write failing preview-tab tests**
 
 Cover replacement of a clean preview, reuse of an already-open path, promotion by
 edit/double-click/pin, non-replacement of dirty/conflicted/missing/recovered tabs,
 active-tab fallback, and `Save`/`Discard`/`Cancel` close decisions.
 
-- [ ] **Step 3: Implement documents and tabs**
+- [x] **Step 3: Implement documents and tabs**
 
 `EditorWorkspace` owns an ordered map of documents, tab order, one optional preview
 ID, and the active ID. It exposes commands and immutable `EditorViewState`; callers
 cannot mutate a `Document` directly without a revisioned event.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```bash
 cargo test -p strukt-editor
