@@ -143,6 +143,8 @@ service.
   [#4 — feat: add local workspace and files](https://github.com/js503/strukt/pull/4)
 - First-slice validation:
   [`evidence/m2-workspace-files-validation.md`](evidence/m2-workspace-files-validation.md)
+- Second-slice editor spec:
+  [`specs/0004-m2-editor.md`](specs/0004-m2-editor.md)
 - Workspace reference:
   [`mockups/workspace-shell/focus-context.html`](mockups/workspace-shell/focus-context.html)
 
