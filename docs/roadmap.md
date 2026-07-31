@@ -145,6 +145,8 @@ service.
   [`evidence/m2-workspace-files-validation.md`](evidence/m2-workspace-files-validation.md)
 - Second-slice editor spec:
   [`specs/0004-m2-editor.md`](specs/0004-m2-editor.md)
+- Second-slice editor plan:
+  [`plans/0004-m2-editor.md`](plans/0004-m2-editor.md)
 - Workspace reference:
   [`mockups/workspace-shell/focus-context.html`](mockups/workspace-shell/focus-context.html)
 
