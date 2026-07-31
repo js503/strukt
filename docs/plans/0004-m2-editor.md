@@ -197,7 +197,7 @@ git commit -m "feat: add editor transaction core"
 - Create: `crates/strukt-editor/tests/history.rs`
 - Create: `crates/strukt-editor/tests/find.rs`
 
-- [ ] **Step 1: Write failing history tests**
+- [x] **Step 1: Write failing history tests**
 
 Test that adjacent insertions coalesce, cursor discontinuity breaks coalescing,
 undo returns an inverse transaction, a new edit clears redo, and both the 10,000
@@ -214,19 +214,19 @@ fn new_edit_after_undo_clears_redo() {
 }
 ```
 
-- [ ] **Step 2: Write failing find/replace tests**
+- [x] **Step 2: Write failing find/replace tests**
 
 Cover literal, case-insensitive, whole-word, regex, invalid regex, previous/next
 wraparound, multi-byte text, zero-width matches, replace current, and replace all.
 Replace-all must produce one undoable transaction.
 
-- [ ] **Step 3: Implement history and find**
+- [x] **Step 3: Implement history and find**
 
 Define `HistoryBudget`, `History`, `FindQuery`, `FindOptions`, `FindMatch`, and
 `FindResult`. Regex compilation errors are typed and never panic. Zero-width regex
 matches advance by one Unicode scalar to guarantee progress.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```bash
 cargo test -p strukt-editor --test history --test find
