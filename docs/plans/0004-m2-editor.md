@@ -357,7 +357,7 @@ git commit -m "feat: add confined document IO"
 - Modify: `crates/strukt-app/Cargo.toml`
 - Create: `crates/strukt-app/src/recovery_key.rs`
 
-- [ ] **Step 1: Add authenticated-encryption and keyring dependencies**
+- [x] **Step 1: Add authenticated-encryption and keyring dependencies**
 
 Use:
 
@@ -370,14 +370,14 @@ zeroize = "1"
 `keyring` belongs only to `strukt-app`; persistence depends on a project-owned key
 provider trait and XChaCha20-Poly1305.
 
-- [ ] **Step 2: Write failing envelope and store tests**
+- [x] **Step 2: Write failing envelope and store tests**
 
 Cover encryption/decryption, unique nonces, authenticated metadata, wrong key,
 tampering, unsupported schema, corrupt-current fallback, atomic replacement,
 key-unavailable behavior, deleting recovery after save/discard, and no `.strukt`
 path in the workspace.
 
-- [ ] **Step 3: Implement the recovery store**
+- [x] **Step 3: Implement the recovery store**
 
 Define:
 
@@ -399,14 +399,14 @@ Authenticate schema version, workspace ID, document path, and baseline as AAD.
 Zeroize key material on drop. Store current and last-valid envelopes in the
 application-data editor directory.
 
-- [ ] **Step 4: Implement the native key provider**
+- [x] **Step 4: Implement the native key provider**
 
 Use keyring service `dev.strukt.editor-recovery` and account `default`. Retrieve or
 generate exactly 32 secret bytes through `Entry::get_secret`/`set_secret`. Map
 `NoDefaultStore`, locked, denied, and unavailable cases to a visible disabled state;
 never create a plaintext fallback.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 cargo test -p strukt-persistence --test editor_store

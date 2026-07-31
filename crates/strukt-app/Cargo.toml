@@ -7,6 +7,8 @@ license.workspace = true
 
 [dependencies]
 iced.workspace = true
+getrandom.workspace = true
+keyring.workspace = true
 rfd.workspace = true
 strukt-core.workspace = true
 strukt-fs.workspace = true

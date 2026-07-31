@@ -16,6 +16,7 @@ use strukt_shell::{Activity, ShellAction, ShellState};
 use strukt_theme::ThemeMode;
 use strukt_workspace::{WorkspaceRoot, WorkspaceState};
 
+use crate::recovery_key::NativeRecoveryKeyProvider;
 use crate::workspace::{OpenedWorkspace, open_workspace_without_store};
 
 const SMOKE_TEST_DURATION: Duration = Duration::from_secs(3);
@@ -82,6 +83,7 @@ pub struct StruktApp {
     pub search_include_ignored: bool,
     launch_mode: LaunchMode,
     store: Option<WorkspaceStore>,
+    _recovery_key_provider: NativeRecoveryKeyProvider,
     watcher: Option<WorkspaceWatcher>,
     watcher_root: Option<PathBuf>,
     manual_open_started: bool,
@@ -264,6 +266,7 @@ impl StruktApp {
             search_include_ignored: false,
             launch_mode,
             store,
+            _recovery_key_provider: NativeRecoveryKeyProvider,
             watcher: None,
             watcher_root: None,
             manual_open_started: false,

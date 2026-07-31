@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod app;
+mod recovery_key;
 mod view;
 mod workspace;
 
