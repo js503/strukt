@@ -3715,12 +3715,14 @@ dependencies = [
  "keyring",
  "rfd",
  "strukt-core",
+ "strukt-editor",
  "strukt-fs",
  "strukt-persistence",
  "strukt-shell",
  "strukt-theme",
  "strukt-workspace",
  "tempfile",
+ "thiserror 2.0.19",
  "tokio",
 ]
 

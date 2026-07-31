@@ -1,14 +1,20 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use iced::keyboard::{self, Key};
+use iced::widget::text_editor;
 use iced::{Subscription, Task, Theme, time};
 use strukt_core::{CapabilityDescriptor, CapabilityId, CapabilityRegistry};
+use strukt_editor::{
+    CloseDecision, CloseOutcome, DocumentId, EditKind, EditorWorkspace, FindOptions, FindQuery,
+    OpenDisposition, RelativeDocumentPath, Revision,
+};
 use strukt_fs::{
-    CancellationToken, DiscoveryOptions, DiscoveryReport, FileEntry, FileEvent, FileKind,
-    FileOperation, QuickOpenCandidate, SearchOptions, SearchResult, WorkspaceWatcher,
-    apply_operation, discover_report_for_root, quick_open_candidates_with_ignored,
+    CancellationToken, DiscoveryOptions, DiscoveryReport, DocumentKind, DocumentRead, FileEntry,
+    FileEvent, FileKind, FileOperation, QuickOpenCandidate, ReadOptions, SaveMode, SaveOutcome,
+    SaveRequest, SearchOptions, SearchResult, WorkspaceWatcher, apply_operation,
+    discover_report_for_root, quick_open_candidates_with_ignored, read_document, save_document,
     search_content_cancellable,
 };
 use strukt_persistence::{RecentWorkspaces, WorkspaceStore};
@@ -16,6 +22,7 @@ use strukt_shell::{Activity, ShellAction, ShellState};
 use strukt_theme::ThemeMode;
 use strukt_workspace::{WorkspaceRoot, WorkspaceState};
 
+use crate::editor::EditorSurfaces;
 use crate::recovery_key::NativeRecoveryKeyProvider;
 use crate::workspace::{OpenedWorkspace, open_workspace_without_store};
 
@@ -23,6 +30,12 @@ const SMOKE_TEST_DURATION: Duration = Duration::from_secs(3);
 pub(crate) const MAX_WATCHER_EVENTS_PER_POLL: usize = 64;
 pub(crate) const WORKSPACE_FILES_SMOKE_SUCCESS: &str =
     "strukt workspace files smoke: open, discovery, and persistence passed";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DocumentNotice {
+    Binary { path: PathBuf, size: u64 },
+    InvalidUtf8 { path: PathBuf, size: u64 },
+}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub enum LaunchMode {
@@ -81,6 +94,16 @@ pub struct StruktApp {
     pub search_query: String,
     pub search_results: SearchResult,
     pub search_include_ignored: bool,
+    pub(crate) editor: Option<EditorWorkspace>,
+    pub(crate) editor_surfaces: EditorSurfaces,
+    pub document_notice: Option<DocumentNotice>,
+    pub editor_error: Option<String>,
+    pub pending_close: Option<DocumentId>,
+    pub editor_find_visible: bool,
+    pub editor_find_query: String,
+    pub editor_replace_text: String,
+    pub editor_find_options: FindOptions,
+    pub editor_language_overrides: HashMap<DocumentId, String>,
     launch_mode: LaunchMode,
     store: Option<WorkspaceStore>,
     _recovery_key_provider: NativeRecoveryKeyProvider,
@@ -153,6 +176,51 @@ pub enum Message {
         generation: u64,
         result: Result<DiscoveryReport, String>,
     },
+    OpenDocument {
+        path: PathBuf,
+        disposition: OpenDisposition,
+        force_full: bool,
+    },
+    DocumentOpened {
+        workspace_root: PathBuf,
+        path: PathBuf,
+        disposition: OpenDisposition,
+        result: Result<DocumentRead, String>,
+    },
+    EditorAction {
+        id: DocumentId,
+        action: text_editor::Action,
+    },
+    SelectDocument(DocumentId),
+    PinDocument(DocumentId),
+    CloseDocument(DocumentId),
+    ResolveDocumentClose {
+        id: DocumentId,
+        decision: CloseDecision,
+    },
+    SaveDocument {
+        id: DocumentId,
+        mode: SaveMode,
+    },
+    DocumentSaved {
+        workspace_root: PathBuf,
+        id: DocumentId,
+        expected_revision: Revision,
+        result: Result<SaveOutcome, String>,
+    },
+    UndoDocument(DocumentId),
+    RedoDocument(DocumentId),
+    ToggleEditorFind,
+    EditorFindChanged(String),
+    EditorReplaceChanged(String),
+    ToggleFindCase,
+    ToggleFindWholeWord,
+    ToggleFindRegex,
+    SetLanguageOverride {
+        id: DocumentId,
+        language: Option<String>,
+    },
+    ReplaceAll(DocumentId),
     SelectExplorerEntry(PathBuf),
     BeginCreateFile,
     BeginCreateDirectory,
@@ -236,6 +304,8 @@ impl StruktApp {
             CapabilityDescriptor::new(CapabilityId::THEMES, true),
             CapabilityDescriptor::new(CapabilityId::CONNECTIONS, true),
             CapabilityDescriptor::new(CapabilityId::AI, true),
+            CapabilityDescriptor::new(CapabilityId::EDITOR_DOCUMENTS, true),
+            CapabilityDescriptor::new(CapabilityId::EDITOR_SYNTAX, true),
         ] {
             capabilities
                 .register(descriptor)
@@ -264,6 +334,16 @@ impl StruktApp {
                 truncated: false,
             },
             search_include_ignored: false,
+            editor: None,
+            editor_surfaces: EditorSurfaces::default(),
+            document_notice: None,
+            editor_error: None,
+            pending_close: None,
+            editor_find_visible: false,
+            editor_find_query: String::new(),
+            editor_replace_text: String::new(),
+            editor_find_options: FindOptions::default(),
+            editor_language_overrides: HashMap::new(),
             launch_mode,
             store,
             _recovery_key_provider: NativeRecoveryKeyProvider,
@@ -385,6 +465,18 @@ impl StruktApp {
                 self.file_warnings = opened.discovery.warnings;
                 self.filesystem_truncated = opened.discovery.truncated;
                 self.workspace = Some(opened.state);
+                self.editor = self
+                    .workspace
+                    .as_ref()
+                    .map(|workspace| EditorWorkspace::new(workspace.root.id().clone()));
+                self.editor_surfaces = EditorSurfaces::default();
+                self.document_notice = None;
+                self.editor_error = None;
+                self.pending_close = None;
+                self.editor_find_visible = false;
+                self.editor_find_query.clear();
+                self.editor_replace_text.clear();
+                self.editor_language_overrides.clear();
                 if self.watcher.is_none()
                     && let Some(workspace) = &mut self.workspace
                 {
@@ -492,7 +584,261 @@ impl StruktApp {
                     && self.operation_in_flight.is_none()
                     && is_scoped_relative_path(&path)
                 {
-                    self.selected_entry = Some(path);
+                    let is_file = self
+                        .files
+                        .iter()
+                        .any(|entry| entry.relative_path == path && entry.kind == FileKind::File);
+                    self.selected_entry = Some(path.clone());
+                    if is_file {
+                        return self.open_document_task(path, OpenDisposition::Preview, false);
+                    }
+                }
+                return Task::none();
+            }
+            Message::OpenDocument {
+                path,
+                disposition,
+                force_full,
+            } => return self.open_document_task(path, disposition, force_full),
+            Message::DocumentOpened {
+                workspace_root,
+                path,
+                disposition,
+                result,
+            } => {
+                if !self.is_current_root(&workspace_root) {
+                    return Task::none();
+                }
+                match result {
+                    Ok(opened) => match opened.kind {
+                        DocumentKind::Text { read_only, .. } => {
+                            let Some(text) = opened.text else {
+                                self.editor_error =
+                                    Some("text document had no text payload".into());
+                                return Task::none();
+                            };
+                            let Some(editor) = &mut self.editor else {
+                                return Task::none();
+                            };
+                            let path_string = path.to_string_lossy();
+                            let result = RelativeDocumentPath::new(&path_string)
+                                .map_err(|error| error.to_string())
+                                .and_then(|path| {
+                                    editor
+                                        .open(
+                                            path,
+                                            &text,
+                                            opened.disk_revision,
+                                            read_only,
+                                            disposition,
+                                        )
+                                        .map_err(|error| error.to_string())
+                                });
+                            match result {
+                                Ok(id) => {
+                                    let surface_text = editor
+                                        .document(id)
+                                        .map_or_else(String::new, strukt_editor::Document::text);
+                                    self.editor_surfaces.insert(id, &surface_text);
+                                    self.document_notice = None;
+                                    self.editor_error = None;
+                                }
+                                Err(error) => self.editor_error = Some(error),
+                            }
+                        }
+                        DocumentKind::Binary => {
+                            self.document_notice = Some(DocumentNotice::Binary {
+                                path,
+                                size: opened.size,
+                            });
+                        }
+                        DocumentKind::InvalidUtf8 => {
+                            self.document_notice = Some(DocumentNotice::InvalidUtf8 {
+                                path,
+                                size: opened.size,
+                            });
+                        }
+                    },
+                    Err(error) => self.editor_error = Some(error),
+                }
+                return Task::none();
+            }
+            Message::EditorAction { id, action } => {
+                let Some(editor) = &mut self.editor else {
+                    return Task::none();
+                };
+                if let Err(error) = self.editor_surfaces.perform(editor, id, action) {
+                    self.editor_error = Some(error.to_string());
+                } else {
+                    self.editor_error = None;
+                }
+                return Task::none();
+            }
+            Message::SelectDocument(id) => {
+                if let Some(editor) = &mut self.editor
+                    && let Err(error) = editor.select(id)
+                {
+                    self.editor_error = Some(error.to_string());
+                }
+                return Task::none();
+            }
+            Message::PinDocument(id) => {
+                if let Some(editor) = &mut self.editor
+                    && let Err(error) = editor.pin_document(id)
+                {
+                    self.editor_error = Some(error.to_string());
+                }
+                return Task::none();
+            }
+            Message::UndoDocument(id) => {
+                let Some(editor) = &mut self.editor else {
+                    return Task::none();
+                };
+                match editor
+                    .undo(id)
+                    .and_then(|()| self.editor_surfaces.rebuild(editor, id))
+                {
+                    Ok(()) => self.editor_error = None,
+                    Err(error) => self.editor_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::RedoDocument(id) => {
+                let Some(editor) = &mut self.editor else {
+                    return Task::none();
+                };
+                match editor
+                    .redo(id)
+                    .and_then(|()| self.editor_surfaces.rebuild(editor, id))
+                {
+                    Ok(()) => self.editor_error = None,
+                    Err(error) => self.editor_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::ToggleEditorFind => {
+                self.editor_find_visible = !self.editor_find_visible;
+                return Task::none();
+            }
+            Message::EditorFindChanged(query) => {
+                self.editor_find_query = query;
+                return Task::none();
+            }
+            Message::EditorReplaceChanged(replacement) => {
+                self.editor_replace_text = replacement;
+                return Task::none();
+            }
+            Message::ToggleFindCase => {
+                self.editor_find_options.case_sensitive = !self.editor_find_options.case_sensitive;
+                return Task::none();
+            }
+            Message::ToggleFindWholeWord => {
+                self.editor_find_options.whole_word = !self.editor_find_options.whole_word;
+                return Task::none();
+            }
+            Message::ToggleFindRegex => {
+                self.editor_find_options.regex = !self.editor_find_options.regex;
+                return Task::none();
+            }
+            Message::SetLanguageOverride { id, language } => {
+                if self
+                    .editor
+                    .as_ref()
+                    .is_some_and(|editor| editor.document(id).is_some())
+                {
+                    match language {
+                        Some(language) => {
+                            self.editor_language_overrides.insert(id, language);
+                        }
+                        None => {
+                            self.editor_language_overrides.remove(&id);
+                        }
+                    }
+                }
+                return Task::none();
+            }
+            Message::ReplaceAll(id) => {
+                let Some(editor) = &mut self.editor else {
+                    return Task::none();
+                };
+                let result = (|| {
+                    let document = editor
+                        .document(id)
+                        .ok_or_else(|| "document is not open".to_owned())?;
+                    let query = FindQuery::new(&self.editor_find_query, self.editor_find_options)
+                        .map_err(|error| error.to_string())?;
+                    let text = document.text();
+                    let revision = document.revision();
+                    let transaction = query
+                        .replace_all(revision, &text, &self.editor_replace_text)
+                        .map_err(|error| error.to_string())?;
+                    editor
+                        .edit(id, transaction, EditKind::Other, 0, 0)
+                        .map_err(|error| error.to_string())?;
+                    self.editor_surfaces
+                        .rebuild(editor, id)
+                        .map_err(|error| error.to_string())
+                })();
+                match result {
+                    Ok(()) => self.editor_error = None,
+                    Err(error) => self.editor_error = Some(error),
+                }
+                return Task::none();
+            }
+            Message::CloseDocument(id) => {
+                if let Some(editor) = &mut self.editor {
+                    match editor.request_close(id) {
+                        Ok(CloseOutcome::Closed) => self.editor_surfaces.remove(id),
+                        Ok(CloseOutcome::NeedsDecision) => self.pending_close = Some(id),
+                        Ok(_) => {}
+                        Err(error) => self.editor_error = Some(error.to_string()),
+                    }
+                }
+                return Task::none();
+            }
+            Message::ResolveDocumentClose { id, decision } => {
+                if decision == CloseDecision::Save {
+                    return self.save_document_task(id, SaveMode::IfUnchanged);
+                }
+                if let Some(editor) = &mut self.editor {
+                    match editor.resolve_close(id, decision) {
+                        Ok(CloseOutcome::Closed) => self.editor_surfaces.remove(id),
+                        Ok(_) => {}
+                        Err(error) => self.editor_error = Some(error.to_string()),
+                    }
+                }
+                self.pending_close = None;
+                return Task::none();
+            }
+            Message::SaveDocument { id, mode } => return self.save_document_task(id, mode),
+            Message::DocumentSaved {
+                workspace_root,
+                id,
+                expected_revision,
+                result,
+            } => {
+                if !self.is_current_root(&workspace_root) {
+                    return Task::none();
+                }
+                match result {
+                    Ok(saved) => {
+                        if let Some(editor) = &mut self.editor {
+                            match editor.complete_save(id, expected_revision, saved.disk_revision) {
+                                Ok(()) => {
+                                    self.editor_error = None;
+                                    if self.pending_close == Some(id) {
+                                        if editor.resolve_close(id, CloseDecision::Discard).is_ok()
+                                        {
+                                            self.editor_surfaces.remove(id);
+                                        }
+                                        self.pending_close = None;
+                                    }
+                                }
+                                Err(error) => self.editor_error = Some(error.to_string()),
+                            }
+                        }
+                    }
+                    Err(error) => self.editor_error = Some(error),
                 }
                 return Task::none();
             }
@@ -822,7 +1168,9 @@ impl StruktApp {
             }
             Message::QuickOpenSelected(path) => {
                 if is_scoped_relative_path(&path) {
-                    self.selected_entry = Some(path);
+                    self.selected_entry = Some(path.clone());
+                    self.quick_open_visible = false;
+                    return self.open_document_task(path, OpenDisposition::Preview, false);
                 }
                 self.quick_open_visible = false;
                 return Task::none();
@@ -912,6 +1260,10 @@ impl StruktApp {
         self.update_shell(message)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "centralized shortcut routing remains exhaustive and auditable"
+    )]
     fn update_shell(&mut self, message: Message) -> Task<Message> {
         let action = match message {
             Message::SelectActivity(activity) => Some(ShellAction::SelectActivity(activity)),
@@ -926,6 +1278,25 @@ impl StruktApp {
             | Message::ToggleIgnoredFiles
             | Message::FilesRefreshed { .. }
             | Message::SelectExplorerEntry(_)
+            | Message::OpenDocument { .. }
+            | Message::DocumentOpened { .. }
+            | Message::EditorAction { .. }
+            | Message::SelectDocument(_)
+            | Message::PinDocument(_)
+            | Message::CloseDocument(_)
+            | Message::ResolveDocumentClose { .. }
+            | Message::SaveDocument { .. }
+            | Message::DocumentSaved { .. }
+            | Message::UndoDocument(_)
+            | Message::RedoDocument(_)
+            | Message::ToggleEditorFind
+            | Message::EditorFindChanged(_)
+            | Message::EditorReplaceChanged(_)
+            | Message::ToggleFindCase
+            | Message::ToggleFindWholeWord
+            | Message::ToggleFindRegex
+            | Message::SetLanguageOverride { .. }
+            | Message::ReplaceAll(_)
             | Message::BeginCreateFile
             | Message::BeginCreateDirectory
             | Message::BeginRename
@@ -965,6 +1336,36 @@ impl StruktApp {
                     Key::Character("\\") => Some(ShellAction::ToggleContext),
                     Key::Character("p") => {
                         return self.update(Message::ToggleQuickOpen);
+                    }
+                    Key::Character("s") => {
+                        if let Some(id) = self
+                            .editor
+                            .as_ref()
+                            .and_then(EditorWorkspace::active_document_id)
+                        {
+                            return self.update(Message::SaveDocument {
+                                id,
+                                mode: SaveMode::IfUnchanged,
+                            });
+                        }
+                        return Task::none();
+                    }
+                    Key::Character("z") => {
+                        if let Some(id) = self
+                            .editor
+                            .as_ref()
+                            .and_then(EditorWorkspace::active_document_id)
+                        {
+                            return self.update(if modifiers.shift() {
+                                Message::RedoDocument(id)
+                            } else {
+                                Message::UndoDocument(id)
+                            });
+                        }
+                        return Task::none();
+                    }
+                    Key::Character("f") => {
+                        return self.update(Message::ToggleEditorFind);
                     }
                     _ => None,
                 }
@@ -1033,6 +1434,79 @@ impl StruktApp {
                 }
             },
             Message::WorkspaceOpened,
+        )
+    }
+
+    fn open_document_task(
+        &self,
+        path: PathBuf,
+        disposition: OpenDisposition,
+        force_full: bool,
+    ) -> Task<Message> {
+        let Some(workspace) = &self.workspace else {
+            return Task::none();
+        };
+        if !is_scoped_relative_path(&path) {
+            return Task::none();
+        }
+        let root = workspace.root.clone();
+        let workspace_root = root.path().to_path_buf();
+        let message_path = path.clone();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    read_document(
+                        &root,
+                        &path,
+                        ReadOptions {
+                            force_full,
+                            ..ReadOptions::default()
+                        },
+                    )
+                    .map_err(|error| error.to_string())
+                })
+                .await
+                .map_err(|error| error.to_string())?
+            },
+            move |result| Message::DocumentOpened {
+                workspace_root,
+                path: message_path,
+                disposition,
+                result,
+            },
+        )
+    }
+
+    fn save_document_task(&self, id: DocumentId, mode: SaveMode) -> Task<Message> {
+        let (Some(workspace), Some(editor)) = (&self.workspace, &self.editor) else {
+            return Task::none();
+        };
+        let Some(document) = editor.document(id) else {
+            return Task::none();
+        };
+        let expected_revision = document.revision();
+        let request = SaveRequest::new(
+            PathBuf::from(document.path().as_str()),
+            document.text().into_bytes(),
+            document.disk_revision().clone(),
+        )
+        .with_mode(mode);
+        let root = workspace.root.clone();
+        let workspace_root = root.path().to_path_buf();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    save_document(&root, &request).map_err(|error| error.to_string())
+                })
+                .await
+                .map_err(|error| error.to_string())?
+            },
+            move |result| Message::DocumentSaved {
+                workspace_root,
+                id,
+                expected_revision,
+                result,
+            },
         )
     }
 

@@ -1,11 +1,14 @@
-use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
+use iced::widget::{
+    Space, button, column, container, pick_list, row, scrollable, text, text_editor, text_input,
+};
 use iced::{Background, Border, Color, Element, Fill, Length};
 use strukt_core::CapabilityId;
+use strukt_editor::{CloseDecision, DocumentStatus, FindQuery, GrammarRegistry, OpenDisposition};
 use strukt_fs::{FileEntry, FileKind};
 use strukt_shell::Activity;
 use strukt_theme::{Rgb, ThemeTokens};
 
-use crate::app::{ExplorerDialog, Message, StruktApp};
+use crate::app::{DocumentNotice, ExplorerDialog, Message, StruktApp};
 
 fn color(rgb: Rgb) -> Color {
     Color::from_rgb8(rgb.red, rgb.green, rgb.blue)
@@ -300,6 +303,14 @@ fn primary_canvas(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> 
         quick_open_canvas(app).into()
     } else if app.shell.active_activity == Activity::Search {
         search_canvas(app).into()
+    } else if app
+        .editor
+        .as_ref()
+        .and_then(strukt_editor::EditorWorkspace::active_document_id)
+        .is_some()
+        || app.document_notice.is_some()
+    {
+        editor_canvas(app)
     } else {
         column![
             text("Workspace shell").size(22),
@@ -317,6 +328,214 @@ fn primary_canvas(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> 
         .height(Fill)
         .style(panel_style(tokens, tokens.canvas))
         .into()
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "the native editor canvas keeps tab, toolbar, find, status, and close-dialog composition together"
+)]
+fn editor_canvas(app: &StruktApp) -> Element<'_, Message> {
+    if let Some(notice) = &app.document_notice {
+        return document_notice_canvas(notice).into();
+    }
+    let Some(workspace) = &app.editor else {
+        return text("No editor workspace").into();
+    };
+    let state = workspace.view_state();
+    let Some(active_id) = state.active else {
+        return text("Open a file from Explorer or Quick Open.").into();
+    };
+    let Some(document) = workspace.document(active_id) else {
+        return text("The active document is unavailable.").into();
+    };
+    let Some(content) = app.editor_surfaces.content(active_id) else {
+        return text("The native editor surface is unavailable.").into();
+    };
+
+    let mut tabs = row![].spacing(4);
+    for tab in state.tabs {
+        let status = workspace
+            .document(tab.id)
+            .map_or("", |document| match document.status() {
+                DocumentStatus::Clean => "",
+                DocumentStatus::Dirty => " ●",
+                DocumentStatus::Conflict { .. } => " !",
+                DocumentStatus::Missing => " ?",
+            });
+        let preview = if tab.pinned { "" } else { " (preview)" };
+        tabs = tabs.push(
+            row![
+                button(text(format!("{}{}{}", tab.path.as_str(), preview, status)))
+                    .on_press(Message::SelectDocument(tab.id)),
+                button(if tab.pinned { "×" } else { "Pin" }).on_press(if tab.pinned {
+                    Message::CloseDocument(tab.id)
+                } else {
+                    Message::PinDocument(tab.id)
+                }),
+            ]
+            .spacing(2),
+        );
+    }
+
+    let language_override = app.editor_language_overrides.get(&active_id);
+    let grammar = GrammarRegistry::detect(
+        std::path::Path::new(document.path().as_str()),
+        language_override.map(String::as_str),
+    );
+    let highlighter_theme = match app.shell.theme_mode {
+        strukt_theme::ThemeMode::Light => iced::highlighter::Theme::InspiredGitHub,
+        strukt_theme::ThemeMode::Dark => iced::highlighter::Theme::Base16Ocean,
+    };
+    let editor = text_editor(content)
+        .height(Fill)
+        .highlight(grammar.iced_token, highlighter_theme);
+    let editor = if document.is_read_only() {
+        editor
+    } else {
+        editor.on_action(move |action| Message::EditorAction {
+            id: active_id,
+            action,
+        })
+    };
+
+    let mut controls = row![
+        button("Save").on_press_maybe((!document.is_read_only()).then_some(
+            Message::SaveDocument {
+                id: active_id,
+                mode: strukt_fs::SaveMode::IfUnchanged,
+            }
+        )),
+        button("Undo")
+            .on_press_maybe((!document.is_read_only()).then_some(Message::UndoDocument(active_id))),
+        button("Redo")
+            .on_press_maybe((!document.is_read_only()).then_some(Message::RedoDocument(active_id))),
+        button("Find").on_press(Message::ToggleEditorFind),
+        pick_list(
+            std::iter::once("auto")
+                .chain(GrammarRegistry::all().iter().map(|grammar| grammar.id))
+                .collect::<Vec<_>>(),
+            Some(language_override.map_or("auto", String::as_str)),
+            move |language| Message::SetLanguageOverride {
+                id: active_id,
+                language: (language != "auto").then(|| language.to_owned()),
+            },
+        ),
+    ]
+    .spacing(6);
+    if document.is_read_only() {
+        controls = controls.push(button("Open full file").on_press(Message::OpenDocument {
+            path: std::path::PathBuf::from(document.path().as_str()),
+            disposition: OpenDisposition::Pinned,
+            force_full: true,
+        }));
+    }
+
+    let status = format!(
+        "{}  ·  {} lines  ·  {}{}",
+        grammar.display_name,
+        content.line_count(),
+        if document.is_read_only() {
+            "read-only"
+        } else {
+            "editable"
+        },
+        if document.is_recovered() {
+            "  ·  recovered"
+        } else {
+            ""
+        },
+    );
+    let mut body = column![tabs, controls].spacing(8);
+    if app.editor_find_visible {
+        let match_label = if app.editor_find_query.is_empty() {
+            "0 matches".to_owned()
+        } else {
+            FindQuery::new(&app.editor_find_query, app.editor_find_options).map_or_else(
+                |error| error.to_string(),
+                |query| {
+                    format!(
+                        "{} matches",
+                        query.find_all(&document.text()).matches().len()
+                    )
+                },
+            )
+        };
+        body = body.push(
+            row![
+                text_input("Find", &app.editor_find_query).on_input(Message::EditorFindChanged),
+                text_input("Replace", &app.editor_replace_text)
+                    .on_input(Message::EditorReplaceChanged),
+                button(if app.editor_find_options.case_sensitive {
+                    "Aa ✓"
+                } else {
+                    "Aa"
+                })
+                .on_press(Message::ToggleFindCase),
+                button(if app.editor_find_options.whole_word {
+                    "Word ✓"
+                } else {
+                    "Word"
+                })
+                .on_press(Message::ToggleFindWholeWord),
+                button(if app.editor_find_options.regex {
+                    ".* ✓"
+                } else {
+                    ".*"
+                })
+                .on_press(Message::ToggleFindRegex),
+                button("Replace all").on_press_maybe(
+                    (!document.is_read_only() && !app.editor_find_query.is_empty())
+                        .then_some(Message::ReplaceAll(active_id)),
+                ),
+                text(match_label),
+            ]
+            .spacing(4),
+        );
+    }
+    body = body.push(editor).push(text(status).size(12));
+    if let Some(error) = &app.editor_error {
+        body = body.push(text(format!("Editor error: {error}")));
+    }
+    if app.pending_close == Some(active_id) {
+        body = body.push(
+            row![
+                text("Save changes before closing?"),
+                button("Save").on_press(Message::ResolveDocumentClose {
+                    id: active_id,
+                    decision: CloseDecision::Save,
+                }),
+                button("Discard").on_press(Message::ResolveDocumentClose {
+                    id: active_id,
+                    decision: CloseDecision::Discard,
+                }),
+                button("Cancel").on_press(Message::ResolveDocumentClose {
+                    id: active_id,
+                    decision: CloseDecision::Cancel,
+                }),
+            ]
+            .spacing(6),
+        );
+    }
+    body.into()
+}
+
+fn document_notice_canvas(notice: &DocumentNotice) -> iced::widget::Column<'_, Message> {
+    match notice {
+        DocumentNotice::Binary { path, size } => column![
+            text("Binary file").size(22),
+            text(path.display().to_string()),
+            text(format!("{size} bytes")),
+            text("Binary content is not opened as text."),
+        ]
+        .spacing(8),
+        DocumentNotice::InvalidUtf8 { path, size } => column![
+            text("Unsupported text encoding").size(22),
+            text(path.display().to_string()),
+            text(format!("{size} bytes")),
+            text("Public alpha editing requires valid UTF-8."),
+        ]
+        .spacing(8),
+    }
 }
 
 fn welcome_canvas(app: &StruktApp) -> iced::widget::Column<'_, Message> {

@@ -131,6 +131,23 @@ impl Document {
         &self.status
     }
 
+    #[must_use]
+    pub const fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    pub(crate) fn upgrade_read_only(&mut self, text: &str, disk_revision: DiskRevision) {
+        if !self.read_only {
+            return;
+        }
+        self.buffer = TextBuffer::new(text);
+        self.history = History::default();
+        text.clone_into(&mut self.saved_text);
+        self.disk_revision = disk_revision;
+        self.status = DocumentStatus::Clean;
+        self.read_only = false;
+    }
+
     /// Applies an edit and records it in document history.
     ///
     /// # Errors

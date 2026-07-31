@@ -80,6 +80,10 @@ impl EditorWorkspace {
             .find(|document| document.path() == &path)
             .map(Document::id)
         {
+            if !read_only {
+                self.document_mut(existing)?
+                    .upgrade_read_only(text, disk_revision);
+            }
             self.active = Some(existing);
             if disposition == OpenDisposition::Pinned {
                 self.pin(existing)?;
@@ -112,6 +116,63 @@ impl EditorWorkspace {
     ) -> Result<(), EditorWorkspaceError> {
         self.document_mut(id)?
             .edit(transaction, kind, cursor_before, cursor_after)?;
+        self.pin(id)
+    }
+
+    /// Undoes the active document's latest edit and pins it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the document is absent or has no undo entry.
+    pub fn undo(&mut self, id: DocumentId) -> Result<(), EditorWorkspaceError> {
+        self.document_mut(id)?.undo()?;
+        self.pin(id)
+    }
+
+    /// Redoes the active document's latest undone edit and pins it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the document is absent or has no redo entry.
+    pub fn redo(&mut self, id: DocumentId) -> Result<(), EditorWorkspaceError> {
+        self.document_mut(id)?.redo()?;
+        self.pin(id)
+    }
+
+    /// Applies a revision-guarded successful save result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an absent document or stale completion.
+    pub fn complete_save(
+        &mut self,
+        id: DocumentId,
+        expected: Revision,
+        disk_revision: DiskRevision,
+    ) -> Result<(), EditorWorkspaceError> {
+        self.document_mut(id)?
+            .complete_save(expected, disk_revision)?;
+        Ok(())
+    }
+
+    /// Focuses an already-open document.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the document is absent.
+    pub fn select(&mut self, id: DocumentId) -> Result<(), EditorWorkspaceError> {
+        self.document(id)
+            .ok_or(EditorWorkspaceError::DocumentNotFound(id))?;
+        self.active = Some(id);
+        Ok(())
+    }
+
+    /// Promotes a preview document to a pinned tab.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the document is absent.
+    pub fn pin_document(&mut self, id: DocumentId) -> Result<(), EditorWorkspaceError> {
         self.pin(id)
     }
 

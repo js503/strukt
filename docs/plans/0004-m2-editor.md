@@ -465,14 +465,14 @@ git commit -m "feat: register editor syntax themes"
 - Modify: `crates/strukt-app/Cargo.toml`
 - Modify: `crates/strukt-core/src/lib.rs`
 
-- [ ] **Step 1: Write failing reducer tests**
+- [x] **Step 1: Write failing reducer tests**
 
 Add tests for explorer and Quick Open opening one document, preview replacement,
 double-click/edit pinning, already-open focus, surface edit to domain transaction,
 undo/redo, find/replace, save task routing, dirty close dialog, large-file override,
 binary metadata view, shortcuts, and workspace replacement cancellation.
 
-- [ ] **Step 2: Register editor capabilities and messages**
+- [x] **Step 2: Register editor capabilities and messages**
 
 Add typed app messages for open completion, surface action, pin, select, close,
 close-decision, save completion, undo/redo, find updates, replace, language override,
@@ -480,7 +480,7 @@ large-file override, explicit force-save confirmation, and focus. Register
 `editor.documents` and `editor.syntax`
 capabilities in `strukt-core`.
 
-- [ ] **Step 3: Implement the Iced/domain adapter**
+- [x] **Step 3: Implement the Iced/domain adapter**
 
 `EditorSurfaces` maps `DocumentId` to `iced::widget::text_editor::Content`. Translate
 Iced cursor and selection state to domain character ranges before each edit. Apply
@@ -490,14 +490,14 @@ fails, rebuild the surface from the unchanged domain snapshot and show the error
 Ordinary insert/delete/paste must not call `Content::text()` for the full document.
 Undo, redo, replace-all, reload, and recovery restore may rebuild the surface.
 
-- [ ] **Step 4: Render tabs, editor, find bar, and dialogs**
+- [x] **Step 4: Render tabs, editor, find bar, and dialogs**
 
 Replace the representative file canvas with the active document view. Render dirty,
 conflict, missing, preview, and recovery indicators; close controls; line/status
 information; find/replace modes; binary/large-file metadata; save-conflict actions;
 and the consolidated dirty-close dialog. Keep Files one keyboard command away.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 cargo fmt --all --check
