@@ -69,6 +69,20 @@ impl Cell {
         Ok(())
     }
 
+    pub(crate) fn append_combining(&mut self, character: char) -> Result<(), CellError> {
+        if self.width == CellWidth::Continuation {
+            return Err(CellError::ContinuationHasText);
+        }
+        if self.text.len() + character.len_utf8() > MAX_CELL_TEXT_BYTES {
+            return Err(CellError::TextTooLong);
+        }
+        if self.text == " " {
+            self.text.clear();
+        }
+        self.text.push(character);
+        Ok(())
+    }
+
     #[must_use]
     pub fn text(&self) -> &str {
         &self.text
@@ -87,6 +101,14 @@ impl Cell {
     pub fn is_structurally_valid(&self) -> bool {
         self.text.len() <= MAX_CELL_TEXT_BYTES
             && (self.width != CellWidth::Continuation || self.text.is_empty())
+    }
+
+    pub(crate) fn is_semantically_blank(&self) -> bool {
+        self.text == " "
+            && self.width == CellWidth::Single
+            && self.foreground == Color::Default
+            && self.background == Color::Default
+            && self.attributes == CellAttributes::default()
     }
 }
 

@@ -117,7 +117,7 @@ git commit -m "feat: add terminal cell foundation"
 - Modify: `crates/strukt-terminal/src/lib.rs`
 - Create: `crates/strukt-terminal/tests/grid.rs`
 
-- [ ] **Step 1: Write failing grid invariants**
+- [x] **Step 1: Write failing grid invariants**
 
 ```rust
 use strukt_terminal::{Grid, GridSize, TerminalSnapshot};
@@ -143,13 +143,13 @@ fn scrollback_is_bounded_and_alternate_screen_does_not_pollute_it() {
 }
 ```
 
-- [ ] **Step 2: Run and observe missing grid types**
+- [x] **Step 2: Run and observe missing grid types**
 
 Run: `cargo test -p strukt-terminal --test grid --locked --offline`
 
 Expected: compile failure for `Grid`.
 
-- [ ] **Step 3: Implement grid state and immutable snapshots**
+- [x] **Step 3: Implement grid state and immutable snapshots**
 
 Implement checked nonzero `GridSize`, primary and alternate buffers, cursor and
 saved cursor, scroll margins, wrap-pending state, terminal modes, and a `VecDeque`
@@ -175,19 +175,19 @@ impl Grid {
 }
 ```
 
-- [ ] **Step 4: Add resize, reflow, cursor, erasure, and alternate-screen cases**
+- [x] **Step 4: Add resize, reflow, cursor, erasure, and alternate-screen cases**
 
 Cover shrinking through a wide glyph, scroll-region isolation, cursor clamping,
 insert/delete line, insert/delete characters, reverse index, and snapshot viewport
 bounds with explicit assertions in `tests/grid.rs`.
 
-- [ ] **Step 5: Run focused and crate tests**
+- [x] **Step 5: Run focused and crate tests**
 
 Run: `cargo test -p strukt-terminal --locked --offline`
 
 Expected: all terminal tests pass.
 
-- [ ] **Step 6: Commit the grid model**
+- [x] **Step 6: Commit the grid model**
 
 ```bash
 git add crates/strukt-terminal/src crates/strukt-terminal/tests/grid.rs
