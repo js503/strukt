@@ -3,6 +3,9 @@ use thiserror::Error;
 
 const MAX_CELL_TEXT_BYTES: usize = 64;
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct HyperlinkId(pub(crate) u32);
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Color {
     #[default]
@@ -45,6 +48,7 @@ pub struct Cell {
     pub foreground: Color,
     pub background: Color,
     pub attributes: CellAttributes,
+    pub hyperlink: Option<HyperlinkId>,
 }
 
 impl Cell {
@@ -109,6 +113,7 @@ impl Cell {
             && self.foreground == Color::Default
             && self.background == Color::Default
             && self.attributes == CellAttributes::default()
+            && self.hyperlink.is_none()
     }
 }
 
@@ -120,6 +125,7 @@ impl Default for Cell {
             foreground: Color::Default,
             background: Color::Default,
             attributes: CellAttributes::default(),
+            hyperlink: None,
         }
     }
 }

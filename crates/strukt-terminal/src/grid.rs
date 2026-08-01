@@ -1,10 +1,10 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroUsize;
 
 use thiserror::Error;
 use unicode_width::UnicodeWidthChar;
 
-use crate::{Cell, CellWidth};
+use crate::{Cell, CellAttributes, CellWidth, Color, HyperlinkId};
 
 const MAX_SCROLLBACK_ROWS: usize = 100_000;
 
@@ -67,6 +67,15 @@ pub struct ResizeOutcome {
     changed: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct TerminalModes {
+    pub application_cursor_keys: bool,
+    pub bracketed_paste: bool,
+    pub focus_reporting: bool,
+    pub mouse_reporting: bool,
+}
+
 impl ResizeOutcome {
     #[must_use]
     pub const fn changed(self) -> bool {
@@ -94,6 +103,7 @@ struct Screen {
     wrap_pending: bool,
     scroll_top: usize,
     scroll_bottom: usize,
+    saved_cursor: Option<Cursor>,
 }
 
 impl Screen {
@@ -107,6 +117,7 @@ impl Screen {
             wrap_pending: false,
             scroll_top: 0,
             scroll_bottom: size.rows() - 1,
+            saved_cursor: None,
         }
     }
 }
@@ -117,6 +128,9 @@ pub struct TerminalSnapshot {
     cursor: Cursor,
     revision: u64,
     viewport_offset: usize,
+    title: Option<String>,
+    modes: TerminalModes,
+    hyperlink_targets: BTreeMap<HyperlinkId, String>,
 }
 
 impl TerminalSnapshot {
@@ -138,6 +152,37 @@ impl TerminalSnapshot {
     #[must_use]
     pub const fn viewport_offset(&self) -> usize {
         self.viewport_offset
+    }
+
+    #[must_use]
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
+
+    #[must_use]
+    pub fn cell(&self, row: usize, column: usize) -> Option<&Cell> {
+        self.rows.get(row)?.get(column)
+    }
+
+    #[must_use]
+    pub const fn modes(&self) -> TerminalModes {
+        self.modes
+    }
+
+    #[must_use]
+    pub fn hyperlink_target(&self, id: HyperlinkId) -> Option<&str> {
+        self.hyperlink_targets.get(&id).map(String::as_str)
+    }
+
+    pub(crate) fn set_metadata(
+        &mut self,
+        title: Option<String>,
+        modes: TerminalModes,
+        hyperlink_targets: BTreeMap<HyperlinkId, String>,
+    ) {
+        self.title = title;
+        self.modes = modes;
+        self.hyperlink_targets = hyperlink_targets;
     }
 
     #[must_use]
@@ -197,10 +242,22 @@ impl Grid {
                 '\t' => {
                     let spaces = 8 - (self.active_ref().cursor.column % 8);
                     for _ in 0..spaces {
-                        self.write_character(' ');
+                        self.write_character(
+                            ' ',
+                            Color::Default,
+                            Color::Default,
+                            CellAttributes::default(),
+                            None,
+                        );
                     }
                 }
-                _ => self.write_character(character),
+                _ => self.write_character(
+                    character,
+                    Color::Default,
+                    Color::Default,
+                    CellAttributes::default(),
+                    None,
+                ),
             }
         }
     }
@@ -248,6 +305,9 @@ impl Grid {
             cursor: screen.cursor,
             revision: self.revision,
             viewport_offset,
+            title: None,
+            modes: TerminalModes::default(),
+            hyperlink_targets: BTreeMap::new(),
         }
     }
 
@@ -258,6 +318,42 @@ impl Grid {
         screen.cursor.row = row.min(max_row);
         screen.cursor.column = column.min(max_column);
         screen.wrap_pending = false;
+        self.bump_revision();
+    }
+
+    #[must_use]
+    pub fn cursor(&self) -> Cursor {
+        self.active_ref().cursor
+    }
+
+    #[must_use]
+    pub const fn size(&self) -> GridSize {
+        self.size
+    }
+
+    pub fn move_cursor(&mut self, row_delta: isize, column_delta: isize) {
+        let cursor = self.cursor();
+        self.set_cursor(
+            cursor.row.saturating_add_signed(row_delta),
+            cursor.column.saturating_add_signed(column_delta),
+        );
+    }
+
+    pub fn save_cursor(&mut self) {
+        let cursor = self.active_ref().cursor;
+        self.active_mut().saved_cursor = Some(cursor);
+    }
+
+    pub fn restore_cursor(&mut self) {
+        if let Some(cursor) = self.active_ref().saved_cursor {
+            self.active_mut().cursor = cursor;
+            self.active_mut().wrap_pending = false;
+            self.bump_revision();
+        }
+    }
+
+    pub fn set_cursor_visible(&mut self, visible: bool) {
+        self.active_mut().cursor.visible = visible;
         self.bump_revision();
     }
 
@@ -417,7 +513,25 @@ impl Grid {
         self.bump_revision();
     }
 
-    fn write_character(&mut self, character: char) {
+    pub(crate) fn print_styled(
+        &mut self,
+        character: char,
+        foreground: Color,
+        background: Color,
+        attributes: CellAttributes,
+        hyperlink: Option<HyperlinkId>,
+    ) {
+        self.write_character(character, foreground, background, attributes, hyperlink);
+    }
+
+    fn write_character(
+        &mut self,
+        character: char,
+        foreground: Color,
+        background: Color,
+        attributes: CellAttributes,
+        hyperlink: Option<HyperlinkId>,
+    ) {
         let width = UnicodeWidthChar::width(character).unwrap_or(0).min(2);
         if width == 0 {
             self.append_combining(character);
@@ -450,10 +564,18 @@ impl Grid {
         screen.rows[row][column]
             .set_text(&rendered.to_string(), cell_width)
             .expect("one terminal character fits the cell text bound");
+        screen.rows[row][column].foreground = foreground;
+        screen.rows[row][column].background = background;
+        screen.rows[row][column].attributes = attributes;
+        screen.rows[row][column].hyperlink = hyperlink;
         if width == 2 {
             screen.rows[row][column + 1]
                 .set_text("", CellWidth::Continuation)
                 .expect("empty continuation cell is valid");
+            screen.rows[row][column + 1].foreground = foreground;
+            screen.rows[row][column + 1].background = background;
+            screen.rows[row][column + 1].attributes = attributes;
+            screen.rows[row][column + 1].hyperlink = hyperlink;
         }
 
         let next_column = column + width;

@@ -203,7 +203,7 @@ git commit -m "feat: model bounded terminal grids"
 - Modify: `crates/strukt-terminal/src/lib.rs`
 - Create: `crates/strukt-terminal/tests/parser.rs`
 
-- [ ] **Step 1: Write failing parser behavior tests**
+- [x] **Step 1: Write failing parser behavior tests**
 
 ```rust
 use strukt_terminal::{Color, GridSize, TerminalModel};
@@ -230,13 +230,13 @@ fn oversized_osc_is_discarded_and_counted_without_growth() {
 }
 ```
 
-- [ ] **Step 2: Run and verify missing parser/model APIs**
+- [x] **Step 2: Run and verify missing parser/model APIs**
 
 Run: `cargo test -p strukt-terminal --test parser --locked --offline`
 
 Expected: compile failure.
 
-- [ ] **Step 3: Implement `vte::Perform` with bounded intermediate state**
+- [x] **Step 3: Implement `vte::Perform` with bounded intermediate state**
 
 `TerminalModel` owns `vte::Parser`, `Grid`, an 8 KiB OSC accumulator, hyperlink
 state, and counters. Implement printable characters, execute controls, CSI cursor,
@@ -259,19 +259,19 @@ impl TerminalModel {
 
 Keep unsupported CSI/OSC actions no-op and increment a saturating diagnostic count.
 
-- [ ] **Step 4: Add conformance fixtures**
+- [x] **Step 4: Add conformance fixtures**
 
 Add table-driven fixtures for 16/256/true color, underline/italic/inverse, cursor
 save/restore, margins, bracketed paste, application cursor keys, focus reporting,
 mouse mode flags, OSC title, OSC 8, malformed UTF-8, and split escape chunks.
 
-- [ ] **Step 5: Run parser and complete crate tests**
+- [x] **Step 5: Run parser and complete crate tests**
 
 Run: `cargo test -p strukt-terminal --locked --offline`
 
 Expected: pass.
 
-- [ ] **Step 6: Commit VTE reduction**
+- [x] **Step 6: Commit VTE reduction**
 
 ```bash
 git add crates/strukt-terminal

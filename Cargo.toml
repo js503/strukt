@@ -51,7 +51,7 @@ tempfile = "3.27.0"
 thiserror = "2.0"
 tokio = { version = "1", features = ["rt", "sync"] }
 unicode-width = "0.2"
-vte = "0.15.0"
+vte = { version = "0.15.0", default-features = false }
 zeroize = "1"
 
 [workspace.lints.rust]
