@@ -13,6 +13,13 @@ use zeroize::Zeroize;
 
 const CURRENT_SCHEMA: u32 = 1;
 
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct EditorFindOptionsSnapshot {
+    pub case_sensitive: bool,
+    pub whole_word: bool,
+    pub regex: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct EditorTabSnapshot {
     pub path: String,
@@ -20,6 +27,10 @@ pub struct EditorTabSnapshot {
     pub selection_anchor: usize,
     pub scroll_line: f32,
     pub find_query: String,
+    #[serde(default)]
+    pub replace_text: String,
+    #[serde(default)]
+    pub find_options: EditorFindOptionsSnapshot,
     pub language_override: Option<String>,
     pub read_only: bool,
     #[serde(default)]
@@ -40,6 +51,8 @@ impl EditorTabSnapshot {
             selection_anchor,
             scroll_line,
             find_query: String::new(),
+            replace_text: String::new(),
+            find_options: EditorFindOptionsSnapshot::default(),
             language_override: None,
             read_only: false,
             disk_revision: None,

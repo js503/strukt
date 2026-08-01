@@ -710,6 +710,50 @@ mod tests {
     }
 
     #[test]
+    fn stale_successful_save_never_deletes_newer_unsaved_recovery() {
+        let project = tempdir().unwrap();
+        let recovery = tempdir().unwrap();
+        let mut app = StruktApp::new_with_store(LaunchMode::Interactive, None);
+        app.recovery_store = Some(EditorRecoveryStore::at(recovery.path()));
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&project))));
+        let root = app.workspace.as_ref().unwrap().root.path().to_path_buf();
+        let _ = app.update(Message::DocumentOpened {
+            workspace_root: root.clone(),
+            path: "file.txt".into(),
+            disposition: OpenDisposition::Pinned,
+            result: Ok(text_document("base", "disk-1", false)),
+        });
+        let id = app.editor.as_ref().unwrap().active_document_id().unwrap();
+        let stale_revision = app
+            .editor
+            .as_ref()
+            .unwrap()
+            .document(id)
+            .unwrap()
+            .revision();
+        let _ = app.update(Message::EditorAction {
+            id,
+            action: Action::Edit(Edit::Insert('x')),
+        });
+
+        let completion = app.update(Message::DocumentSaved {
+            workspace_root: root,
+            id,
+            expected_revision: stale_revision,
+            result: Ok(strukt_fs::SaveOutcome {
+                disk_revision: DiskRevision::new("saved-old-revision"),
+                bytes_written: 4,
+            }),
+        });
+
+        assert_eq!(completion.units(), 0);
+        assert_eq!(
+            app.editor.as_ref().unwrap().document(id).unwrap().status(),
+            &DocumentStatus::Dirty
+        );
+    }
+
+    #[test]
     fn recovery_deadline_is_coalesced_to_the_latest_document_revision() {
         let project = tempdir().unwrap();
         let recovery = tempdir().unwrap();
@@ -782,6 +826,10 @@ mod tests {
             result: Ok(text_document("base", "disk-1", false)),
         });
         let _ = app.update(Message::EditorFindChanged("needle".into()));
+        let _ = app.update(Message::EditorReplaceChanged("replacement".into()));
+        let _ = app.update(Message::ToggleFindCase);
+        let _ = app.update(Message::ToggleFindWholeWord);
+        let _ = app.update(Message::ToggleFindRegex);
 
         let snapshot = app
             .workspace
@@ -793,6 +841,10 @@ mod tests {
         assert_eq!(snapshot.tabs.len(), 1);
         assert_eq!(snapshot.tabs[0].path, "file.txt");
         assert_eq!(snapshot.tabs[0].find_query, "needle");
+        assert_eq!(snapshot.tabs[0].replace_text, "replacement");
+        assert!(snapshot.tabs[0].find_options.case_sensitive);
+        assert!(snapshot.tabs[0].find_options.whole_word);
+        assert!(snapshot.tabs[0].find_options.regex);
         assert_eq!(snapshot.active_path.as_deref(), Some("file.txt"));
     }
 
@@ -834,6 +886,48 @@ mod tests {
             Some("rust")
         );
         assert!(app.editor_error.as_deref().unwrap().contains("placeholder"));
+    }
+
+    #[test]
+    fn restored_active_tab_does_not_reclaim_focus_from_later_user_opens() {
+        let project = tempdir().unwrap();
+        let mut opened = open_workspace(&project);
+        let mut tab = strukt_persistence::EditorTabSnapshot::new("restored.txt", 0, 0, 0.0);
+        tab.disk_revision = Some("disk-1".into());
+        opened
+            .state
+            .set_contribution(
+                "editor",
+                &EditorSessionSnapshot::new(vec![tab], Some("restored.txt".into()), None),
+            )
+            .unwrap();
+        let root = opened.state.root.path().to_path_buf();
+        let mut app = StruktApp::default();
+        let _ = app.update(Message::WorkspaceOpened(Ok(opened)));
+        let _ = app.update(Message::DocumentOpened {
+            workspace_root: root.clone(),
+            path: "restored.txt".into(),
+            disposition: OpenDisposition::Pinned,
+            result: Ok(text_document("restored", "disk-1", false)),
+        });
+
+        let _ = app.update(Message::OpenDocument {
+            path: "later.txt".into(),
+            disposition: OpenDisposition::Preview,
+            force_full: false,
+        });
+        let _ = app.update(Message::DocumentOpened {
+            workspace_root: root,
+            path: "later.txt".into(),
+            disposition: OpenDisposition::Preview,
+            result: Ok(text_document("later", "disk-2", false)),
+        });
+
+        let editor = app.editor.as_ref().unwrap();
+        let active = editor
+            .document(editor.active_document_id().unwrap())
+            .unwrap();
+        assert_eq!(active.path().as_str(), "later.txt");
     }
 
     #[test]

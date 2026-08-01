@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -117,8 +117,10 @@ pub struct StruktApp {
     pub editor_replace_text: String,
     pub editor_find_options: FindOptions,
     pub editor_language_overrides: HashMap<DocumentId, String>,
+    editor_scroll_lines: HashMap<DocumentId, f32>,
     editor_restore_active: Option<String>,
     editor_restore_tabs: HashMap<String, EditorTabSnapshot>,
+    editor_restore_pending: HashSet<String>,
     launch_mode: LaunchMode,
     store: Option<WorkspaceStore>,
     pub(crate) recovery_store: Option<EditorRecoveryStore>,
@@ -399,8 +401,10 @@ impl StruktApp {
             editor_replace_text: String::new(),
             editor_find_options: FindOptions::default(),
             editor_language_overrides: HashMap::new(),
+            editor_scroll_lines: HashMap::new(),
             editor_restore_active: None,
             editor_restore_tabs: HashMap::new(),
+            editor_restore_pending: HashSet::new(),
             launch_mode,
             store,
             recovery_store: EditorRecoveryStore::platform_default().ok(),
@@ -542,6 +546,7 @@ impl StruktApp {
                 self.editor_find_query.clear();
                 self.editor_replace_text.clear();
                 self.editor_language_overrides.clear();
+                self.editor_scroll_lines.clear();
                 self.recovery_generations.clear();
                 self.recent_save_revisions.clear();
                 self.editor_restore_active = editor_restore
@@ -558,6 +563,7 @@ impl StruktApp {
                             .collect()
                     })
                     .unwrap_or_default();
+                self.editor_restore_pending = self.editor_restore_tabs.keys().cloned().collect();
                 if self.watcher.is_none()
                     && let Some(workspace) = &mut self.workspace
                 {
@@ -687,6 +693,7 @@ impl StruktApp {
                         .any(|entry| entry.relative_path == path && entry.kind == FileKind::File);
                     self.selected_entry = Some(path.clone());
                     if is_file {
+                        self.editor_restore_active = None;
                         return self.open_document_task(path, OpenDisposition::Preview, false);
                     }
                 }
@@ -696,7 +703,10 @@ impl StruktApp {
                 path,
                 disposition,
                 force_full,
-            } => return self.open_document_task(path, disposition, force_full),
+            } => {
+                self.editor_restore_active = None;
+                return self.open_document_task(path, disposition, force_full);
+            }
             Message::DocumentOpened {
                 workspace_root,
                 path,
@@ -706,6 +716,8 @@ impl StruktApp {
                 if !self.is_current_root(&workspace_root) {
                     return Task::none();
                 }
+                let path_string = path.to_string_lossy().into_owned();
+                let was_restore = self.editor_restore_pending.remove(&path_string);
                 match result {
                     Ok(opened) => match opened.kind {
                         DocumentKind::Text { read_only, .. } => {
@@ -717,7 +729,6 @@ impl StruktApp {
                             let Some(editor) = &mut self.editor else {
                                 return Task::none();
                             };
-                            let path_string = path.to_string_lossy();
                             let result = RelativeDocumentPath::new(&path_string)
                                 .map_err(|error| error.to_string())
                                 .and_then(|path| {
@@ -738,7 +749,7 @@ impl StruktApp {
                                         .map_or_else(String::new, strukt_editor::Document::text);
                                     self.editor_surfaces.insert(id, &surface_text);
                                     if let Some(snapshot) =
-                                        self.editor_restore_tabs.get(path_string.as_ref()).cloned()
+                                        self.editor_restore_tabs.get(&path_string).cloned()
                                     {
                                         let _ = self.editor_surfaces.restore_view(
                                             id,
@@ -746,18 +757,28 @@ impl StruktApp {
                                             snapshot.selection_anchor,
                                             snapshot.scroll_line,
                                         );
+                                        self.editor_scroll_lines.insert(id, snapshot.scroll_line);
                                         if let Some(language) = snapshot.language_override {
                                             self.editor_language_overrides.insert(id, language);
                                         }
                                         if self.editor_restore_active.as_deref()
-                                            == Some(path_string.as_ref())
+                                            == Some(path_string.as_str())
                                         {
                                             self.editor_find_query = snapshot.find_query;
+                                            self.editor_replace_text = snapshot.replace_text;
+                                            self.editor_find_options = FindOptions {
+                                                case_sensitive: snapshot
+                                                    .find_options
+                                                    .case_sensitive,
+                                                whole_word: snapshot.find_options.whole_word,
+                                                regex: snapshot.find_options.regex,
+                                            };
                                         }
                                     }
                                     self.document_notice = None;
                                     self.editor_error = None;
-                                    if let Some(active_path) = &self.editor_restore_active
+                                    if was_restore
+                                        && let Some(active_path) = &self.editor_restore_active
                                         && let Some(active) = editor
                                             .view_state()
                                             .tabs
@@ -765,6 +786,9 @@ impl StruktApp {
                                             .find(|tab| tab.path.as_str() == active_path)
                                     {
                                         let _ = editor.select(active.id);
+                                    }
+                                    if self.editor_restore_pending.is_empty() {
+                                        self.editor_restore_active = None;
                                     }
                                     let recovery = self.load_recovery_task(id);
                                     let persistence = self.request_persistence(false);
@@ -787,14 +811,12 @@ impl StruktApp {
                         }
                     },
                     Err(error) => {
-                        let path_key = path.to_string_lossy();
-                        let restore_snapshot =
-                            self.editor_restore_tabs.get(path_key.as_ref()).cloned();
+                        let restore_snapshot = self.editor_restore_tabs.get(&path_string).cloned();
                         let baseline = restore_snapshot
                             .as_ref()
                             .and_then(|snapshot| snapshot.disk_revision.clone());
                         if let (Some(baseline), Some(editor)) = (baseline, &mut self.editor) {
-                            let opened = RelativeDocumentPath::new(path_key.as_ref())
+                            let opened = RelativeDocumentPath::new(&path_string)
                                 .map_err(|open_error| open_error.to_string())
                                 .and_then(|relative| {
                                     editor
@@ -822,18 +844,30 @@ impl StruktApp {
                                             snapshot.selection_anchor,
                                             snapshot.scroll_line,
                                         );
+                                        self.editor_scroll_lines.insert(id, snapshot.scroll_line);
                                         if let Some(language) = snapshot.language_override {
                                             self.editor_language_overrides.insert(id, language);
                                         }
                                         if self.editor_restore_active.as_deref()
-                                            == Some(path_key.as_ref())
+                                            == Some(path_string.as_str())
                                         {
                                             self.editor_find_query = snapshot.find_query;
+                                            self.editor_replace_text = snapshot.replace_text;
+                                            self.editor_find_options = FindOptions {
+                                                case_sensitive: snapshot
+                                                    .find_options
+                                                    .case_sensitive,
+                                                whole_word: snapshot.find_options.whole_word,
+                                                regex: snapshot.find_options.regex,
+                                            };
                                         }
                                     }
                                     self.editor_error = Some(format!(
                                         "{error}; showing restorable missing-file placeholder"
                                     ));
+                                    if self.editor_restore_pending.is_empty() {
+                                        self.editor_restore_active = None;
+                                    }
                                     let recovery = self.load_recovery_task(id);
                                     let persistence = self.request_persistence(false);
                                     return Task::batch([recovery, persistence]);
@@ -845,10 +879,17 @@ impl StruktApp {
                         }
                     }
                 }
+                if self.editor_restore_pending.is_empty() {
+                    self.editor_restore_active = None;
+                }
                 return Task::none();
             }
             Message::EditorAction { id, action } => {
                 let is_edit = action.is_edit();
+                let scroll_delta = match &action {
+                    text_editor::Action::Scroll { lines } => Some(scroll_lines_as_f32(*lines)),
+                    _ => None,
+                };
                 let Some(editor) = &mut self.editor else {
                     return Task::none();
                 };
@@ -856,6 +897,9 @@ impl StruktApp {
                     self.editor_error = Some(error.to_string());
                 } else {
                     self.editor_error = None;
+                    if let Some(delta) = scroll_delta {
+                        *self.editor_scroll_lines.entry(id).or_default() += delta;
+                    }
                     if is_edit {
                         let recovery = self.schedule_recovery(id);
                         let persistence = self.request_persistence(false);
@@ -926,19 +970,19 @@ impl StruktApp {
             }
             Message::EditorReplaceChanged(replacement) => {
                 self.editor_replace_text = replacement;
-                return Task::none();
+                return self.request_persistence(false);
             }
             Message::ToggleFindCase => {
                 self.editor_find_options.case_sensitive = !self.editor_find_options.case_sensitive;
-                return Task::none();
+                return self.request_persistence(false);
             }
             Message::ToggleFindWholeWord => {
                 self.editor_find_options.whole_word = !self.editor_find_options.whole_word;
-                return Task::none();
+                return self.request_persistence(false);
             }
             Message::ToggleFindRegex => {
                 self.editor_find_options.regex = !self.editor_find_options.regex;
-                return Task::none();
+                return self.request_persistence(false);
             }
             Message::SetLanguageOverride { id, language } => {
                 if self
@@ -999,6 +1043,14 @@ impl StruktApp {
                         Err(error) => self.editor_error = Some(error.to_string()),
                     }
                 }
+                if self
+                    .editor
+                    .as_ref()
+                    .is_some_and(|editor| editor.document(id).is_none())
+                {
+                    self.editor_scroll_lines.remove(&id);
+                    self.editor_language_overrides.remove(&id);
+                }
                 return self.request_persistence(false);
             }
             Message::ResolveDocumentClose { id, decision } => {
@@ -1012,6 +1064,14 @@ impl StruktApp {
                         Ok(_) => {}
                         Err(error) => self.editor_error = Some(error.to_string()),
                     }
+                }
+                if self
+                    .editor
+                    .as_ref()
+                    .is_some_and(|editor| editor.document(id).is_none())
+                {
+                    self.editor_scroll_lines.remove(&id);
+                    self.editor_language_overrides.remove(&id);
                 }
                 self.pending_close = None;
                 let persistence = self.request_persistence(false);
@@ -1027,16 +1087,14 @@ impl StruktApp {
                 if !self.is_current_root(&workspace_root) {
                     return Task::none();
                 }
-                let cleanup = if result.is_ok() {
-                    self.delete_recovery_task(id)
-                } else {
-                    Task::none()
-                };
+                let cleanup_metadata = self.recovery_metadata(id);
+                let mut saved_applied = false;
                 match result {
                     Ok(saved) => {
                         if let Some(editor) = &mut self.editor {
                             match editor.complete_save(id, expected_revision, saved.disk_revision) {
                                 Ok(()) => {
+                                    saved_applied = true;
                                     if let Some(document) = editor.document(id) {
                                         self.recent_save_revisions
                                             .insert(id, document.disk_revision().clone());
@@ -1056,6 +1114,13 @@ impl StruktApp {
                     }
                     Err(error) => self.editor_error = Some(error),
                 }
+                let cleanup = if saved_applied {
+                    cleanup_metadata.map_or_else(Task::none, |metadata| {
+                        self.delete_recovery_metadata_task(id, metadata)
+                    })
+                } else {
+                    Task::none()
+                };
                 let persistence = self.request_persistence(false);
                 return Task::batch([cleanup, persistence]);
             }
@@ -1549,6 +1614,7 @@ impl StruktApp {
                 if is_scoped_relative_path(&path) {
                     self.selected_entry = Some(path.clone());
                     self.quick_open_visible = false;
+                    self.editor_restore_active = None;
                     return self.open_document_task(path, OpenDisposition::Preview, false);
                 }
                 self.quick_open_visible = false;
@@ -2086,11 +2152,19 @@ impl StruktApp {
     }
 
     fn delete_recovery_task(&self, id: DocumentId) -> Task<Message> {
-        let (Some(store), Some(metadata), Some(workspace)) = (
-            self.recovery_store.clone(),
-            self.recovery_metadata(id),
-            self.workspace.as_ref(),
-        ) else {
+        let Some(metadata) = self.recovery_metadata(id) else {
+            return Task::none();
+        };
+        self.delete_recovery_metadata_task(id, metadata)
+    }
+
+    fn delete_recovery_metadata_task(
+        &self,
+        id: DocumentId,
+        metadata: RecoveryMetadata,
+    ) -> Task<Message> {
+        let (Some(store), Some(workspace)) = (self.recovery_store.clone(), self.workspace.as_ref())
+        else {
             return Task::none();
         };
         let workspace_root = workspace.root.path().to_path_buf();
@@ -2118,19 +2192,24 @@ impl StruktApp {
             .iter()
             .filter_map(|tab| {
                 let document = editor.document(tab.id)?;
-                let cursor = self
+                let (cursor, selection_anchor) = self
                     .editor_surfaces
-                    .content(tab.id)
-                    .map(iced::widget::text_editor::Content::cursor);
+                    .cursor_offsets(tab.id)
+                    .unwrap_or_default();
                 let mut snapshot = EditorTabSnapshot::new(
                     tab.path.as_str(),
-                    cursor.map_or(0, |cursor| cursor.position.column),
-                    cursor
-                        .and_then(|cursor| cursor.selection)
-                        .map_or(0, |position| position.column),
-                    0.0,
+                    cursor,
+                    selection_anchor,
+                    self.editor_scroll_lines
+                        .get(&tab.id)
+                        .copied()
+                        .unwrap_or_default(),
                 );
                 snapshot.find_query.clone_from(&self.editor_find_query);
+                snapshot.replace_text.clone_from(&self.editor_replace_text);
+                snapshot.find_options.case_sensitive = self.editor_find_options.case_sensitive;
+                snapshot.find_options.whole_word = self.editor_find_options.whole_word;
+                snapshot.find_options.regex = self.editor_find_options.regex;
                 snapshot.language_override = self.editor_language_overrides.get(&tab.id).cloned();
                 snapshot.read_only = document.is_read_only();
                 snapshot.disk_revision = Some(document.disk_revision().as_str().to_owned());
@@ -2796,6 +2875,14 @@ fn is_scoped_relative_path(path: &Path) -> bool {
         && path
             .components()
             .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
+}
+
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "Iced reports integral line deltas while persisted scroll state uses f32"
+)]
+fn scroll_lines_as_f32(lines: i32) -> f32 {
+    lines as f32
 }
 
 fn dialog_source(dialog: &ExplorerDialog) -> Option<&Path> {

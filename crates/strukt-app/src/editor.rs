@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use iced::Renderer;
-use iced::advanced::text::editor::{Edit, Motion};
+use iced::advanced::text::editor::{Cursor, Edit, Position};
 use iced::widget::text_editor::{Action, Content};
 use strukt_editor::{
     CharRange, DocumentId, EditKind, EditTransaction, EditorWorkspace, EditorWorkspaceError,
@@ -26,6 +26,21 @@ impl EditorSurfaces {
         self.contents.get(&id)
     }
 
+    pub(crate) fn cursor_offsets(
+        &self,
+        id: DocumentId,
+    ) -> Result<(usize, usize), EditorSurfaceError> {
+        let content = self
+            .content(id)
+            .ok_or(EditorSurfaceError::MissingSurface(id))?;
+        let cursor = content.cursor();
+        let caret = offset_for_position(content, cursor.position)?;
+        let anchor = cursor
+            .selection
+            .map_or(Ok(caret), |position| offset_for_position(content, position))?;
+        Ok((caret, anchor))
+    }
+
     pub(crate) fn rebuild(
         &mut self,
         workspace: &EditorWorkspace,
@@ -46,19 +61,14 @@ impl EditorSurfaces {
         scroll_line: f32,
     ) -> Result<(), EditorSurfaceError> {
         let content = self.content_mut(id)?;
-        content.perform(Action::Move(Motion::DocumentStart));
-        for _ in 0..cursor {
-            content.perform(Action::Move(Motion::Right));
-        }
-        let distance = cursor.abs_diff(selection_anchor);
-        let motion = if selection_anchor < cursor {
-            Motion::Left
-        } else {
-            Motion::Right
-        };
-        for _ in 0..distance {
-            content.perform(Action::Select(motion));
-        }
+        let position = position_for_offset(content, cursor)?;
+        let selection = (selection_anchor != cursor)
+            .then(|| position_for_offset(content, selection_anchor))
+            .transpose()?;
+        content.move_to(Cursor {
+            position,
+            selection,
+        });
         let scroll_lines = scroll_line.round();
         if scroll_lines != 0.0 {
             #[expect(
@@ -139,7 +149,7 @@ fn transaction_for_action(
             (selection, String::new(), EditKind::Typing, false)
         }
         Edit::Backspace => (
-            CharRange::new(caret.saturating_sub(1), caret)?,
+            CharRange::new(previous_offset(content, cursor.position, caret)?, caret)?,
             String::new(),
             EditKind::Typing,
             false,
@@ -194,10 +204,40 @@ fn offset_for_position(
     let line = content
         .line(position.line)
         .ok_or(EditorSurfaceError::InvalidCursor)?;
-    if position.column > line.text.chars().count() {
+    if position.column > line.text.len() || !line.text.is_char_boundary(position.column) {
         return Err(EditorSurfaceError::InvalidCursor);
     }
-    Ok(start + position.column)
+    Ok(start + line.text[..position.column].chars().count())
+}
+
+fn position_for_offset(
+    content: &Content<Renderer>,
+    mut offset: usize,
+) -> Result<Position, EditorSurfaceError> {
+    for line_index in 0..content.line_count() {
+        let line = content
+            .line(line_index)
+            .ok_or(EditorSurfaceError::InvalidCursor)?;
+        let line_chars = line.text.chars().count();
+        if offset <= line_chars {
+            let column = line
+                .text
+                .char_indices()
+                .map(|(index, _)| index)
+                .nth(offset)
+                .unwrap_or(line.text.len());
+            return Ok(Position {
+                line: line_index,
+                column,
+            });
+        }
+        let ending_chars = line.ending.as_str().chars().count();
+        if offset < line_chars + ending_chars {
+            return Err(EditorSurfaceError::InvalidCursor);
+        }
+        offset -= line_chars + ending_chars;
+    }
+    Err(EditorSurfaceError::InvalidCursor)
 }
 
 fn line_start_offset(
@@ -222,13 +262,27 @@ fn next_offset(
     let line = content
         .line(position.line)
         .ok_or(EditorSurfaceError::InvalidCursor)?;
-    if position.column < line.text.chars().count() {
+    if position.column < line.text.len() {
         Ok(caret + 1)
     } else if position.line + 1 < content.line_count() {
         Ok(caret + line.ending.as_str().chars().count())
     } else {
         Ok(caret)
     }
+}
+
+fn previous_offset(
+    content: &Content<Renderer>,
+    position: Position,
+    caret: usize,
+) -> Result<usize, EditorSurfaceError> {
+    if position.column > 0 || position.line == 0 {
+        return Ok(caret.saturating_sub(1));
+    }
+    let previous = content
+        .line(position.line - 1)
+        .ok_or(EditorSurfaceError::InvalidCursor)?;
+    Ok(caret.saturating_sub(previous.ending.as_str().chars().count()))
 }
 
 fn line_ending(content: &Content<Renderer>) -> &'static str {
@@ -258,7 +312,6 @@ pub(crate) enum EditorSurfaceError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced::advanced::text::editor::{Cursor, Position};
     use strukt_editor::{DiskRevision, OpenDisposition, RelativeDocumentPath};
     use strukt_workspace::WorkspaceRoot;
 
@@ -290,5 +343,88 @@ mod tests {
         assert_eq!(workspace.document(id).unwrap().text(), "abc!");
         assert_eq!(surfaces.content(id).unwrap().text(), "abc!");
         assert!(workspace.view_state().tabs[0].pinned);
+    }
+
+    #[test]
+    fn cursor_offsets_round_trip_across_unicode_and_lines() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = WorkspaceRoot::open(directory.path()).unwrap();
+        let mut workspace = EditorWorkspace::new(root.id().clone());
+        let id = workspace
+            .open(
+                RelativeDocumentPath::new("file.txt").unwrap(),
+                "éx\n東京",
+                DiskRevision::new("disk"),
+                false,
+                OpenDisposition::Pinned,
+            )
+            .unwrap();
+        let mut surfaces = EditorSurfaces::default();
+        surfaces.insert(id, "éx\n東京");
+        surfaces.content_mut(id).unwrap().move_to(Cursor {
+            position: Position { line: 1, column: 6 },
+            selection: Some(Position { line: 0, column: 2 }),
+        });
+
+        assert_eq!(surfaces.cursor_offsets(id).unwrap(), (5, 1));
+        surfaces.restore_view(id, 5, 1, 0.0).unwrap();
+        assert_eq!(surfaces.cursor_offsets(id).unwrap(), (5, 1));
+    }
+
+    #[test]
+    fn unicode_byte_columns_are_converted_to_domain_character_offsets() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = WorkspaceRoot::open(directory.path()).unwrap();
+        let mut workspace = EditorWorkspace::new(root.id().clone());
+        let id = workspace
+            .open(
+                RelativeDocumentPath::new("file.txt").unwrap(),
+                "éx",
+                DiskRevision::new("disk"),
+                false,
+                OpenDisposition::Pinned,
+            )
+            .unwrap();
+        let mut surfaces = EditorSurfaces::default();
+        surfaces.insert(id, "éx");
+        surfaces.content_mut(id).unwrap().move_to(Cursor {
+            position: Position { line: 0, column: 2 },
+            selection: None,
+        });
+
+        surfaces
+            .perform(&mut workspace, id, Action::Edit(Edit::Insert('!')))
+            .unwrap();
+
+        assert_eq!(workspace.document(id).unwrap().text(), "é!x");
+        assert_eq!(surfaces.cursor_offsets(id).unwrap(), (2, 2));
+    }
+
+    #[test]
+    fn backspace_at_a_crlf_line_start_removes_the_complete_line_ending() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = WorkspaceRoot::open(directory.path()).unwrap();
+        let mut workspace = EditorWorkspace::new(root.id().clone());
+        let id = workspace
+            .open(
+                RelativeDocumentPath::new("file.txt").unwrap(),
+                "a\r\nb",
+                DiskRevision::new("disk"),
+                false,
+                OpenDisposition::Pinned,
+            )
+            .unwrap();
+        let mut surfaces = EditorSurfaces::default();
+        surfaces.insert(id, "a\r\nb");
+        surfaces.content_mut(id).unwrap().move_to(Cursor {
+            position: Position { line: 1, column: 0 },
+            selection: None,
+        });
+
+        surfaces
+            .perform(&mut workspace, id, Action::Edit(Edit::Backspace))
+            .unwrap();
+
+        assert_eq!(workspace.document(id).unwrap().text(), "ab");
     }
 }

@@ -90,6 +90,42 @@ fn large_files_open_as_truncated_preview_unless_explicitly_overridden() {
 }
 
 #[test]
+fn streamed_large_preview_keeps_utf8_boundaries_and_validates_the_full_file() {
+    let valid = Fixture::new("unicode.txt", "abcédef".as_bytes());
+    let opened = read_document(
+        &valid.root,
+        "unicode.txt",
+        ReadOptions {
+            max_editable_bytes: 4,
+            preview_bytes: 4,
+            force_full: false,
+        },
+    )
+    .unwrap();
+    assert_eq!(opened.text.as_deref(), Some("abc"));
+    assert_eq!(
+        opened.disk_revision,
+        DiskRevision::new(blake3::hash("abcédef".as_bytes()).to_hex().to_string())
+    );
+
+    let mut invalid = vec![b'a'; 1024 * 1024];
+    invalid.push(0xff);
+    let invalid = Fixture::new("invalid-large.txt", &invalid);
+    let opened = read_document(
+        &invalid.root,
+        "invalid-large.txt",
+        ReadOptions {
+            max_editable_bytes: 1024,
+            preview_bytes: 16,
+            force_full: false,
+        },
+    )
+    .unwrap();
+    assert_eq!(opened.kind, DocumentKind::InvalidUtf8);
+    assert!(opened.text.is_none());
+}
+
+#[test]
 fn rejects_traversal_and_non_regular_files() {
     let fixture = Fixture::new("file.txt", b"text");
     fs::create_dir(fixture.directory.path().join("directory")).unwrap();

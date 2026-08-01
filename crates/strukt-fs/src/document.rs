@@ -124,11 +124,65 @@ pub fn read_document(
 ) -> Result<DocumentRead, DocumentIoError> {
     let path = scoped(path.as_ref())?;
     let directory = validated_capability(root)?;
-    let (bytes, _permissions) = read_regular(&directory, &path)?;
-    let size = bytes.len() as u64;
-    let disk_revision = revision(&bytes);
+    let (mut file, _permissions, metadata_size) = open_regular(&directory, &path)?;
+    let default_capture_limit = usize::try_from(options.max_editable_bytes)
+        .unwrap_or(usize::MAX)
+        .saturating_add(1)
+        .max(options.preview_bytes.saturating_add(4));
+    let capture_limit = if options.force_full {
+        usize::MAX
+    } else if metadata_size > options.max_editable_bytes {
+        options.preview_bytes.saturating_add(4)
+    } else {
+        default_capture_limit
+    };
+    let mut captured = Vec::with_capacity(
+        usize::try_from(metadata_size)
+            .unwrap_or(capture_limit)
+            .min(capture_limit),
+    );
+    let mut hasher = blake3::Hasher::new();
+    let mut utf8_carry = Vec::with_capacity(4);
+    let mut valid_utf8 = true;
+    let mut binary = false;
+    let mut size = 0_u64;
+    let mut chunk = vec![0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut chunk).map_err(DocumentIoError::Io)?;
+        if read == 0 {
+            break;
+        }
+        let bytes = &chunk[..read];
+        size = size.saturating_add(read as u64);
+        hasher.update(bytes);
+        if size <= BINARY_SNIFF_BYTES as u64
+            || size.saturating_sub(read as u64) < BINARY_SNIFF_BYTES as u64
+        {
+            let sniff_start =
+                usize::try_from(size.saturating_sub(read as u64)).unwrap_or(usize::MAX);
+            let sniff_len = BINARY_SNIFF_BYTES.saturating_sub(sniff_start).min(read);
+            binary |= bytes[..sniff_len].contains(&0);
+        }
+        if captured.len() < capture_limit {
+            let remaining = capture_limit - captured.len();
+            captured.extend_from_slice(&bytes[..remaining.min(read)]);
+        }
+        if valid_utf8 {
+            utf8_carry.extend_from_slice(bytes);
+            match std::str::from_utf8(&utf8_carry) {
+                Ok(_) => utf8_carry.clear(),
+                Err(error) if error.error_len().is_none() => {
+                    let incomplete = utf8_carry.split_off(error.valid_up_to());
+                    utf8_carry = incomplete;
+                }
+                Err(_) => valid_utf8 = false,
+            }
+        }
+    }
+    valid_utf8 &= utf8_carry.is_empty();
+    let disk_revision = DiskRevision::new(hasher.finalize().to_hex().to_string());
 
-    if bytes.iter().take(BINARY_SNIFF_BYTES).any(|byte| *byte == 0) {
+    if binary {
         return Ok(DocumentRead {
             kind: DocumentKind::Binary,
             text: None,
@@ -137,23 +191,26 @@ pub fn read_document(
         });
     }
 
-    let Ok(full_text) = std::str::from_utf8(&bytes) else {
+    if !valid_utf8 {
         return Ok(DocumentRead {
             kind: DocumentKind::InvalidUtf8,
             text: None,
             size,
             disk_revision,
         });
-    };
+    }
     let oversized = size > options.max_editable_bytes && !options.force_full;
     let text = if oversized {
-        let mut end = options.preview_bytes.min(full_text.len());
-        while !full_text.is_char_boundary(end) {
-            end -= 1;
-        }
-        full_text[..end].to_owned()
+        let end = options.preview_bytes.min(captured.len());
+        let valid_end = std::str::from_utf8(&captured[..end])
+            .map_or_else(|error| error.valid_up_to(), str::len);
+        String::from_utf8(captured[..valid_end].to_vec()).map_err(|error| {
+            DocumentIoError::Io(io::Error::new(io::ErrorKind::InvalidData, error))
+        })?
     } else {
-        full_text.to_owned()
+        String::from_utf8(captured).map_err(|error| {
+            DocumentIoError::Io(io::Error::new(io::ErrorKind::InvalidData, error))
+        })?
     };
     Ok(DocumentRead {
         kind: DocumentKind::Text {
@@ -247,6 +304,13 @@ fn scoped(path: &Path) -> Result<PathBuf, DocumentIoError> {
 }
 
 fn read_regular(directory: &Dir, path: &Path) -> Result<(Vec<u8>, Permissions), DocumentIoError> {
+    let (mut file, permissions, size) = open_regular(directory, path)?;
+    let mut bytes = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
+    file.read_to_end(&mut bytes).map_err(DocumentIoError::Io)?;
+    Ok((bytes, permissions))
+}
+
+fn open_regular(directory: &Dir, path: &Path) -> Result<(File, Permissions, u64), DocumentIoError> {
     let link_metadata = directory
         .symlink_metadata(path)
         .map_err(DocumentIoError::Io)?;
@@ -258,7 +322,7 @@ fn read_regular(directory: &Dir, path: &Path) -> Result<(Vec<u8>, Permissions), 
     }
     let mut options = OpenOptions::new();
     options.read(true).follow(FollowSymlinks::No);
-    let mut file = directory
+    let file = directory
         .open_with(path, &options)
         .map_err(DocumentIoError::Io)?;
     let metadata = file.metadata().map_err(DocumentIoError::Io)?;
@@ -266,9 +330,7 @@ fn read_regular(directory: &Dir, path: &Path) -> Result<(Vec<u8>, Permissions), 
         return Err(DocumentIoError::NotRegularFile(path.to_path_buf()));
     }
     let permissions = metadata.permissions();
-    let mut bytes = Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or(0));
-    file.read_to_end(&mut bytes).map_err(DocumentIoError::Io)?;
-    Ok((bytes, permissions))
+    Ok((file, permissions, metadata.len()))
 }
 
 fn ensure_expected(request: &SaveRequest, actual: DiskRevision) -> Result<(), DocumentIoError> {
