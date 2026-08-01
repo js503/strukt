@@ -143,6 +143,18 @@ service.
   [#4 — feat: add local workspace and files](https://github.com/js503/strukt/pull/4)
 - First-slice validation:
   [`evidence/m2-workspace-files-validation.md`](evidence/m2-workspace-files-validation.md)
+- Second-slice editor spec:
+  [`specs/0004-m2-editor.md`](specs/0004-m2-editor.md)
+- Second-slice editor plan:
+  [`plans/0004-m2-editor.md`](plans/0004-m2-editor.md)
+- Second-slice editor issue:
+  [#5 — M2.2: Native editor](https://github.com/js503/strukt/issues/5)
+- Second-slice editor pull request:
+  [#6 — feat: add M2 native editor](https://github.com/js503/strukt/pull/6)
+- Second-slice editor validation:
+  [`evidence/m2-editor-validation.md`](evidence/m2-editor-validation.md)
+- Remaining M2 slices: language intelligence and local PTY/ConPTY terminal
+  execution, rendering, and ephemeral layout
 - Workspace reference:
   [`mockups/workspace-shell/focus-context.html`](mockups/workspace-shell/focus-context.html)
 

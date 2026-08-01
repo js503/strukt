@@ -7,6 +7,8 @@ members = [
   "crates/strukt-persistence",
   "crates/strukt-workspace",
   "crates/strukt-fs",
+  "crates/strukt-editor",
+  "crates/strukt-platform",
 ]
 resolver = "3"
 
@@ -19,26 +21,34 @@ repository = "https://github.com/js503/strukt"
 
 [workspace.dependencies]
 atomic-write-file = "0.3.0"
-blake3 = "1.8.5"
+blake3 = { version = "1.8.5", features = ["pure"] }
 cap-fs-ext = "4.0.2"
 cap-std = "4.0.2"
+chacha20poly1305 = { version = "0.11", features = ["getrandom"] }
 directories = "6.0.0"
-iced = { version = "0.14.0", features = ["advanced", "tokio", "wgpu"] }
+getrandom = "0.4"
+iced = { version = "0.14.0", features = ["advanced", "highlighter", "tokio", "wgpu"] }
 ignore = "0.4.31"
+keyring = "4.1.5"
 notify = "8.2.0"
 rfd = "0.17.2"
+regex = "1"
+ropey = "1.6.1"
 rustix = { version = "1.1.4", features = ["fs"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1"
 strukt-core = { path = "crates/strukt-core" }
+strukt-editor = { path = "crates/strukt-editor" }
 strukt-fs = { path = "crates/strukt-fs" }
 strukt-persistence = { path = "crates/strukt-persistence" }
+strukt-platform = { path = "crates/strukt-platform" }
 strukt-shell = { path = "crates/strukt-shell" }
 strukt-theme = { path = "crates/strukt-theme" }
 strukt-workspace = { path = "crates/strukt-workspace" }
 tempfile = "3.27.0"
 thiserror = "2.0"
 tokio = { version = "1", features = ["rt", "sync"] }
+zeroize = "1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

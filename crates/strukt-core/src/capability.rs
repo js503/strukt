@@ -8,6 +8,8 @@ pub struct CapabilityId(&'static str);
 impl CapabilityId {
     pub const AI: Self = Self("ai");
     pub const CONNECTIONS: Self = Self("connections");
+    pub const EDITOR_DOCUMENTS: Self = Self("editor.documents");
+    pub const EDITOR_SYNTAX: Self = Self("editor.syntax");
     pub const FILES: Self = Self("files");
     pub const TERMINAL: Self = Self("terminal");
     pub const THEMES: Self = Self("themes");
