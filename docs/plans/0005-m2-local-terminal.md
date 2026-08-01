@@ -40,7 +40,7 @@
 - Create: `crates/strukt-terminal/src/cell.rs`
 - Create: `crates/strukt-terminal/tests/cells.rs`
 
-- [ ] **Step 1: Write the failing cell and identifier tests**
+- [x] **Step 1: Write the failing cell and identifier tests**
 
 ```rust
 use strukt_terminal::{Cell, CellAttributes, CellWidth, Color, TerminalPaneId};
@@ -65,13 +65,13 @@ fn cells_bound_combining_text_and_reject_continuation_content() {
 }
 ```
 
-- [ ] **Step 2: Run the test and verify the crate is absent**
+- [x] **Step 2: Run the test and verify the crate is absent**
 
 Run: `cargo test -p strukt-terminal --test cells --locked --offline`
 
 Expected: fail because `strukt-terminal` is not a workspace member.
 
-- [ ] **Step 3: Add the crate and minimal public types**
+- [x] **Step 3: Add the crate and minimal public types**
 
 Add workspace dependencies `portable-pty = "0.9.0"`, `vte = "0.15.0"`, and
 `unicode-width = "0.2"`. Define ID newtypes around a process-local atomic counter:
@@ -92,7 +92,7 @@ impl TerminalPaneId {
 Define `Color::{Default, Indexed(u8), Rgb(u8,u8,u8)}`, `CellWidth`, bounded cell
 text, and explicit attributes. A continuation cell must always have empty text.
 
-- [ ] **Step 4: Run focused tests and strict lint**
+- [x] **Step 4: Run focused tests and strict lint**
 
 Run: `cargo test -p strukt-terminal --test cells --locked --offline`
 
@@ -102,7 +102,7 @@ Run: `cargo clippy -p strukt-terminal --all-targets --locked --offline -- -D war
 
 Expected: pass.
 
-- [ ] **Step 5: Commit the cell foundation**
+- [x] **Step 5: Commit the cell foundation**
 
 ```bash
 git add Cargo.toml Cargo.lock crates/strukt-terminal
