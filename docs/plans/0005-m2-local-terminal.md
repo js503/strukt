@@ -480,7 +480,7 @@ git commit -m "feat: persist stopped terminal layouts"
 - Modify: `crates/strukt-terminal/Cargo.toml`
 - Create: `crates/strukt-terminal/tests/transport_contract.rs`
 
-- [ ] **Step 1: Write the native transport contract tests**
+- [x] **Step 1: Write the native transport contract tests**
 
 ```rust
 #[test]
@@ -506,13 +506,13 @@ fn native_transport_terminates_a_long_running_fixture() {
 }
 ```
 
-- [ ] **Step 2: Run and verify transport types are absent**
+- [x] **Step 2: Run and verify transport types are absent**
 
 Run: `cargo test -p strukt-terminal --test transport_contract --locked --offline`
 
 Expected: compile failure.
 
-- [ ] **Step 3: Define the object-safe transport contract**
+- [x] **Step 3: Define the object-safe transport contract**
 
 ```rust
 pub trait TerminalTransport: Send + Sync {
@@ -532,14 +532,14 @@ Use sequence-tagged output chunks capped at 64 KiB. Validate executable, absolut
 working directory, rows/columns, and environment additions before calling the
 adapter.
 
-- [ ] **Step 4: Implement `portable-pty` behind dedicated reader/writer workers**
+- [x] **Step 4: Implement `portable-pty` behind dedicated reader/writer workers**
 
 Open the native PTY with the requested size, spawn on the slave, close the slave in
 the parent, and put the blocking reader on its own thread. Use a `sync_channel(1024)`
 plus a shared 4 MiB byte budget. Keep writer, master resize handle, child wait, and
 termination ownership together so dropping a process cannot detach a child.
 
-- [ ] **Step 5: Run the contract natively and cross-compile it**
+- [x] **Step 5: Run the contract natively and cross-compile it**
 
 Run: `cargo test -p strukt-terminal --test transport_contract --locked --offline`
 
@@ -554,7 +554,7 @@ Run: `cargo check -p strukt-terminal --target x86_64-pc-windows-msvc --locked --
 Expected: pass; this proves Windows type and adapter portability. The hosted
 Windows CI contract test in Task 10 must execute ConPTY before merge readiness.
 
-- [ ] **Step 6: Commit native transport**
+- [x] **Step 6: Commit native transport**
 
 ```bash
 git add Cargo.toml Cargo.lock crates/strukt-terminal

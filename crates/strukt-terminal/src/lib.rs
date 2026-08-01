@@ -5,7 +5,9 @@ mod grid;
 mod id;
 mod layout;
 mod parser;
+mod portable;
 mod selection;
+mod transport;
 
 pub use cell::{Cell, CellAttributes, CellError, CellWidth, Color, HyperlinkId};
 pub use grid::{
@@ -18,7 +20,12 @@ pub use layout::{
     TerminalTabSnapshot, TerminalWorkspace, TerminalWorkspaceError, TerminalWorkspaceSnapshot,
 };
 pub use parser::{ParserDiagnostics, TerminalModel};
+pub use portable::PortableTransport;
 pub use selection::{
     FocusEvent, LinkId, MouseButton, MouseEvent, PasteDecision, Selection, SelectionError,
     TerminalCoordinate, TerminalKey, TerminalLink,
+};
+pub use transport::{
+    ExitStatus, OutputChunk, SpawnRequest, TerminalProcess, TerminalSize, TerminalTransport,
+    TransportError,
 };
