@@ -68,7 +68,7 @@ pub struct OutputChunk {
 
 impl OutputChunk {
     #[must_use]
-    pub(crate) fn new(sequence: u64, bytes: Vec<u8>) -> Self {
+    pub fn new(sequence: u64, bytes: Vec<u8>) -> Self {
         Self { sequence, bytes }
     }
 
@@ -97,7 +97,7 @@ pub struct ExitStatus {
 
 impl ExitStatus {
     #[must_use]
-    pub(crate) fn new(code: Option<i32>, signal: Option<String>, terminated: bool) -> Self {
+    pub fn new(code: Option<i32>, signal: Option<String>, terminated: bool) -> Self {
         Self {
             code,
             signal,

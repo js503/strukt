@@ -569,7 +569,7 @@ git commit -m "feat: run local PTY and ConPTY processes"
 - Modify: `crates/strukt-terminal/src/lib.rs`
 - Create: `crates/strukt-terminal/tests/runtime.rs`
 
-- [ ] **Step 1: Write failing fair-drain and stale-event tests**
+- [x] **Step 1: Write failing fair-drain and stale-event tests**
 
 ```rust
 #[test]
@@ -591,13 +591,13 @@ fn stale_output_and_exit_events_cannot_cross_a_restart_generation() {
 }
 ```
 
-- [ ] **Step 2: Run and confirm runtime types are missing**
+- [x] **Step 2: Run and confirm runtime types are missing**
 
 Run: `cargo test -p strukt-terminal --test runtime --locked --offline`
 
 Expected: compile failure.
 
-- [ ] **Step 3: Implement generation-scoped pane runtimes**
+- [x] **Step 3: Implement generation-scoped pane runtimes**
 
 Track process, generation, sequence, model, viewport, pending input, queue state,
 last progress, and pane-local error. Spawn/restart increments generation. Drain
@@ -605,12 +605,12 @@ ready panes round-robin, rejects old generation/sequence events, parses within b
 budgets, updates backpressure at 250 ms, and updates sustained-output state at two
 seconds.
 
-- [ ] **Step 4: Add spawn failure, resize failure, exit, termination, and noisy-pane cases**
+- [x] **Step 4: Add spawn failure, resize failure, exit, termination, and noisy-pane cases**
 
 Use a fake transport to deterministically assert every failure stays pane-local,
 another pane advances, and snapshots are revision-based.
 
-- [ ] **Step 5: Run terminal tests and strict lint**
+- [x] **Step 5: Run terminal tests and strict lint**
 
 Run: `cargo test -p strukt-terminal --locked --offline`
 
@@ -618,7 +618,7 @@ Run: `cargo clippy -p strukt-terminal --all-targets --locked --offline -- -D war
 
 Expected: both pass.
 
-- [ ] **Step 6: Commit the runtime**
+- [x] **Step 6: Commit the runtime**
 
 ```bash
 git add crates/strukt-terminal

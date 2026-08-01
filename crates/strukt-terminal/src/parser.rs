@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use vte::{Params, Parser, Perform};
 
 use crate::{
-    CellAttributes, Color, EraseDisplay, EraseLine, Grid, GridSize, HyperlinkId, TerminalModes,
-    TerminalSnapshot,
+    CellAttributes, Color, EraseDisplay, EraseLine, Grid, GridSize, HyperlinkId, ResizeOutcome,
+    TerminalModes, TerminalSnapshot,
 };
 
 const OSC_PAYLOAD_LIMIT: usize = 8 * 1024;
@@ -74,6 +74,10 @@ impl TerminalModel {
     #[must_use]
     pub const fn diagnostics(&self) -> ParserDiagnostics {
         self.performer.diagnostics
+    }
+
+    pub fn resize(&mut self, size: GridSize) -> ResizeOutcome {
+        self.performer.grid.resize(size)
     }
 }
 
