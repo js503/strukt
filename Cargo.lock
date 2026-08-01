@@ -3891,6 +3891,7 @@ name = "strukt-terminal"
 version = "0.1.0"
 dependencies = [
  "portable-pty",
+ "regex",
  "serde",
  "thiserror 2.0.19",
  "unicode-width",

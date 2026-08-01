@@ -287,7 +287,7 @@ git commit -m "feat: parse bounded terminal streams"
 - Modify: `crates/strukt-terminal/src/lib.rs`
 - Create: `crates/strukt-terminal/tests/interaction.rs`
 
-- [ ] **Step 1: Write failing interaction tests**
+- [x] **Step 1: Write failing interaction tests**
 
 ```rust
 use strukt_terminal::{GridSize, PasteDecision, Selection, TerminalModel};
@@ -312,26 +312,26 @@ fn paste_removes_nul_frames_bracketed_mode_and_requires_large_confirmation() {
 }
 ```
 
-- [ ] **Step 2: Run and confirm missing interaction types**
+- [x] **Step 2: Run and confirm missing interaction types**
 
 Run: `cargo test -p strukt-terminal --test interaction --locked --offline`
 
 Expected: compile failure.
 
-- [ ] **Step 3: Implement coordinate-safe selection and input policy**
+- [x] **Step 3: Implement coordinate-safe selection and input policy**
 
 Implement viewport-to-buffer coordinate conversion, linear selection normalization,
 wide-cell snapping, copy extraction, OSC 8 ranges, bounded URL regex detection for
 `http`, `https`, `mailto`, and `file`, application cursor-key encoding, focus bytes,
 mouse-report bytes, NUL removal, bracketed paste, and 1 MiB confirmation.
 
-- [ ] **Step 4: Run the focused interaction suite**
+- [x] **Step 4: Run the focused interaction suite**
 
 Run: `cargo test -p strukt-terminal --test interaction --locked --offline`
 
 Expected: all cases pass.
 
-- [ ] **Step 5: Commit terminal interaction policy**
+- [x] **Step 5: Commit terminal interaction policy**
 
 ```bash
 git add crates/strukt-terminal
