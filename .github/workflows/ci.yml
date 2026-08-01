@@ -72,9 +72,13 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $fixture = Join-Path $env:RUNNER_TEMP "strukt-editor-smoke"
+          $fixture = Join-Path $env:RUNNER_TEMP ("strukt-editor-smoke-" + [guid]::NewGuid())
           New-Item -ItemType Directory -Force -Path $fixture | Out-Null
-          Set-Content -Path (Join-Path $fixture "strukt-editor-smoke.txt") -Value "strukt"
+          $sentinel = Join-Path $fixture "strukt-editor-smoke.txt"
+          [System.IO.File]::WriteAllBytes(
+            $sentinel,
+            [System.Text.UTF8Encoding]::new($false).GetBytes("strukt`n")
+          )
           $output = & cargo run -p strukt-app -- --editor-smoke $fixture 2>&1
           $output | Write-Output
           if ($LASTEXITCODE -ne 0) {
