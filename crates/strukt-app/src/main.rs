@@ -24,6 +24,17 @@ fn main() -> iced::Result {
         return Ok(());
     }
 
+    if let LaunchMode::TerminalSmoke { root } = &launch_mode {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("terminal smoke runtime must start");
+        if let Err(error) = runtime.block_on(app::terminal_smoke_task(root.clone())) {
+            panic!("strukt terminal smoke failed: {error}");
+        }
+        println!("{}", app::TERMINAL_SMOKE_SUCCESS);
+        return Ok(());
+    }
+
     if let LaunchMode::WorkspaceFilesSmoke { root } = &launch_mode {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
@@ -1292,6 +1303,38 @@ mod tests {
     }
 
     #[test]
+    fn terminal_smoke_requires_the_exact_flag_and_one_existing_root() {
+        let root = tempdir().unwrap();
+        assert_eq!(
+            LaunchMode::from_args([
+                "--terminal-smoke".to_owned(),
+                root.path().display().to_string(),
+            ]),
+            LaunchMode::TerminalSmoke {
+                root: root.path().to_path_buf(),
+            }
+        );
+        for args in [
+            vec!["--terminal-smoke".to_owned()],
+            vec![
+                "--terminal-smokes".to_owned(),
+                root.path().display().to_string(),
+            ],
+            vec![
+                "--terminal-smoke".to_owned(),
+                root.path().display().to_string(),
+                "extra".to_owned(),
+            ],
+            vec![
+                "--terminal-smoke".to_owned(),
+                root.path().join("missing").display().to_string(),
+            ],
+        ] {
+            assert_eq!(LaunchMode::from_args(args), LaunchMode::Interactive);
+        }
+    }
+
+    #[test]
     fn workspace_files_smoke_opens_discovers_and_round_trips_without_repo_metadata() {
         let project = tempdir().unwrap();
         std::fs::write(project.path().join("strukt-smoke.txt"), "strukt\n").unwrap();
@@ -1355,6 +1398,13 @@ mod tests {
         );
         assert_eq!(
             LaunchMode::EditorSmoke {
+                root: PathBuf::from("fixture")
+            }
+            .smoke_timeout(),
+            None
+        );
+        assert_eq!(
+            LaunchMode::TerminalSmoke {
                 root: PathBuf::from("fixture")
             }
             .smoke_timeout(),

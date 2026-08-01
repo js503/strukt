@@ -21,12 +21,14 @@ use strukt_fs::{
 };
 use strukt_persistence::{
     EditorRecoveryStore, EditorSessionSnapshot, EditorTabSnapshot, RecentWorkspaces, RecoveryKey,
-    RecoveryKeyError, RecoveryKeyProvider, RecoveryMetadata, RecoveryPayload, WorkspaceStore,
-    set_terminal_contribution, terminal_contribution,
+    RecoveryKeyError, RecoveryKeyProvider, RecoveryMetadata, RecoveryPayload,
+    TerminalSessionSnapshot, WorkspaceStore, set_terminal_contribution, terminal_contribution,
 };
 use strukt_shell::{Activity, ShellAction, ShellState};
 use strukt_terminal::{
-    PasteDecision, Selection, SplitAxis, TerminalKey, TerminalPaneId, TerminalTabId,
+    Color as TerminalColor, DrainBudget, PaneState, PasteDecision, PortableTransport,
+    RuntimePaneState, Selection, SpawnRequest, SplitAxis, TerminalKey, TerminalPaneId,
+    TerminalRuntime, TerminalSize, TerminalTabId, TerminalTransport, TerminalWorkspace,
 };
 use strukt_theme::ThemeMode;
 use strukt_workspace::{WorkspaceRoot, WorkspaceState};
@@ -43,6 +45,8 @@ pub(crate) const WORKSPACE_FILES_SMOKE_SUCCESS: &str =
     "strukt workspace files smoke: open, discovery, and persistence passed";
 pub(crate) const EDITOR_SMOKE_SUCCESS: &str =
     "strukt editor smoke: open, edit, save, and restore passed";
+pub(crate) const TERMINAL_SMOKE_SUCCESS: &str =
+    "strukt terminal smoke: pty, unicode, ansi, resize, isolation, bounds, and restore passed";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DocumentNotice {
@@ -61,6 +65,9 @@ pub enum LaunchMode {
     EditorSmoke {
         root: PathBuf,
     },
+    TerminalSmoke {
+        root: PathBuf,
+    },
 }
 
 impl LaunchMode {
@@ -76,6 +83,13 @@ impl LaunchMode {
             [flag, root] if flag == "--editor-smoke" && !root.is_empty() => Self::EditorSmoke {
                 root: PathBuf::from(root),
             },
+            [flag, root]
+                if flag == "--terminal-smoke" && !root.is_empty() && Path::new(root).is_dir() =>
+            {
+                Self::TerminalSmoke {
+                    root: PathBuf::from(root),
+                }
+            }
             _ if args.iter().any(|argument| argument == "--smoke-test") => Self::SmokeTest,
             _ => Self::Interactive,
         }
@@ -84,7 +98,10 @@ impl LaunchMode {
     #[must_use]
     pub const fn smoke_timeout(&self) -> Option<Duration> {
         match self {
-            Self::Interactive | Self::WorkspaceFilesSmoke { .. } | Self::EditorSmoke { .. } => None,
+            Self::Interactive
+            | Self::WorkspaceFilesSmoke { .. }
+            | Self::EditorSmoke { .. }
+            | Self::TerminalSmoke { .. } => None,
             Self::SmokeTest => Some(SMOKE_TEST_DURATION),
         }
     }
@@ -3241,6 +3258,198 @@ pub(crate) async fn editor_smoke_task(root: PathBuf) -> Result<(), String> {
     tokio::task::spawn_blocking(move || run_editor_smoke(&root))
         .await
         .map_err(|error| error.to_string())?
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "the terminal smoke keeps its bounded native end-to-end contract explicit"
+)]
+pub(crate) fn run_terminal_smoke(root: &Path) -> Result<(), String> {
+    const STRESS_BYTES: usize = 64 * 1024 * 1024;
+    const DEADLINE: Duration = Duration::from_secs(30);
+
+    let workspace_root = WorkspaceRoot::open(root).map_err(|error| error.to_string())?;
+    let fixture = terminal_fixture_path()?;
+    let transport = Arc::new(PortableTransport::new());
+    let mut runtime = TerminalRuntime::new(transport, 10_000);
+    let interactive = TerminalPaneId::new();
+    let quiet = TerminalPaneId::new();
+    let initial = TerminalSize::new(4, 40).map_err(|error| error.to_string())?;
+
+    runtime
+        .restart(
+            interactive,
+            terminal_fixture_request(&fixture, root, "echo", initial),
+        )
+        .map_err(|error| error.to_string())?;
+    runtime
+        .restart(
+            quiet,
+            terminal_fixture_request(&fixture, root, "wait", initial),
+        )
+        .map_err(|error| error.to_string())?;
+    runtime
+        .write(interactive, "héllø界\n".as_bytes())
+        .map_err(|error| error.to_string())?;
+    let resized = TerminalSize::new(6, 60).map_err(|error| error.to_string())?;
+    runtime
+        .resize(interactive, resized)
+        .map_err(|error| error.to_string())?;
+    let mut stress_process = PortableTransport::new()
+        .spawn(terminal_fixture_request(&fixture, root, "stress", initial))
+        .map_err(|error| error.to_string())?;
+
+    let started = std::time::Instant::now();
+    let mut stress_progress = 0_usize;
+    let mut observed_quiet = false;
+    let mut observed_echo = false;
+    let mut observed_ansi = false;
+    let mut stress_exited = false;
+    while started.elapsed() < DEADLINE {
+        let batch = runtime.drain(DrainBudget::default());
+        let aggregate = batch
+            .changed_panes()
+            .iter()
+            .map(|pane| batch.bytes_for(*pane))
+            .sum::<usize>();
+        if aggregate > 1024 * 1024
+            || batch
+                .changed_panes()
+                .iter()
+                .any(|pane| batch.bytes_for(*pane) > 256 * 1024)
+        {
+            return Err("terminal runtime exceeded its documented drain budget".to_owned());
+        }
+        let mut progressed = aggregate > 0;
+        if let Some(chunk) = stress_process
+            .try_read()
+            .map_err(|error| error.to_string())?
+        {
+            if chunk.bytes().len() > 64 * 1024 {
+                return Err("terminal transport emitted an oversized output chunk".to_owned());
+            }
+            stress_progress = stress_progress.saturating_add(chunk.bytes().len());
+            progressed = true;
+        }
+        stress_exited |= stress_process
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_some_and(|status| status.code() == Some(0));
+        if let Some(snapshot) = runtime.snapshot(interactive) {
+            observed_echo |= snapshot.plain_text().contains("héllø界");
+            observed_ansi |= snapshot
+                .rows()
+                .iter()
+                .flatten()
+                .any(|cell| cell.foreground == TerminalColor::Indexed(1));
+            if snapshot.rows().len() != usize::from(resized.rows())
+                || snapshot
+                    .rows()
+                    .iter()
+                    .any(|row| row.len() != usize::from(resized.columns()))
+            {
+                return Err("terminal resize did not reach the renderer snapshot".to_owned());
+            }
+        }
+        observed_quiet |= runtime
+            .snapshot(quiet)
+            .is_some_and(|snapshot| snapshot.plain_text().contains("fixture-ready"));
+        let interactive_exited = matches!(
+            runtime.state(interactive),
+            Some(RuntimePaneState::Exited { code: Some(0) })
+        );
+        if observed_echo
+            && observed_ansi
+            && observed_quiet
+            && interactive_exited
+            && stress_exited
+            && stress_progress >= STRESS_BYTES
+        {
+            break;
+        }
+        if !progressed {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    if !observed_echo || !observed_ansi {
+        return Err("terminal smoke did not observe Unicode and ANSI output".to_owned());
+    }
+    if !observed_quiet || !matches!(runtime.state(quiet), Some(RuntimePaneState::Running)) {
+        return Err("noisy terminal work starved or stopped the quiet pane".to_owned());
+    }
+    if stress_progress < STRESS_BYTES {
+        return Err(format!(
+            "terminal stress stream stopped at {stress_progress} of {STRESS_BYTES} bytes"
+        ));
+    }
+    if !matches!(
+        runtime.state(interactive),
+        Some(RuntimePaneState::Exited { code: Some(0) })
+    ) || !stress_exited
+    {
+        return Err("terminal processes did not exit independently".to_owned());
+    }
+    runtime
+        .terminate(quiet, Duration::from_secs(1))
+        .map_err(|error| error.to_string())?;
+    let _ = runtime.drain(DrainBudget::default());
+
+    let mut layout = TerminalWorkspace::default();
+    let first = layout
+        .create_tab("build", workspace_root.path())
+        .map_err(|error| error.to_string())?;
+    layout
+        .set_pane_state(first, PaneState::Exited { code: Some(0) })
+        .map_err(|error| error.to_string())?;
+    layout
+        .split_focused(SplitAxis::Vertical)
+        .map_err(|error| error.to_string())?;
+    layout
+        .split_focused(SplitAxis::Horizontal)
+        .map_err(|error| error.to_string())?;
+    let snapshot = TerminalSessionSnapshot::from_workspace(&layout);
+    let restored = snapshot.restore().map_err(|error| error.to_string())?;
+    if restored.tabs().len() != 1
+        || restored.panes().count() != 3
+        || restored.panes().any(|pane| !pane.state().is_stopped())
+    {
+        return Err("terminal layout did not restore as stopped placeholders".to_owned());
+    }
+    if root.join(".strukt").exists() {
+        return Err("terminal smoke created forbidden workspace metadata".to_owned());
+    }
+    Ok(())
+}
+
+pub(crate) async fn terminal_smoke_task(root: PathBuf) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || run_terminal_smoke(&root))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn terminal_fixture_path() -> Result<PathBuf, String> {
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let fixture =
+        executable.with_file_name(format!("terminal-fixture{}", std::env::consts::EXE_SUFFIX));
+    fixture.is_file().then_some(fixture).ok_or_else(|| {
+        "terminal fixture binary is missing; build strukt-terminal --bin terminal-fixture first"
+            .to_owned()
+    })
+}
+
+fn terminal_fixture_request(
+    fixture: &Path,
+    root: &Path,
+    mode: &str,
+    size: TerminalSize,
+) -> SpawnRequest {
+    SpawnRequest {
+        executable: fixture.to_path_buf(),
+        arguments: vec![mode.into()],
+        working_directory: root.to_path_buf(),
+        environment: Vec::new(),
+        size,
+    }
 }
 
 pub(crate) fn persist_workspace_batch(

@@ -638,7 +638,7 @@ git commit -m "feat: schedule bounded terminal runtimes"
 - Modify: `crates/strukt-theme/src/tokens.rs`
 - Modify: `crates/strukt-theme/tests/builtin_themes.rs`
 
-- [ ] **Step 1: Write failing application reducer tests**
+- [x] **Step 1: Write failing application reducer tests**
 
 Add tests in `crates/strukt-app/src/main.rs` proving:
 
@@ -664,13 +664,13 @@ Also test split, focus, rename, close confirmation, restart, paste confirmation,
 stale runtime batches, persistence coalescing, workspace replacement, and capability
 disablement.
 
-- [ ] **Step 2: Run focused app tests and observe missing messages/surfaces**
+- [x] **Step 2: Run focused app tests and observe missing messages/surfaces**
 
 Run: `cargo test -p strukt-app terminal --locked --offline`
 
 Expected: compile failure.
 
-- [ ] **Step 3: Wire terminal commands and background polling**
+- [x] **Step 3: Wire terminal commands and background polling**
 
 Add `TerminalSurfaces` wrapping `TerminalWorkspace` and `TerminalRuntime`. Add typed
 messages for create/split/focus/input/resize/scroll/selection/copy/paste/link/
@@ -678,7 +678,7 @@ restart/close plus `PollTerminal` and generation-scoped completions. Poll only w
 a process runs or output remains. Persist presentation changes through the existing
 coalesced workspace snapshot path.
 
-- [ ] **Step 4: Replace the representative drawer and add custom widget snapshots**
+- [x] **Step 4: Replace the representative drawer and add custom widget snapshots**
 
 Render tab chrome, recursive split containers, pane state, local boundary, title,
 working directory, errors, exit code, backpressure, restart, and close. The custom
@@ -700,14 +700,14 @@ Use renderer text primitives with clipped cell rectangles, semantic ANSI palette
 selection background, and block/bar/underline cursor geometry. Map native composed
 text and terminal modes in `terminal.rs`; keep widget drawing free of domain mutation.
 
-- [ ] **Step 5: Add theme and keyboard coverage**
+- [x] **Step 5: Add theme and keyboard coverage**
 
 Add explicit ANSI 0-15 palette, terminal foreground, selection, cursor, link,
 exited, and backpressure tokens to both built-in themes. Test platform command
 shortcuts, composed text, application cursor keys, split/tab focus, copy, paste,
 close, and drawer-to-canvas expansion.
 
-- [ ] **Step 6: Run app, theme, and full workspace tests**
+- [x] **Step 6: Run app, theme, and full workspace tests**
 
 Run: `cargo test -p strukt-app -p strukt-theme --locked --offline`
 
@@ -715,7 +715,7 @@ Run: `cargo test --workspace --all-targets --locked --offline`
 
 Expected: pass.
 
-- [ ] **Step 7: Commit application integration**
+- [x] **Step 7: Commit application integration**
 
 ```bash
 git add Cargo.toml Cargo.lock crates/strukt-app crates/strukt-theme
@@ -732,7 +732,7 @@ git commit -m "feat: operate local terminal panes"
 - Modify: `crates/strukt-terminal/src/bin/terminal-fixture.rs`
 - Create: `docs/evidence/m2-local-terminal-validation.md`
 
-- [ ] **Step 1: Write failing launch-mode and smoke contract tests**
+- [x] **Step 1: Write failing launch-mode and smoke contract tests**
 
 ```rust
 #[test]
@@ -750,7 +750,7 @@ The end-to-end test must assert the exact marker:
 strukt terminal smoke: pty, unicode, ansi, resize, isolation, bounds, and restore passed
 ```
 
-- [ ] **Step 2: Implement `--terminal-smoke` without the user's shell**
+- [x] **Step 2: Implement `--terminal-smoke` without the user's shell**
 
 Open the fixture workspace, spawn two instances of `terminal-fixture` through
 `PortableTransport`, verify Unicode echo, ANSI attributes, resize acknowledgement,
@@ -758,13 +758,13 @@ isolated exit states, a nested split, 64 MiB bounded producer progress, quiet-pa
 progress, snapshot persistence/restoration as stopped, and absence of `.strukt`.
 Give the smoke a 30-second internal deadline and terminate every child on all paths.
 
-- [ ] **Step 3: Add all-platform workflow steps**
+- [x] **Step 3: Add all-platform workflow steps**
 
 On macOS/Ubuntu use `mktemp -d`; on Windows use a GUID-named directory. Run the
 built `strukt-app` executable with `--terminal-smoke`, require exit zero, match the
 exact marker, and reject `.strukt`. Keep the Windows native startup smoke.
 
-- [ ] **Step 4: Run local smoke and complete local gate**
+- [x] **Step 4: Run local smoke and complete local gate**
 
 ```bash
 forj check /Users/jessie/Development/strukt

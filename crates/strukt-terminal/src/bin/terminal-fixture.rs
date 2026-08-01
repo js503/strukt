@@ -6,6 +6,7 @@ fn main() {
         Some("echo") => echo_one_line(),
         Some("wait") => wait_until_terminated(),
         Some("burst") => write_bounded_burst(),
+        Some("stress") => write_stress_stream(),
         _ => std::process::exit(64),
     }
 }
@@ -14,7 +15,7 @@ fn echo_one_line() {
     let mut line = String::new();
     std::io::stdin().lock().read_line(&mut line).unwrap();
     let line = line.trim_end_matches(['\r', '\n']);
-    println!("fixture-echo:{line}");
+    println!("fixture-echo:{line}\x1b[31m!\x1b[0m");
 }
 
 fn wait_until_terminated() {
@@ -29,5 +30,20 @@ fn write_bounded_burst() {
     let mut stdout = std::io::stdout().lock();
     stdout.write_all(&vec![b'x'; 200_000]).unwrap();
     stdout.write_all(b"\nfixture-burst-complete\n").unwrap();
+    stdout.flush().unwrap();
+}
+
+fn write_stress_stream() {
+    const TOTAL_BYTES: usize = 64 * 1024 * 1024;
+    const CHUNK_BYTES: usize = 64 * 1024;
+
+    let mut stdout = std::io::stdout().lock();
+    // Carriage returns exercise the full transport/parser path without making
+    // debug smoke runtime proportional to millions of scrollback row moves.
+    let chunk = vec![b'\r'; CHUNK_BYTES];
+    for _ in 0..(TOTAL_BYTES / CHUNK_BYTES) {
+        stdout.write_all(&chunk).unwrap();
+    }
+    stdout.write_all(b"\nfixture-stress-complete\n").unwrap();
     stdout.flush().unwrap();
 }
