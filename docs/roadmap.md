@@ -153,6 +153,8 @@ service.
   [#6 — feat: add M2 native editor](https://github.com/js503/strukt/pull/6)
 - Second-slice editor validation:
   [`evidence/m2-editor-validation.md`](evidence/m2-editor-validation.md)
+- Third-slice local-terminal spec:
+  [`specs/0005-m2-local-terminal.md`](specs/0005-m2-local-terminal.md)
 - Remaining M2 slices: language intelligence and local PTY/ConPTY terminal
   execution, rendering, and ephemeral layout
 - Workspace reference:
