@@ -175,6 +175,7 @@ fn rejects_fifo_before_opening_it() {
     ));
 }
 
+#[cfg(unix)]
 #[test]
 fn rejects_replaced_workspace_root() {
     let parent = tempfile::tempdir().unwrap();
