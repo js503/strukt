@@ -46,6 +46,7 @@ strukt-persistence = { path = "crates/strukt-persistence" }
 strukt-platform = { path = "crates/strukt-platform" }
 strukt-shell = { path = "crates/strukt-shell" }
 strukt-theme = { path = "crates/strukt-theme" }
+strukt-terminal = { path = "crates/strukt-terminal" }
 strukt-workspace = { path = "crates/strukt-workspace" }
 tempfile = "3.27.0"
 thiserror = "2.0"

@@ -3863,6 +3863,7 @@ dependencies = [
  "directories",
  "serde",
  "serde_json",
+ "strukt-terminal",
  "strukt-workspace",
  "tempfile",
  "thiserror 2.0.19",

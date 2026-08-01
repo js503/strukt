@@ -413,7 +413,7 @@ git commit -m "feat: model terminal tabs and splits"
 - Modify: `crates/strukt-terminal/src/layout.rs`
 - Create: `crates/strukt-persistence/tests/terminal_store.rs`
 
-- [ ] **Step 1: Write failing schema round-trip and privacy tests**
+- [x] **Step 1: Write failing schema round-trip and privacy tests**
 
 ```rust
 use serde_json::Value;
@@ -437,32 +437,32 @@ fn unknown_fields_survive_the_workspace_contribution_round_trip() {
 }
 ```
 
-- [ ] **Step 2: Run and confirm the schema is missing**
+- [x] **Step 2: Run and confirm the schema is missing**
 
 Run: `cargo test -p strukt-persistence --test terminal_store --locked --offline`
 
 Expected: compile failure.
 
-- [ ] **Step 3: Implement versioned snapshot DTOs and conversion**
+- [x] **Step 3: Implement versioned snapshot DTOs and conversion**
 
 Use explicit schema version 1 DTOs for tab, recursive node, pane, axis, ratio, active
 tab, and focused pane. `TerminalWorkspace::snapshot()` emits them and
 `TerminalWorkspace::restore()` validates them, converts every pane to stopped, and
 discards no opaque workspace contribution data.
 
-- [ ] **Step 4: Add corruption and migration cases**
+- [x] **Step 4: Add corruption and migration cases**
 
 Test unsupported versions, duplicate IDs, invalid focus, invalid ratios, missing
 working directories, empty tabs, and last-valid workspace fallback through
 `WorkspaceStore`.
 
-- [ ] **Step 5: Run persistence and workspace suites**
+- [x] **Step 5: Run persistence and workspace suites**
 
 Run: `cargo test -p strukt-persistence -p strukt-workspace --locked --offline`
 
 Expected: pass.
 
-- [ ] **Step 6: Commit the terminal schema**
+- [x] **Step 6: Commit the terminal schema**
 
 ```bash
 git add crates/strukt-persistence crates/strukt-terminal
