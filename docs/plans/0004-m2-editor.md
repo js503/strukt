@@ -608,7 +608,7 @@ git commit -m "test: add cross-platform editor smoke"
 - Modify: `docs/roadmap.md`
 - Modify: `docs/tracker.md`
 
-- [ ] **Step 1: Run the complete local gate**
+- [x] **Step 1: Run the complete local gate**
 
 ```bash
 forj check .
@@ -624,7 +624,7 @@ cargo check -p strukt-app --target x86_64-unknown-linux-gnu --locked --offline
 Run Windows-target strict Clippy for every UI-independent modified crate. The native
 Windows hosted job is authoritative where macOS lacks Microsoft build tools.
 
-- [ ] **Step 2: Complete the manual macOS walkthrough**
+- [x] **Step 2: Complete the manual macOS walkthrough**
 
 Validate preview/pin behavior, tabs, Unicode typing, IME composition, selection,
 clipboard, undo/redo, find/replace, save, dirty close, external clean reload, dirty
@@ -632,7 +632,7 @@ conflict actions, recovery across restart, binary metadata, large-file override,
 syntax themes, keyboard traversal, focus, accessibility labels, and no workspace
 metadata.
 
-- [ ] **Step 3: Run agentic review**
+- [x] **Step 3: Run agentic review**
 
 Review the full diff against the spec for transaction correctness, UTF-8 indexing,
 history bounds, path/symlink/root replacement, atomic saves, external races,
@@ -640,13 +640,13 @@ recovery cryptography and key handling, stale async results, large-file allocati
 IME/accessibility regressions, persistence migration, cross-platform behavior, and
 scope drift. Resolve all critical and important findings.
 
-- [ ] **Step 4: Record hosted results and update tracking**
+- [x] **Step 4: Record hosted results and update tracking**
 
 After macOS, Ubuntu, and Windows jobs pass at the final implementation SHA, complete
 the evidence, mark M2.2 complete while keeping M2 in progress, link the issue and PR,
 and document remaining terminal/language/integration gates.
 
-- [ ] **Step 5: Commit completion evidence**
+- [x] **Step 5: Commit completion evidence**
 
 ```bash
 git add README.md docs/evidence/m2-editor-validation.md \

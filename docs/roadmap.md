@@ -151,6 +151,10 @@ service.
   [#5 — M2.2: Native editor](https://github.com/js503/strukt/issues/5)
 - Second-slice editor pull request:
   [#6 — feat: add M2 native editor](https://github.com/js503/strukt/pull/6)
+- Second-slice editor validation:
+  [`evidence/m2-editor-validation.md`](evidence/m2-editor-validation.md)
+- Remaining M2 slices: language intelligence and local PTY/ConPTY terminal
+  execution, rendering, and ephemeral layout
 - Workspace reference:
   [`mockups/workspace-shell/focus-context.html`](mockups/workspace-shell/focus-context.html)
 

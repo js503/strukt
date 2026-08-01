@@ -26,7 +26,7 @@ software engineering: one context, every tool, and any model.
 ## Status
 
 - Stage: local development workspace implementation
-- Current foundation: native shell plus real local workspace and file workflows
+- Current foundation: native shell plus real local workspace, file, and editor workflows
 - Milestones: M1 complete; M2 in progress
 
 ## Key Docs
@@ -61,8 +61,13 @@ the same local workspace state.
 
 Workspace state is stored in the platform application-data directory, not in the
 opened repository; `strukt` does not create a `.strukt` directory in a workspace.
-Editor buffers, language intelligence, and local terminal execution remain later M2
-workstreams. SSH and persistent local or remote sessions belong to later milestones.
+The native editor adds preview and pinned tabs, Unicode-safe transactional editing,
+bounded undo/redo, find and replace, syntax themes, safe revision-checked saves,
+external-change reconciliation, encrypted crash recovery, and persisted editor
+layout. Binary and invalid UTF-8 files use metadata views, while oversized text
+opens as an explicit read-only preview before a full-file override. Language
+intelligence and local PTY/ConPTY terminal execution remain later M2 workstreams.
+SSH and persistent local or remote sessions belong to later milestones.
 
 The deterministic workspace-files smoke mode expects a folder containing
 `strukt-smoke.txt`:
@@ -83,6 +88,8 @@ isolated temporary store, prints a stable success marker, and exits.
 - See `docs/evidence/m1-native-shell-validation.md` for native-window validation.
 - See `docs/evidence/m2-workspace-files-validation.md` for workspace/files
   validation and current platform limitations.
+- See `docs/evidence/m2-editor-validation.md` for editor validation and current
+  platform limitations.
 
 ## Pull Request Expectations
 
