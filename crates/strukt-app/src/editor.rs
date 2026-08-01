@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use iced::Renderer;
-use iced::advanced::text::editor::Edit;
+use iced::advanced::text::editor::{Edit, Motion};
 use iced::widget::text_editor::{Action, Content};
 use strukt_editor::{
     CharRange, DocumentId, EditKind, EditTransaction, EditorWorkspace, EditorWorkspaceError,
@@ -35,6 +35,41 @@ impl EditorSurfaces {
             .document(id)
             .ok_or(EditorWorkspaceError::DocumentNotFound(id))?;
         self.insert(id, &document.text());
+        Ok(())
+    }
+
+    pub(crate) fn restore_view(
+        &mut self,
+        id: DocumentId,
+        cursor: usize,
+        selection_anchor: usize,
+        scroll_line: f32,
+    ) -> Result<(), EditorSurfaceError> {
+        let content = self.content_mut(id)?;
+        content.perform(Action::Move(Motion::DocumentStart));
+        for _ in 0..cursor {
+            content.perform(Action::Move(Motion::Right));
+        }
+        let distance = cursor.abs_diff(selection_anchor);
+        let motion = if selection_anchor < cursor {
+            Motion::Left
+        } else {
+            Motion::Right
+        };
+        for _ in 0..distance {
+            content.perform(Action::Select(motion));
+        }
+        let scroll_lines = scroll_line.round();
+        if scroll_lines != 0.0 {
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_precision_loss,
+                reason = "persisted editor scroll is bounded by Iced's i32 action contract"
+            )]
+            content.perform(Action::Scroll {
+                lines: scroll_lines.clamp(i32::MIN as f32, i32::MAX as f32) as i32,
+            });
+        }
         Ok(())
     }
 

@@ -519,33 +519,33 @@ git commit -m "feat: edit local workspace documents"
 - Modify: `crates/strukt-workspace/src/state.rs`
 - Create: `crates/strukt-app/tests/editor_integration.rs`
 
-- [ ] **Step 1: Write failing integration tests**
+- [x] **Step 1: Write failing integration tests**
 
 Cover clean watcher reload, dirty watcher conflict, compare data, reload undo boundary,
 keep-editing behavior, missing file, save/watcher loop suppression, coalesced two-second
 recovery, save/discard cleanup, key unavailable, tab/view restoration, recovered
 unsaved content, missing placeholder, and stale async completion rejection.
 
-- [ ] **Step 2: Extend workspace persistence schemas**
+- [x] **Step 2: Extend workspace persistence schemas**
 
 Add a versioned editor contribution containing tab order, preview, active document,
 paths, cursor/selection/scroll, find settings, language override, and read-only
 choice. Preserve unknown contribution payloads and migrate M2.1 snapshots with an
 empty editor contribution.
 
-- [ ] **Step 3: Coordinate watcher and editor events**
+- [x] **Step 3: Coordinate watcher and editor events**
 
 Batch watcher paths, identify open documents, read disk revisions off the UI thread,
 and dispatch revision-bound events. Suppress only the matching save outcome; a
 different post-save revision must still surface.
 
-- [ ] **Step 4: Coordinate recovery and restore**
+- [x] **Step 4: Coordinate recovery and restore**
 
 Coalesce recovery writes per document after two idle seconds. On startup, show the
 native shell immediately, restore clean documents asynchronously, decrypt recovery
 off the UI thread, and reject results for a different workspace generation.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 cargo test -p strukt-app --test editor_integration

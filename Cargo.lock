@@ -3714,6 +3714,7 @@ dependencies = [
  "iced",
  "keyring",
  "rfd",
+ "serde_json",
  "strukt-core",
  "strukt-editor",
  "strukt-fs",

@@ -220,6 +220,40 @@ impl EditorWorkspace {
         self.pin(id)
     }
 
+    /// Resolves a conflict in favor of disk with an undo boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the document is absent or has no conflict.
+    pub fn reload_from_disk(&mut self, id: DocumentId) -> Result<(), EditorWorkspaceError> {
+        self.document_mut(id)?.reload_from_disk()?;
+        self.pin(id)
+    }
+
+    /// Resolves a conflict in favor of the current local buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the document is absent or has no conflict.
+    pub fn keep_editing(&mut self, id: DocumentId) -> Result<(), EditorWorkspaceError> {
+        self.document_mut(id)?.keep_editing()?;
+        self.pin(id)
+    }
+
+    /// Applies recovered unsaved content and pins the document.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the document is absent or recovery cannot apply.
+    pub fn restore_recovery(
+        &mut self,
+        id: DocumentId,
+        text: &str,
+    ) -> Result<(), EditorWorkspaceError> {
+        self.document_mut(id)?.restore_recovery(text)?;
+        self.pin(id)
+    }
+
     /// Requests a close without discarding recoverable content.
     ///
     /// # Errors

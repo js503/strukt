@@ -13,6 +13,11 @@ impl Revision {
         Self(value)
     }
 
+    #[must_use]
+    pub const fn as_u64(self) -> u64 {
+        self.0
+    }
+
     pub(crate) fn next(self) -> Result<Self, TransactionError> {
         self.0
             .checked_add(1)

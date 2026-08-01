@@ -114,6 +114,50 @@ fn dirty_external_change_preserves_local_content() {
 }
 
 #[test]
+fn reload_conflict_creates_an_undo_boundary() {
+    let mut document = document("file.txt", "base");
+    document
+        .edit(
+            EditTransaction::insert(document.revision(), 4, " local"),
+            EditKind::Other,
+            0,
+            0,
+        )
+        .unwrap();
+    document
+        .observe_disk_change(document.revision(), DiskRevision::new("disk-2"), "disk")
+        .unwrap();
+
+    document.reload_from_disk().unwrap();
+    assert_eq!(document.text(), "disk");
+    assert_eq!(document.status(), &DocumentStatus::Clean);
+    document.undo().unwrap();
+    assert_eq!(document.text(), "base local");
+    assert_eq!(document.status(), &DocumentStatus::Dirty);
+}
+
+#[test]
+fn keep_editing_clears_conflict_without_changing_the_save_baseline() {
+    let mut document = document("file.txt", "base");
+    document
+        .edit(
+            EditTransaction::insert(document.revision(), 4, " local"),
+            EditKind::Other,
+            0,
+            0,
+        )
+        .unwrap();
+    document
+        .observe_disk_change(document.revision(), DiskRevision::new("disk-2"), "disk")
+        .unwrap();
+
+    document.keep_editing().unwrap();
+    assert_eq!(document.text(), "base local");
+    assert_eq!(document.status(), &DocumentStatus::Dirty);
+    assert_eq!(document.disk_revision(), &DiskRevision::new("disk-1"));
+}
+
+#[test]
 fn deleted_dirty_file_remains_recoverable_and_stale_events_are_rejected() {
     let mut document = document("file.txt", "one");
     document

@@ -46,7 +46,10 @@ mod tests {
     use strukt_fs::{
         DiscoveryOptions, DiscoveryReport, DocumentKind, DocumentRead, FileEntry, FileKind,
     };
-    use strukt_persistence::WorkspaceStore;
+    use strukt_persistence::{
+        EditorRecoveryStore, EditorSessionSnapshot, RecoveryMetadata, RecoveryPayload,
+        WorkspaceStore,
+    };
     use strukt_shell::Activity;
     use strukt_workspace::{WorkspaceRoot, WorkspaceState};
     use tempfile::{TempDir, tempdir};
@@ -486,6 +489,379 @@ mod tests {
             })
             .units(),
             1
+        );
+    }
+
+    #[test]
+    fn watcher_reload_and_conflict_actions_preserve_user_intent() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&project))));
+        let root = app.workspace.as_ref().unwrap().root.path().to_path_buf();
+        let _ = app.update(Message::DocumentOpened {
+            workspace_root: root.clone(),
+            path: "file.txt".into(),
+            disposition: OpenDisposition::Pinned,
+            result: Ok(text_document("base", "disk-1", false)),
+        });
+        let id = app.editor.as_ref().unwrap().active_document_id().unwrap();
+        let revision = app
+            .editor
+            .as_ref()
+            .unwrap()
+            .document(id)
+            .unwrap()
+            .revision();
+
+        let _ = app.update(Message::DocumentDiskObserved {
+            workspace_root: root.clone(),
+            id,
+            expected_revision: revision,
+            result: Ok(crate::app::DiskObservation::Present(text_document(
+                "disk", "disk-2", false,
+            ))),
+        });
+        assert_eq!(
+            app.editor.as_ref().unwrap().document(id).unwrap().text(),
+            "disk"
+        );
+
+        let _ = app.update(Message::EditorAction {
+            id,
+            action: Action::Edit(Edit::Insert('x')),
+        });
+        let revision = app
+            .editor
+            .as_ref()
+            .unwrap()
+            .document(id)
+            .unwrap()
+            .revision();
+        let _ = app.update(Message::DocumentDiskObserved {
+            workspace_root: root,
+            id,
+            expected_revision: revision,
+            result: Ok(crate::app::DiskObservation::Present(text_document(
+                "new disk", "disk-3", false,
+            ))),
+        });
+        assert!(matches!(
+            app.editor.as_ref().unwrap().document(id).unwrap().status(),
+            DocumentStatus::Conflict { disk_text, .. } if disk_text == "new disk"
+        ));
+
+        let _ = app.update(Message::ReloadDocumentFromDisk(id));
+        assert_eq!(
+            app.editor.as_ref().unwrap().document(id).unwrap().text(),
+            "new disk"
+        );
+        let _ = app.update(Message::UndoDocument(id));
+        assert_eq!(
+            app.editor.as_ref().unwrap().document(id).unwrap().text(),
+            "xdisk"
+        );
+    }
+
+    #[test]
+    fn stale_disk_and_recovery_completions_are_rejected() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&project))));
+        let root = app.workspace.as_ref().unwrap().root.path().to_path_buf();
+        let workspace_id = app
+            .workspace
+            .as_ref()
+            .unwrap()
+            .root
+            .id()
+            .as_str()
+            .to_owned();
+        let _ = app.update(Message::DocumentOpened {
+            workspace_root: root.clone(),
+            path: "file.txt".into(),
+            disposition: OpenDisposition::Pinned,
+            result: Ok(text_document("base", "disk-1", false)),
+        });
+        let id = app.editor.as_ref().unwrap().active_document_id().unwrap();
+        let stale = app
+            .editor
+            .as_ref()
+            .unwrap()
+            .document(id)
+            .unwrap()
+            .revision();
+        let _ = app.update(Message::EditorAction {
+            id,
+            action: Action::Edit(Edit::Insert('x')),
+        });
+
+        let _ = app.update(Message::DocumentDiskObserved {
+            workspace_root: root.clone(),
+            id,
+            expected_revision: stale,
+            result: Ok(crate::app::DiskObservation::Present(text_document(
+                "stale disk",
+                "disk-2",
+                false,
+            ))),
+        });
+        assert_eq!(
+            app.editor.as_ref().unwrap().document(id).unwrap().text(),
+            "xbase"
+        );
+
+        let payload = RecoveryPayload::new(
+            RecoveryMetadata::new(workspace_id, "file.txt", "disk-1"),
+            1,
+            "stale recovery",
+        );
+        let _ = app.update(Message::RecoveryLoaded {
+            workspace_root: root,
+            id,
+            expected_revision: stale,
+            result: Ok(Some(payload)),
+        });
+        assert_eq!(
+            app.editor.as_ref().unwrap().document(id).unwrap().text(),
+            "xbase"
+        );
+    }
+
+    #[test]
+    fn watcher_suppresses_only_the_revision_produced_by_the_matching_save() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&project))));
+        let root = app.workspace.as_ref().unwrap().root.path().to_path_buf();
+        let _ = app.update(Message::DocumentOpened {
+            workspace_root: root.clone(),
+            path: "file.txt".into(),
+            disposition: OpenDisposition::Pinned,
+            result: Ok(text_document("base", "disk-1", false)),
+        });
+        let id = app.editor.as_ref().unwrap().active_document_id().unwrap();
+        let expected = app
+            .editor
+            .as_ref()
+            .unwrap()
+            .document(id)
+            .unwrap()
+            .revision();
+        let _ = app.update(Message::DocumentSaved {
+            workspace_root: root.clone(),
+            id,
+            expected_revision: expected,
+            result: Ok(strukt_fs::SaveOutcome {
+                disk_revision: DiskRevision::new("saved"),
+                bytes_written: 4,
+            }),
+        });
+        let after_save = app
+            .editor
+            .as_ref()
+            .unwrap()
+            .document(id)
+            .unwrap()
+            .revision();
+
+        let _ = app.update(Message::DocumentDiskObserved {
+            workspace_root: root.clone(),
+            id,
+            expected_revision: after_save,
+            result: Ok(crate::app::DiskObservation::Present(text_document(
+                "base", "saved", false,
+            ))),
+        });
+        assert_eq!(
+            app.editor
+                .as_ref()
+                .unwrap()
+                .document(id)
+                .unwrap()
+                .revision(),
+            after_save
+        );
+
+        let _ = app.update(Message::DocumentDiskObserved {
+            workspace_root: root,
+            id,
+            expected_revision: after_save,
+            result: Ok(crate::app::DiskObservation::Present(text_document(
+                "external",
+                "after-save",
+                false,
+            ))),
+        });
+        assert_eq!(
+            app.editor.as_ref().unwrap().document(id).unwrap().text(),
+            "external"
+        );
+    }
+
+    #[test]
+    fn recovery_deadline_is_coalesced_to_the_latest_document_revision() {
+        let project = tempdir().unwrap();
+        let recovery = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.recovery_store = Some(EditorRecoveryStore::at(recovery.path()));
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&project))));
+        let root = app.workspace.as_ref().unwrap().root.path().to_path_buf();
+        let _ = app.update(Message::DocumentOpened {
+            workspace_root: root.clone(),
+            path: "file.txt".into(),
+            disposition: OpenDisposition::Pinned,
+            result: Ok(text_document("base", "disk-1", false)),
+        });
+        let id = app.editor.as_ref().unwrap().active_document_id().unwrap();
+        let _ = app.update(Message::EditorAction {
+            id,
+            action: Action::Edit(Edit::Insert('x')),
+        });
+        let first_revision = app
+            .editor
+            .as_ref()
+            .unwrap()
+            .document(id)
+            .unwrap()
+            .revision();
+        let _ = app.update(Message::EditorAction {
+            id,
+            action: Action::Edit(Edit::Insert('y')),
+        });
+        let latest_revision = app
+            .editor
+            .as_ref()
+            .unwrap()
+            .document(id)
+            .unwrap()
+            .revision();
+
+        assert_eq!(
+            app.update(Message::RecoveryDue {
+                workspace_root: root.clone(),
+                id,
+                expected_revision: first_revision,
+                generation: 1,
+            })
+            .units(),
+            0
+        );
+        assert_eq!(
+            app.update(Message::RecoveryDue {
+                workspace_root: root,
+                id,
+                expected_revision: latest_revision,
+                generation: 2,
+            })
+            .units(),
+            1
+        );
+    }
+
+    #[test]
+    fn editor_session_contribution_tracks_tabs_and_find_state() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&project))));
+        let root = app.workspace.as_ref().unwrap().root.path().to_path_buf();
+        let _ = app.update(Message::DocumentOpened {
+            workspace_root: root,
+            path: "file.txt".into(),
+            disposition: OpenDisposition::Pinned,
+            result: Ok(text_document("base", "disk-1", false)),
+        });
+        let _ = app.update(Message::EditorFindChanged("needle".into()));
+
+        let snapshot = app
+            .workspace
+            .as_ref()
+            .unwrap()
+            .contribution::<EditorSessionSnapshot>("editor")
+            .unwrap()
+            .unwrap();
+        assert_eq!(snapshot.tabs.len(), 1);
+        assert_eq!(snapshot.tabs[0].path, "file.txt");
+        assert_eq!(snapshot.tabs[0].find_query, "needle");
+        assert_eq!(snapshot.active_path.as_deref(), Some("file.txt"));
+    }
+
+    #[test]
+    fn workspace_restore_rehydrates_tab_metadata_and_missing_placeholder() {
+        let project = tempdir().unwrap();
+        let mut opened = open_workspace(&project);
+        let mut tab = strukt_persistence::EditorTabSnapshot::new("missing.txt", 2, 1, 3.0);
+        tab.find_query = "needle".into();
+        tab.language_override = Some("rust".into());
+        tab.disk_revision = Some("disk-1".into());
+        opened
+            .state
+            .set_contribution(
+                "editor",
+                &EditorSessionSnapshot::new(vec![tab], Some("missing.txt".into()), None),
+            )
+            .unwrap();
+        let root = opened.state.root.path().to_path_buf();
+        let mut app = StruktApp::default();
+        let _ = app.update(Message::WorkspaceOpened(Ok(opened)));
+
+        let _ = app.update(Message::DocumentOpened {
+            workspace_root: root,
+            path: "missing.txt".into(),
+            disposition: OpenDisposition::Pinned,
+            result: Err("document does not exist".into()),
+        });
+
+        let editor = app.editor.as_ref().unwrap();
+        let id = editor.active_document_id().unwrap();
+        assert_eq!(
+            editor.document(id).unwrap().status(),
+            &DocumentStatus::Missing
+        );
+        assert_eq!(app.editor_find_query, "needle");
+        assert_eq!(
+            app.editor_language_overrides.get(&id).map(String::as_str),
+            Some("rust")
+        );
+        assert!(app.editor_error.as_deref().unwrap().contains("placeholder"));
+    }
+
+    #[test]
+    fn unavailable_recovery_key_is_reported_without_applying_content() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&project))));
+        let root = app.workspace.as_ref().unwrap().root.path().to_path_buf();
+        let _ = app.update(Message::DocumentOpened {
+            workspace_root: root.clone(),
+            path: "file.txt".into(),
+            disposition: OpenDisposition::Pinned,
+            result: Ok(text_document("base", "disk-1", false)),
+        });
+        let id = app.editor.as_ref().unwrap().active_document_id().unwrap();
+        let revision = app
+            .editor
+            .as_ref()
+            .unwrap()
+            .document(id)
+            .unwrap()
+            .revision();
+
+        let _ = app.update(Message::RecoveryLoaded {
+            workspace_root: root,
+            id,
+            expected_revision: revision,
+            result: Err("protected recovery key storage is unavailable".into()),
+        });
+
+        assert_eq!(
+            app.editor.as_ref().unwrap().document(id).unwrap().text(),
+            "base"
+        );
+        assert!(
+            app.editor_error
+                .as_deref()
+                .unwrap()
+                .contains("recovery disabled")
         );
     }
 

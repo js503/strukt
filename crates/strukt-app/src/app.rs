@@ -1,5 +1,7 @@
 use std::collections::{HashMap, VecDeque};
+use std::io;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use iced::keyboard::{self, Key};
@@ -11,13 +13,16 @@ use strukt_editor::{
     OpenDisposition, RelativeDocumentPath, Revision,
 };
 use strukt_fs::{
-    CancellationToken, DiscoveryOptions, DiscoveryReport, DocumentKind, DocumentRead, FileEntry,
-    FileEvent, FileKind, FileOperation, QuickOpenCandidate, ReadOptions, SaveMode, SaveOutcome,
-    SaveRequest, SearchOptions, SearchResult, WorkspaceWatcher, apply_operation,
-    discover_report_for_root, quick_open_candidates_with_ignored, read_document, save_document,
-    search_content_cancellable,
+    CancellationToken, DiscoveryOptions, DiscoveryReport, DocumentIoError, DocumentKind,
+    DocumentRead, FileEntry, FileEvent, FileKind, FileOperation, QuickOpenCandidate, ReadOptions,
+    SaveMode, SaveOutcome, SaveRequest, SearchOptions, SearchResult, WorkspaceWatcher,
+    apply_operation, discover_report_for_root, quick_open_candidates_with_ignored, read_document,
+    save_document, search_content_cancellable,
 };
-use strukt_persistence::{RecentWorkspaces, WorkspaceStore};
+use strukt_persistence::{
+    EditorRecoveryStore, EditorSessionSnapshot, EditorTabSnapshot, RecentWorkspaces,
+    RecoveryKeyProvider, RecoveryMetadata, RecoveryPayload, WorkspaceStore,
+};
 use strukt_shell::{Activity, ShellAction, ShellState};
 use strukt_theme::ThemeMode;
 use strukt_workspace::{WorkspaceRoot, WorkspaceState};
@@ -104,9 +109,14 @@ pub struct StruktApp {
     pub editor_replace_text: String,
     pub editor_find_options: FindOptions,
     pub editor_language_overrides: HashMap<DocumentId, String>,
+    editor_restore_active: Option<String>,
+    editor_restore_tabs: HashMap<String, EditorTabSnapshot>,
     launch_mode: LaunchMode,
     store: Option<WorkspaceStore>,
-    _recovery_key_provider: NativeRecoveryKeyProvider,
+    pub(crate) recovery_store: Option<EditorRecoveryStore>,
+    recovery_key_provider: Arc<dyn RecoveryKeyProvider>,
+    recovery_generations: HashMap<DocumentId, u64>,
+    recent_save_revisions: HashMap<DocumentId, strukt_editor::DiskRevision>,
     watcher: Option<WorkspaceWatcher>,
     watcher_root: Option<PathBuf>,
     manual_open_started: bool,
@@ -208,6 +218,37 @@ pub enum Message {
         expected_revision: Revision,
         result: Result<SaveOutcome, String>,
     },
+    DocumentDiskObserved {
+        workspace_root: PathBuf,
+        id: DocumentId,
+        expected_revision: Revision,
+        result: Result<DiskObservation, String>,
+    },
+    ReloadDocumentFromDisk(DocumentId),
+    KeepEditingDocument(DocumentId),
+    RecoveryDue {
+        workspace_root: PathBuf,
+        id: DocumentId,
+        expected_revision: Revision,
+        generation: u64,
+    },
+    RecoverySaved {
+        workspace_root: PathBuf,
+        id: DocumentId,
+        generation: u64,
+        result: Result<(), String>,
+    },
+    RecoveryLoaded {
+        workspace_root: PathBuf,
+        id: DocumentId,
+        expected_revision: Revision,
+        result: Result<Option<RecoveryPayload>, String>,
+    },
+    RecoveryDeleted {
+        workspace_root: PathBuf,
+        id: DocumentId,
+        result: Result<(), String>,
+    },
     UndoDocument(DocumentId),
     RedoDocument(DocumentId),
     ToggleEditorFind,
@@ -283,6 +324,12 @@ pub enum Message {
     WorkspaceFilesSmokeFinished(Result<(), String>),
 }
 
+#[derive(Clone, Debug)]
+pub enum DiskObservation {
+    Present(DocumentRead),
+    Missing,
+}
+
 impl Default for StruktApp {
     fn default() -> Self {
         Self::new_with_store(LaunchMode::Interactive, None)
@@ -344,9 +391,14 @@ impl StruktApp {
             editor_replace_text: String::new(),
             editor_find_options: FindOptions::default(),
             editor_language_overrides: HashMap::new(),
+            editor_restore_active: None,
+            editor_restore_tabs: HashMap::new(),
             launch_mode,
             store,
-            _recovery_key_provider: NativeRecoveryKeyProvider,
+            recovery_store: EditorRecoveryStore::platform_default().ok(),
+            recovery_key_provider: Arc::new(NativeRecoveryKeyProvider),
+            recovery_generations: HashMap::new(),
+            recent_save_revisions: HashMap::new(),
             watcher: None,
             watcher_root: None,
             manual_open_started: false,
@@ -442,6 +494,11 @@ impl StruktApp {
                 return Task::none();
             }
             Message::WorkspaceOpened(Ok(mut opened)) => {
+                let editor_restore = opened
+                    .state
+                    .contribution::<EditorSessionSnapshot>("editor")
+                    .ok()
+                    .flatten();
                 let root = opened.state.root.path().to_path_buf();
                 match WorkspaceWatcher::start(&root) {
                     Ok(watcher) => {
@@ -477,6 +534,22 @@ impl StruktApp {
                 self.editor_find_query.clear();
                 self.editor_replace_text.clear();
                 self.editor_language_overrides.clear();
+                self.recovery_generations.clear();
+                self.recent_save_revisions.clear();
+                self.editor_restore_active = editor_restore
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.active_path.clone());
+                self.editor_restore_tabs = editor_restore
+                    .as_ref()
+                    .map(|snapshot| {
+                        snapshot
+                            .tabs
+                            .iter()
+                            .cloned()
+                            .map(|tab| (tab.path.clone(), tab))
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 if self.watcher.is_none()
                     && let Some(workspace) = &mut self.workspace
                 {
@@ -507,7 +580,23 @@ impl StruktApp {
                 self.search_results.truncated = false;
                 let persistence = self.request_persistence(true);
                 let reconciliation = self.request_file_refresh();
-                return Task::batch([persistence, reconciliation]);
+                let mut tasks = vec![persistence, reconciliation];
+                if let Some(snapshot) = editor_restore {
+                    for tab in snapshot.tabs {
+                        let disposition =
+                            if snapshot.preview_path.as_deref() == Some(tab.path.as_str()) {
+                                OpenDisposition::Preview
+                            } else {
+                                OpenDisposition::Pinned
+                            };
+                        tasks.push(self.open_document_task(
+                            PathBuf::from(tab.path),
+                            disposition,
+                            !tab.read_only,
+                        ));
+                    }
+                }
+                return Task::batch(tasks);
             }
             Message::WorkspaceOpened(Err(error)) => {
                 self.open_error = Some(error);
@@ -640,8 +729,38 @@ impl StruktApp {
                                         .document(id)
                                         .map_or_else(String::new, strukt_editor::Document::text);
                                     self.editor_surfaces.insert(id, &surface_text);
+                                    if let Some(snapshot) =
+                                        self.editor_restore_tabs.get(path_string.as_ref()).cloned()
+                                    {
+                                        let _ = self.editor_surfaces.restore_view(
+                                            id,
+                                            snapshot.cursor,
+                                            snapshot.selection_anchor,
+                                            snapshot.scroll_line,
+                                        );
+                                        if let Some(language) = snapshot.language_override {
+                                            self.editor_language_overrides.insert(id, language);
+                                        }
+                                        if self.editor_restore_active.as_deref()
+                                            == Some(path_string.as_ref())
+                                        {
+                                            self.editor_find_query = snapshot.find_query;
+                                        }
+                                    }
                                     self.document_notice = None;
                                     self.editor_error = None;
+                                    if let Some(active_path) = &self.editor_restore_active
+                                        && let Some(active) = editor
+                                            .view_state()
+                                            .tabs
+                                            .iter()
+                                            .find(|tab| tab.path.as_str() == active_path)
+                                    {
+                                        let _ = editor.select(active.id);
+                                    }
+                                    let recovery = self.load_recovery_task(id);
+                                    let persistence = self.request_persistence(false);
+                                    return Task::batch([recovery, persistence]);
                                 }
                                 Err(error) => self.editor_error = Some(error),
                             }
@@ -659,11 +778,69 @@ impl StruktApp {
                             });
                         }
                     },
-                    Err(error) => self.editor_error = Some(error),
+                    Err(error) => {
+                        let path_key = path.to_string_lossy();
+                        let restore_snapshot =
+                            self.editor_restore_tabs.get(path_key.as_ref()).cloned();
+                        let baseline = restore_snapshot
+                            .as_ref()
+                            .and_then(|snapshot| snapshot.disk_revision.clone());
+                        if let (Some(baseline), Some(editor)) = (baseline, &mut self.editor) {
+                            let opened = RelativeDocumentPath::new(path_key.as_ref())
+                                .map_err(|open_error| open_error.to_string())
+                                .and_then(|relative| {
+                                    editor
+                                        .open(
+                                            relative,
+                                            "",
+                                            strukt_editor::DiskRevision::new(baseline),
+                                            false,
+                                            disposition,
+                                        )
+                                        .map_err(|open_error| open_error.to_string())
+                                });
+                            match opened {
+                                Ok(id) => {
+                                    let revision = editor
+                                        .document(id)
+                                        .map(strukt_editor::Document::revision)
+                                        .unwrap_or_default();
+                                    let _ = editor.observe_missing(id, revision);
+                                    self.editor_surfaces.insert(id, "");
+                                    if let Some(snapshot) = restore_snapshot {
+                                        let _ = self.editor_surfaces.restore_view(
+                                            id,
+                                            snapshot.cursor,
+                                            snapshot.selection_anchor,
+                                            snapshot.scroll_line,
+                                        );
+                                        if let Some(language) = snapshot.language_override {
+                                            self.editor_language_overrides.insert(id, language);
+                                        }
+                                        if self.editor_restore_active.as_deref()
+                                            == Some(path_key.as_ref())
+                                        {
+                                            self.editor_find_query = snapshot.find_query;
+                                        }
+                                    }
+                                    self.editor_error = Some(format!(
+                                        "{error}; showing restorable missing-file placeholder"
+                                    ));
+                                    let recovery = self.load_recovery_task(id);
+                                    let persistence = self.request_persistence(false);
+                                    return Task::batch([recovery, persistence]);
+                                }
+                                Err(open_error) => self.editor_error = Some(open_error),
+                            }
+                        } else {
+                            self.editor_error = Some(error);
+                        }
+                    }
                 }
                 return Task::none();
             }
             Message::EditorAction { id, action } => {
+                let is_edit = action.is_edit();
                 let Some(editor) = &mut self.editor else {
                     return Task::none();
                 };
@@ -671,6 +848,11 @@ impl StruktApp {
                     self.editor_error = Some(error.to_string());
                 } else {
                     self.editor_error = None;
+                    if is_edit {
+                        let recovery = self.schedule_recovery(id);
+                        let persistence = self.request_persistence(false);
+                        return Task::batch([recovery, persistence]);
+                    }
                 }
                 return Task::none();
             }
@@ -680,7 +862,7 @@ impl StruktApp {
                 {
                     self.editor_error = Some(error.to_string());
                 }
-                return Task::none();
+                return self.request_persistence(false);
             }
             Message::PinDocument(id) => {
                 if let Some(editor) = &mut self.editor
@@ -688,7 +870,7 @@ impl StruktApp {
                 {
                     self.editor_error = Some(error.to_string());
                 }
-                return Task::none();
+                return self.request_persistence(false);
             }
             Message::UndoDocument(id) => {
                 let Some(editor) = &mut self.editor else {
@@ -698,7 +880,12 @@ impl StruktApp {
                     .undo(id)
                     .and_then(|()| self.editor_surfaces.rebuild(editor, id))
                 {
-                    Ok(()) => self.editor_error = None,
+                    Ok(()) => {
+                        self.editor_error = None;
+                        let recovery = self.schedule_recovery(id);
+                        let persistence = self.request_persistence(false);
+                        return Task::batch([recovery, persistence]);
+                    }
                     Err(error) => self.editor_error = Some(error.to_string()),
                 }
                 return Task::none();
@@ -711,7 +898,12 @@ impl StruktApp {
                     .redo(id)
                     .and_then(|()| self.editor_surfaces.rebuild(editor, id))
                 {
-                    Ok(()) => self.editor_error = None,
+                    Ok(()) => {
+                        self.editor_error = None;
+                        let recovery = self.schedule_recovery(id);
+                        let persistence = self.request_persistence(false);
+                        return Task::batch([recovery, persistence]);
+                    }
                     Err(error) => self.editor_error = Some(error.to_string()),
                 }
                 return Task::none();
@@ -722,7 +914,7 @@ impl StruktApp {
             }
             Message::EditorFindChanged(query) => {
                 self.editor_find_query = query;
-                return Task::none();
+                return self.request_persistence(false);
             }
             Message::EditorReplaceChanged(replacement) => {
                 self.editor_replace_text = replacement;
@@ -755,7 +947,7 @@ impl StruktApp {
                         }
                     }
                 }
-                return Task::none();
+                return self.request_persistence(false);
             }
             Message::ReplaceAll(id) => {
                 let Some(editor) = &mut self.editor else {
@@ -780,7 +972,12 @@ impl StruktApp {
                         .map_err(|error| error.to_string())
                 })();
                 match result {
-                    Ok(()) => self.editor_error = None,
+                    Ok(()) => {
+                        self.editor_error = None;
+                        let recovery = self.schedule_recovery(id);
+                        let persistence = self.request_persistence(false);
+                        return Task::batch([recovery, persistence]);
+                    }
                     Err(error) => self.editor_error = Some(error),
                 }
                 return Task::none();
@@ -794,12 +991,13 @@ impl StruktApp {
                         Err(error) => self.editor_error = Some(error.to_string()),
                     }
                 }
-                return Task::none();
+                return self.request_persistence(false);
             }
             Message::ResolveDocumentClose { id, decision } => {
                 if decision == CloseDecision::Save {
                     return self.save_document_task(id, SaveMode::IfUnchanged);
                 }
+                let cleanup = self.delete_recovery_task(id);
                 if let Some(editor) = &mut self.editor {
                     match editor.resolve_close(id, decision) {
                         Ok(CloseOutcome::Closed) => self.editor_surfaces.remove(id),
@@ -808,7 +1006,8 @@ impl StruktApp {
                     }
                 }
                 self.pending_close = None;
-                return Task::none();
+                let persistence = self.request_persistence(false);
+                return Task::batch([cleanup, persistence]);
             }
             Message::SaveDocument { id, mode } => return self.save_document_task(id, mode),
             Message::DocumentSaved {
@@ -820,11 +1019,20 @@ impl StruktApp {
                 if !self.is_current_root(&workspace_root) {
                     return Task::none();
                 }
+                let cleanup = if result.is_ok() {
+                    self.delete_recovery_task(id)
+                } else {
+                    Task::none()
+                };
                 match result {
                     Ok(saved) => {
                         if let Some(editor) = &mut self.editor {
                             match editor.complete_save(id, expected_revision, saved.disk_revision) {
                                 Ok(()) => {
+                                    if let Some(document) = editor.document(id) {
+                                        self.recent_save_revisions
+                                            .insert(id, document.disk_revision().clone());
+                                    }
                                     self.editor_error = None;
                                     if self.pending_close == Some(id) {
                                         if editor.resolve_close(id, CloseDecision::Discard).is_ok()
@@ -839,6 +1047,162 @@ impl StruktApp {
                         }
                     }
                     Err(error) => self.editor_error = Some(error),
+                }
+                let persistence = self.request_persistence(false);
+                return Task::batch([cleanup, persistence]);
+            }
+            Message::DocumentDiskObserved {
+                workspace_root,
+                id,
+                expected_revision,
+                result,
+            } => {
+                if !self.is_current_root(&workspace_root) {
+                    return Task::none();
+                }
+                let Some(editor) = &mut self.editor else {
+                    return Task::none();
+                };
+                if let Ok(DiskObservation::Present(read)) = &result
+                    && self.recent_save_revisions.get(&id) == Some(&read.disk_revision)
+                {
+                    self.recent_save_revisions.remove(&id);
+                    return Task::none();
+                }
+                self.recent_save_revisions.remove(&id);
+                let was_clean = editor.document(id).is_some_and(|document| {
+                    document.status() == &strukt_editor::DocumentStatus::Clean
+                });
+                let applied = match result {
+                    Ok(DiskObservation::Present(read)) => match read.kind {
+                        DocumentKind::Text {
+                            read_only: false, ..
+                        } => read.text.map_or_else(
+                            || Err("text document had no text payload".to_owned()),
+                            |text| {
+                                editor
+                                    .observe_disk_change(
+                                        id,
+                                        expected_revision,
+                                        read.disk_revision,
+                                        &text,
+                                    )
+                                    .map_err(|error| error.to_string())
+                            },
+                        ),
+                        _ => editor
+                            .observe_missing(id, expected_revision)
+                            .map_err(|error| error.to_string()),
+                    },
+                    Ok(DiskObservation::Missing) => editor
+                        .observe_missing(id, expected_revision)
+                        .map_err(|error| error.to_string()),
+                    Err(error) => Err(error),
+                };
+                match applied {
+                    Ok(()) => {
+                        self.editor_error = None;
+                        if was_clean {
+                            let _ = self.editor_surfaces.rebuild(editor, id);
+                        }
+                    }
+                    Err(error) => self.editor_error = Some(error),
+                }
+                return self.request_persistence(false);
+            }
+            Message::ReloadDocumentFromDisk(id) => {
+                let Some(editor) = &mut self.editor else {
+                    return Task::none();
+                };
+                match editor
+                    .reload_from_disk(id)
+                    .and_then(|()| self.editor_surfaces.rebuild(editor, id))
+                {
+                    Ok(()) => self.editor_error = None,
+                    Err(error) => self.editor_error = Some(error.to_string()),
+                }
+                return self.request_persistence(false);
+            }
+            Message::KeepEditingDocument(id) => {
+                if let Some(editor) = &mut self.editor {
+                    match editor.keep_editing(id) {
+                        Ok(()) => self.editor_error = None,
+                        Err(error) => self.editor_error = Some(error.to_string()),
+                    }
+                }
+                return self.request_persistence(false);
+            }
+            Message::RecoveryDue {
+                workspace_root,
+                id,
+                expected_revision,
+                generation,
+            } => {
+                if !self.is_current_root(&workspace_root)
+                    || self.recovery_generations.get(&id) != Some(&generation)
+                {
+                    return Task::none();
+                }
+                return self.save_recovery_task(id, expected_revision, generation);
+            }
+            Message::RecoverySaved {
+                workspace_root,
+                id,
+                generation,
+                result,
+            } => {
+                if !self.is_current_root(&workspace_root)
+                    || self.recovery_generations.get(&id) != Some(&generation)
+                {
+                    return Task::none();
+                }
+                if let Err(error) = result {
+                    self.editor_error = Some(format!("recovery disabled: {error}"));
+                }
+                return Task::none();
+            }
+            Message::RecoveryLoaded {
+                workspace_root,
+                id,
+                expected_revision,
+                result,
+            } => {
+                if !self.is_current_root(&workspace_root) {
+                    return Task::none();
+                }
+                match result {
+                    Ok(Some(payload)) => {
+                        let Some(editor) = &mut self.editor else {
+                            return Task::none();
+                        };
+                        if editor.document(id).map(strukt_editor::Document::revision)
+                            != Some(expected_revision)
+                        {
+                            return Task::none();
+                        }
+                        match editor
+                            .restore_recovery(id, &payload.text)
+                            .and_then(|()| self.editor_surfaces.rebuild(editor, id))
+                        {
+                            Ok(()) => self.editor_error = None,
+                            Err(error) => self.editor_error = Some(error.to_string()),
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => self.editor_error = Some(format!("recovery disabled: {error}")),
+                }
+                return self.request_persistence(false);
+            }
+            Message::RecoveryDeleted {
+                workspace_root,
+                id,
+                result,
+            } => {
+                if self.is_current_root(&workspace_root) {
+                    self.recovery_generations.remove(&id);
+                    if let Err(error) = result {
+                        self.editor_error = Some(format!("recovery cleanup failed: {error}"));
+                    }
                 }
                 return Task::none();
             }
@@ -973,7 +1337,7 @@ impl StruktApp {
                 if batch.changed {
                     return self.update(Message::FileEvent {
                         workspace_root: root,
-                        event: FileEvent::Changed(Vec::new()),
+                        event: FileEvent::Changed(batch.paths),
                     });
                 }
                 return Task::none();
@@ -985,14 +1349,21 @@ impl StruktApp {
                 if !self.is_current_root(&workspace_root) {
                     return Task::none();
                 }
-                if let FileEvent::Stale(reason) = event {
-                    if let Some(workspace) = &mut self.workspace {
-                        workspace.stale_filesystem = true;
+                let observations = match event {
+                    FileEvent::Stale(reason) => {
+                        if let Some(workspace) = &mut self.workspace {
+                            workspace.stale_filesystem = true;
+                        }
+                        self.refresh_error = Some(reason);
+                        self.recompute_workspace_error();
+                        self.observe_open_documents_task(&workspace_root, &[])
                     }
-                    self.refresh_error = Some(reason);
-                    self.recompute_workspace_error();
-                }
-                return self.request_file_refresh();
+                    FileEvent::Changed(paths) => {
+                        self.observe_open_documents_task(&workspace_root, &paths)
+                    }
+                };
+                let refresh = self.request_file_refresh();
+                return Task::batch([refresh, observations]);
             }
             Message::WorkspacePersisted {
                 generation,
@@ -1287,6 +1658,13 @@ impl StruktApp {
             | Message::ResolveDocumentClose { .. }
             | Message::SaveDocument { .. }
             | Message::DocumentSaved { .. }
+            | Message::DocumentDiskObserved { .. }
+            | Message::ReloadDocumentFromDisk(_)
+            | Message::KeepEditingDocument(_)
+            | Message::RecoveryDue { .. }
+            | Message::RecoverySaved { .. }
+            | Message::RecoveryLoaded { .. }
+            | Message::RecoveryDeleted { .. }
             | Message::UndoDocument(_)
             | Message::RedoDocument(_)
             | Message::ToggleEditorFind
@@ -1510,10 +1888,270 @@ impl StruktApp {
         )
     }
 
-    fn request_persistence(&mut self, record_recent: bool) -> Task<Message> {
-        let Some(state) = self.workspace.clone() else {
+    fn observe_open_documents_task(
+        &self,
+        workspace_root: &Path,
+        changed_paths: &[PathBuf],
+    ) -> Task<Message> {
+        let (Some(workspace), Some(editor)) = (&self.workspace, &self.editor) else {
             return Task::none();
         };
+        let normalized: Vec<_> = changed_paths
+            .iter()
+            .filter_map(|path| {
+                if path.is_absolute() {
+                    path.strip_prefix(workspace_root)
+                        .ok()
+                        .map(Path::to_path_buf)
+                } else {
+                    Some(path.clone())
+                }
+            })
+            .collect();
+        let all = changed_paths.is_empty();
+        let tasks = editor
+            .view_state()
+            .tabs
+            .into_iter()
+            .filter(|tab| {
+                let document_path = Path::new(tab.path.as_str());
+                all || normalized
+                    .iter()
+                    .any(|changed| changed == document_path || document_path.starts_with(changed))
+            })
+            .filter_map(|tab| {
+                let document = editor.document(tab.id)?;
+                let expected_revision = document.revision();
+                let path = PathBuf::from(document.path().as_str());
+                let root = workspace.root.clone();
+                let message_root = workspace_root.to_path_buf();
+                Some(Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            match read_document(&root, &path, ReadOptions::default()) {
+                                Ok(read) => Ok(DiskObservation::Present(read)),
+                                Err(DocumentIoError::Io(error))
+                                    if error.kind() == io::ErrorKind::NotFound =>
+                                {
+                                    Ok(DiskObservation::Missing)
+                                }
+                                Err(error) => Err(error.to_string()),
+                            }
+                        })
+                        .await
+                        .map_err(|error| error.to_string())?
+                    },
+                    move |result| Message::DocumentDiskObserved {
+                        workspace_root: message_root,
+                        id: tab.id,
+                        expected_revision,
+                        result,
+                    },
+                ))
+            })
+            .collect::<Vec<_>>();
+        Task::batch(tasks)
+    }
+
+    fn recovery_metadata(&self, id: DocumentId) -> Option<RecoveryMetadata> {
+        let workspace = self.workspace.as_ref()?;
+        let document = self.editor.as_ref()?.document(id)?;
+        Some(RecoveryMetadata::new(
+            workspace.root.id().as_str(),
+            document.path().as_str(),
+            document.disk_revision().as_str(),
+        ))
+    }
+
+    fn schedule_recovery(&mut self, id: DocumentId) -> Task<Message> {
+        let (Some(workspace), Some(document)) = (
+            self.workspace.as_ref(),
+            self.editor.as_ref().and_then(|editor| editor.document(id)),
+        ) else {
+            return Task::none();
+        };
+        if !document.is_recoverable() {
+            return Task::none();
+        }
+        let generation = self
+            .recovery_generations
+            .get(&id)
+            .copied()
+            .unwrap_or_default()
+            .wrapping_add(1);
+        self.recovery_generations.insert(id, generation);
+        let workspace_root = workspace.root.path().to_path_buf();
+        let expected_revision = document.revision();
+        Task::perform(
+            async move {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                (workspace_root, id, expected_revision, generation)
+            },
+            |(workspace_root, id, expected_revision, generation)| Message::RecoveryDue {
+                workspace_root,
+                id,
+                expected_revision,
+                generation,
+            },
+        )
+    }
+
+    fn save_recovery_task(
+        &self,
+        id: DocumentId,
+        expected_revision: Revision,
+        generation: u64,
+    ) -> Task<Message> {
+        let (Some(store), Some(workspace), Some(editor)) = (
+            self.recovery_store.clone(),
+            self.workspace.as_ref(),
+            self.editor.as_ref(),
+        ) else {
+            return Task::none();
+        };
+        let Some(document) = editor.document(id) else {
+            return Task::none();
+        };
+        if document.revision() != expected_revision || !document.is_recoverable() {
+            return Task::none();
+        }
+        let metadata = RecoveryMetadata::new(
+            workspace.root.id().as_str(),
+            document.path().as_str(),
+            document.disk_revision().as_str(),
+        );
+        let payload = RecoveryPayload::new(metadata, document.revision().as_u64(), document.text());
+        let provider = Arc::clone(&self.recovery_key_provider);
+        let workspace_root = workspace.root.path().to_path_buf();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    store
+                        .save(provider.as_ref(), &payload)
+                        .map_err(|error| error.to_string())
+                })
+                .await
+                .map_err(|error| error.to_string())?
+            },
+            move |result| Message::RecoverySaved {
+                workspace_root,
+                id,
+                generation,
+                result,
+            },
+        )
+    }
+
+    fn load_recovery_task(&self, id: DocumentId) -> Task<Message> {
+        let (Some(store), Some(workspace), Some(document)) = (
+            self.recovery_store.clone(),
+            self.workspace.as_ref(),
+            self.editor.as_ref().and_then(|editor| editor.document(id)),
+        ) else {
+            return Task::none();
+        };
+        let metadata = RecoveryMetadata::new(
+            workspace.root.id().as_str(),
+            document.path().as_str(),
+            document.disk_revision().as_str(),
+        );
+        let provider = Arc::clone(&self.recovery_key_provider);
+        let workspace_root = workspace.root.path().to_path_buf();
+        let expected_revision = document.revision();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    store
+                        .load(provider.as_ref(), &metadata)
+                        .map_err(|error| error.to_string())
+                })
+                .await
+                .map_err(|error| error.to_string())?
+            },
+            move |result| Message::RecoveryLoaded {
+                workspace_root,
+                id,
+                expected_revision,
+                result,
+            },
+        )
+    }
+
+    fn delete_recovery_task(&self, id: DocumentId) -> Task<Message> {
+        let (Some(store), Some(metadata), Some(workspace)) = (
+            self.recovery_store.clone(),
+            self.recovery_metadata(id),
+            self.workspace.as_ref(),
+        ) else {
+            return Task::none();
+        };
+        let workspace_root = workspace.root.path().to_path_buf();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    store.delete(&metadata).map_err(|error| error.to_string())
+                })
+                .await
+                .map_err(|error| error.to_string())?
+            },
+            move |result| Message::RecoveryDeleted {
+                workspace_root,
+                id,
+                result,
+            },
+        )
+    }
+
+    fn editor_session_snapshot(&self) -> Option<EditorSessionSnapshot> {
+        let editor = self.editor.as_ref()?;
+        let state = editor.view_state();
+        let tabs = state
+            .tabs
+            .iter()
+            .filter_map(|tab| {
+                let document = editor.document(tab.id)?;
+                let cursor = self
+                    .editor_surfaces
+                    .content(tab.id)
+                    .map(iced::widget::text_editor::Content::cursor);
+                let mut snapshot = EditorTabSnapshot::new(
+                    tab.path.as_str(),
+                    cursor.map_or(0, |cursor| cursor.position.column),
+                    cursor
+                        .and_then(|cursor| cursor.selection)
+                        .map_or(0, |position| position.column),
+                    0.0,
+                );
+                snapshot.find_query.clone_from(&self.editor_find_query);
+                snapshot.language_override = self.editor_language_overrides.get(&tab.id).cloned();
+                snapshot.read_only = document.is_read_only();
+                snapshot.disk_revision = Some(document.disk_revision().as_str().to_owned());
+                Some(snapshot)
+            })
+            .collect();
+        let active_path = state.active.and_then(|id| {
+            editor
+                .document(id)
+                .map(|document| document.path().as_str().to_owned())
+        });
+        let preview_path = state
+            .tabs
+            .iter()
+            .find(|tab| !tab.pinned)
+            .map(|tab| tab.path.as_str().to_owned());
+        Some(EditorSessionSnapshot::new(tabs, active_path, preview_path))
+    }
+
+    fn request_persistence(&mut self, record_recent: bool) -> Task<Message> {
+        let Some(mut state) = self.workspace.clone() else {
+            return Task::none();
+        };
+        if let Some(snapshot) = self.editor_session_snapshot() {
+            let _ = state.set_contribution("editor", &snapshot);
+            if let Some(workspace) = &mut self.workspace {
+                let _ = workspace.set_contribution("editor", &snapshot);
+            }
+        }
         if record_recent {
             self.enqueue_recent_root(state.root.clone());
         }
@@ -1893,6 +2531,7 @@ impl StruktApp {
 #[derive(Debug, Default, Eq, PartialEq)]
 pub(crate) struct WatcherBatch {
     pub(crate) changed: bool,
+    pub(crate) paths: Vec<PathBuf>,
     pub(crate) stale_reason: Option<String>,
     pub(crate) drained: usize,
 }
@@ -1907,7 +2546,10 @@ pub(crate) fn drain_watcher_batch(
         };
         batch.drained += 1;
         match event {
-            FileEvent::Changed(paths) => batch.changed |= !paths.is_empty(),
+            FileEvent::Changed(paths) => {
+                batch.changed |= !paths.is_empty();
+                batch.paths.extend(paths);
+            }
             FileEvent::Stale(reason) => batch.stale_reason = Some(reason),
         }
     }

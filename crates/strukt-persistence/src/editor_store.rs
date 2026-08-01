@@ -22,6 +22,8 @@ pub struct EditorTabSnapshot {
     pub find_query: String,
     pub language_override: Option<String>,
     pub read_only: bool,
+    #[serde(default)]
+    pub disk_revision: Option<String>,
 }
 
 impl EditorTabSnapshot {
@@ -40,6 +42,7 @@ impl EditorTabSnapshot {
             find_query: String::new(),
             language_override: None,
             read_only: false,
+            disk_revision: None,
         }
     }
 }

@@ -55,6 +55,11 @@ impl DiskRevision {
     pub fn new(token: impl Into<String>) -> Self {
         Self(token.into())
     }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -268,6 +273,84 @@ impl Document {
         Ok(())
     }
 
+    /// Replaces local conflict content with the observed disk version while
+    /// retaining a single undo boundary back to the local text.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no conflict exists or the replacement cannot apply.
+    pub fn reload_from_disk(&mut self) -> Result<(), DocumentError> {
+        let DocumentStatus::Conflict {
+            disk_revision,
+            disk_text,
+        } = self.status.clone()
+        else {
+            return Err(DocumentError::NoDiskConflict);
+        };
+        let transaction = EditTransaction::new(
+            self.buffer.revision(),
+            vec![crate::Replacement::new(
+                crate::CharRange {
+                    start: 0,
+                    end: self.buffer.to_string().chars().count(),
+                },
+                &disk_text,
+            )],
+        )?;
+        let forward = transaction.clone();
+        let applied = self.buffer.apply(transaction)?;
+        self.history.record(HistoryEntry::from_applied(
+            forward,
+            applied,
+            EditKind::Other,
+            0,
+            0,
+        ));
+        self.saved_text = disk_text;
+        self.disk_revision = disk_revision;
+        self.status = DocumentStatus::Clean;
+        self.recovered = false;
+        Ok(())
+    }
+
+    /// Acknowledges an external conflict while preserving local content and
+    /// the original save baseline.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DocumentError::NoDiskConflict`] when no conflict exists.
+    pub fn keep_editing(&mut self) -> Result<(), DocumentError> {
+        if !matches!(self.status, DocumentStatus::Conflict { .. }) {
+            return Err(DocumentError::NoDiskConflict);
+        }
+        self.status = DocumentStatus::Dirty;
+        Ok(())
+    }
+
+    /// Restores encrypted unsaved text into this document.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the recovery replacement cannot apply.
+    pub fn restore_recovery(&mut self, text: &str) -> Result<(), DocumentError> {
+        if self.buffer.to_string() != text {
+            let transaction = EditTransaction::new(
+                self.buffer.revision(),
+                vec![crate::Replacement::new(
+                    crate::CharRange {
+                        start: 0,
+                        end: self.buffer.to_string().chars().count(),
+                    },
+                    text,
+                )],
+            )?;
+            self.buffer.apply(transaction)?;
+            self.history = History::default();
+        }
+        self.mark_recovered();
+        Ok(())
+    }
+
     pub fn mark_recovered(&mut self) {
         self.recovered = true;
         if self.status == DocumentStatus::Clean {
@@ -318,6 +401,8 @@ pub enum DocumentError {
     InvalidPath(String),
     #[error("document is read-only")]
     ReadOnly,
+    #[error("document has no unresolved disk conflict")]
+    NoDiskConflict,
     #[error("stale document event: expected {expected:?}, received {actual:?}")]
     StaleEvent {
         expected: Revision,

@@ -446,6 +446,24 @@ fn editor_canvas(app: &StruktApp) -> Element<'_, Message> {
         },
     );
     let mut body = column![tabs, controls].spacing(8);
+    if let DocumentStatus::Conflict { disk_text, .. } = document.status() {
+        body = body.push(
+            column![
+                text("This file changed on disk. Your local edits are preserved."),
+                row![
+                    button("Reload from disk").on_press(Message::ReloadDocumentFromDisk(active_id)),
+                    button("Keep editing").on_press(Message::KeepEditingDocument(active_id)),
+                    button("Force save").on_press(Message::SaveDocument {
+                        id: active_id,
+                        mode: strukt_fs::SaveMode::Force,
+                    }),
+                ]
+                .spacing(6),
+                text(format!("Disk version:\n{disk_text}")),
+            ]
+            .spacing(6),
+        );
+    }
     if app.editor_find_visible {
         let match_label = if app.editor_find_query.is_empty() {
             "0 matches".to_owned()

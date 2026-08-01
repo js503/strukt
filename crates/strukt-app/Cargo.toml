@@ -10,6 +10,7 @@ iced.workspace = true
 getrandom.workspace = true
 keyring.workspace = true
 rfd.workspace = true
+serde_json.workspace = true
 strukt-core.workspace = true
 strukt-editor.workspace = true
 strukt-fs.workspace = true
