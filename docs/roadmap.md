@@ -155,8 +155,10 @@ service.
   [`evidence/m2-editor-validation.md`](evidence/m2-editor-validation.md)
 - Third-slice local-terminal spec:
   [`specs/0005-m2-local-terminal.md`](specs/0005-m2-local-terminal.md)
-- Remaining M2 slices: language intelligence and local PTY/ConPTY terminal
-  execution, rendering, and ephemeral layout
+- Third-slice local-terminal plan:
+  [`plans/0005-m2-local-terminal.md`](plans/0005-m2-local-terminal.md)
+- Remaining after the third slice: language intelligence and final M2
+  integration/restoration validation
 - Workspace reference:
   [`mockups/workspace-shell/focus-context.html`](mockups/workspace-shell/focus-context.html)
 
