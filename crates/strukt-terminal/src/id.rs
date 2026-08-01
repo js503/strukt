@@ -22,6 +22,22 @@ macro_rules! terminal_id {
             pub const fn value(self) -> u64 {
                 self.0
             }
+
+            pub(crate) fn reserve_after(self) {
+                let next = self.0.saturating_add(1);
+                let mut current = $counter.load(Ordering::Relaxed);
+                while current < next {
+                    match $counter.compare_exchange_weak(
+                        current,
+                        next,
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(_) => break,
+                        Err(observed) => current = observed,
+                    }
+                }
+            }
         }
 
         impl Default for $name {

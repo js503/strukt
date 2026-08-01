@@ -346,7 +346,7 @@ git commit -m "feat: add terminal selection and input policy"
 - Modify: `crates/strukt-terminal/src/lib.rs`
 - Create: `crates/strukt-terminal/tests/layout.rs`
 
-- [ ] **Step 1: Write failing layout reducer tests**
+- [x] **Step 1: Write failing layout reducer tests**
 
 ```rust
 use strukt_terminal::{PaneState, SplitAxis, TerminalWorkspace};
@@ -371,32 +371,32 @@ fn restored_panes_are_stopped_and_never_retain_commands() {
 }
 ```
 
-- [ ] **Step 2: Run and verify reducer types are absent**
+- [x] **Step 2: Run and verify reducer types are absent**
 
 Run: `cargo test -p strukt-terminal --test layout --locked --offline`
 
 Expected: compile failure.
 
-- [ ] **Step 3: Implement the layout tree and lifecycle transitions**
+- [x] **Step 3: Implement the layout tree and lifecycle transitions**
 
 Define `LayoutNode::{Pane(TerminalPaneId), Split { axis, ratio_basis_points,
 first, second }}`, ordered tabs, active/focused IDs, and `PaneState::{Stopped,
 Starting, Running, Exited, Failed, Backpressured}`. Enforce ratios 1000..=9000,
 unique IDs, nonempty tabs, deterministic collapse, and no persisted command field.
 
-- [ ] **Step 4: Add invalid snapshot and independent-tab cases**
+- [x] **Step 4: Add invalid snapshot and independent-tab cases**
 
 Test duplicate IDs, missing focused IDs, ratios outside bounds, empty split branches,
 tab activation, rename validation, close confirmation, restart transition, and two
 tabs whose pane state changes remain isolated.
 
-- [ ] **Step 5: Run layout and crate tests**
+- [x] **Step 5: Run layout and crate tests**
 
 Run: `cargo test -p strukt-terminal --locked --offline`
 
 Expected: pass.
 
-- [ ] **Step 6: Commit terminal layout**
+- [x] **Step 6: Commit terminal layout**
 
 ```bash
 git add crates/strukt-terminal

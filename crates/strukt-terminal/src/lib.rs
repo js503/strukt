@@ -3,6 +3,7 @@
 mod cell;
 mod grid;
 mod id;
+mod layout;
 mod parser;
 mod selection;
 
@@ -12,6 +13,10 @@ pub use grid::{
     TerminalSnapshot,
 };
 pub use id::{TerminalPaneId, TerminalTabId};
+pub use layout::{
+    LayoutNode, PaneState, SplitAxis, TerminalPane, TerminalPaneSnapshot, TerminalTab,
+    TerminalTabSnapshot, TerminalWorkspace, TerminalWorkspaceError, TerminalWorkspaceSnapshot,
+};
 pub use parser::{ParserDiagnostics, TerminalModel};
 pub use selection::{
     FocusEvent, LinkId, MouseButton, MouseEvent, PasteDecision, Selection, SelectionError,
