@@ -11,6 +11,17 @@ use app::{LaunchMode, StruktApp};
 fn main() -> iced::Result {
     let launch_mode = LaunchMode::from_args(std::env::args().skip(1));
 
+    if let LaunchMode::EditorSmoke { root } = &launch_mode {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("editor smoke runtime must start");
+        if let Err(error) = runtime.block_on(app::editor_smoke_task(root.clone())) {
+            panic!("strukt editor smoke failed: {error}");
+        }
+        println!("{}", app::EDITOR_SMOKE_SUCCESS);
+        return Ok(());
+    }
+
     if let LaunchMode::WorkspaceFilesSmoke { root } = &launch_mode {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
@@ -55,7 +66,7 @@ mod tests {
     use tempfile::{TempDir, tempdir};
 
     use crate::app::{
-        ExplorerDialog, LaunchMode, Message, StruktApp, operation_from_dialog,
+        ExplorerDialog, LaunchMode, Message, StruktApp, operation_from_dialog, run_editor_smoke,
         run_workspace_files_smoke,
     };
 
@@ -1022,6 +1033,28 @@ mod tests {
     }
 
     #[test]
+    fn editor_smoke_requires_the_exact_flag_and_one_path() {
+        let root = PathBuf::from("fixture");
+        assert_eq!(
+            LaunchMode::from_args(["--editor-smoke".to_owned(), root.display().to_string()]),
+            LaunchMode::EditorSmoke { root: root.clone() }
+        );
+        for args in [
+            vec!["--editor-smoke".to_owned()],
+            vec!["--editor-smoke".to_owned(), String::new()],
+            vec![
+                "--editor-smoke".to_owned(),
+                "fixture".into(),
+                "extra".into(),
+            ],
+            vec!["--editor-smokes".to_owned(), "fixture".into()],
+            vec!["--editor-smoke=true".to_owned(), "fixture".into()],
+        ] {
+            assert_eq!(LaunchMode::from_args(args), LaunchMode::Interactive);
+        }
+    }
+
+    #[test]
     fn workspace_files_smoke_opens_discovers_and_round_trips_without_repo_metadata() {
         let project = tempdir().unwrap();
         std::fs::write(project.path().join("strukt-smoke.txt"), "strukt\n").unwrap();
@@ -1042,6 +1075,34 @@ mod tests {
     }
 
     #[test]
+    fn editor_smoke_edits_saves_and_restores_without_repository_metadata() {
+        let project = tempdir().unwrap();
+        std::fs::write(project.path().join("strukt-editor-smoke.txt"), "strukt\n").unwrap();
+
+        run_editor_smoke(project.path()).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(project.path().join("strukt-editor-smoke.txt")).unwrap(),
+            "strukt\nedited by strukt\n"
+        );
+        assert!(!project.path().join(".strukt").exists());
+    }
+
+    #[test]
+    fn editor_smoke_rejects_missing_and_binary_sentinels() {
+        let missing = tempdir().unwrap();
+        assert!(run_editor_smoke(missing.path()).is_err());
+
+        let binary = tempdir().unwrap();
+        std::fs::write(
+            binary.path().join("strukt-editor-smoke.txt"),
+            b"strukt\0binary",
+        )
+        .unwrap();
+        assert!(run_editor_smoke(binary.path()).is_err());
+    }
+
+    #[test]
     fn only_smoke_mode_has_a_runtime_timeout() {
         assert_eq!(LaunchMode::Interactive.smoke_timeout(), None);
         assert_eq!(
@@ -1050,6 +1111,13 @@ mod tests {
         );
         assert_eq!(
             LaunchMode::WorkspaceFilesSmoke {
+                root: PathBuf::from("fixture")
+            }
+            .smoke_timeout(),
+            None
+        );
+        assert_eq!(
+            LaunchMode::EditorSmoke {
                 root: PathBuf::from("fixture")
             }
             .smoke_timeout(),

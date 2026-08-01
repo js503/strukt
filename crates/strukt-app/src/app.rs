@@ -9,8 +9,8 @@ use iced::widget::text_editor;
 use iced::{Subscription, Task, Theme, time};
 use strukt_core::{CapabilityDescriptor, CapabilityId, CapabilityRegistry};
 use strukt_editor::{
-    CloseDecision, CloseOutcome, DocumentId, EditKind, EditorWorkspace, FindOptions, FindQuery,
-    OpenDisposition, RelativeDocumentPath, Revision,
+    CloseDecision, CloseOutcome, DocumentId, EditKind, EditTransaction, EditorWorkspace,
+    FindOptions, FindQuery, OpenDisposition, RelativeDocumentPath, Revision,
 };
 use strukt_fs::{
     CancellationToken, DiscoveryOptions, DiscoveryReport, DocumentIoError, DocumentKind,
@@ -20,8 +20,8 @@ use strukt_fs::{
     save_document, search_content_cancellable,
 };
 use strukt_persistence::{
-    EditorRecoveryStore, EditorSessionSnapshot, EditorTabSnapshot, RecentWorkspaces,
-    RecoveryKeyProvider, RecoveryMetadata, RecoveryPayload, WorkspaceStore,
+    EditorRecoveryStore, EditorSessionSnapshot, EditorTabSnapshot, RecentWorkspaces, RecoveryKey,
+    RecoveryKeyError, RecoveryKeyProvider, RecoveryMetadata, RecoveryPayload, WorkspaceStore,
 };
 use strukt_shell::{Activity, ShellAction, ShellState};
 use strukt_theme::ThemeMode;
@@ -35,6 +35,8 @@ const SMOKE_TEST_DURATION: Duration = Duration::from_secs(3);
 pub(crate) const MAX_WATCHER_EVENTS_PER_POLL: usize = 64;
 pub(crate) const WORKSPACE_FILES_SMOKE_SUCCESS: &str =
     "strukt workspace files smoke: open, discovery, and persistence passed";
+pub(crate) const EDITOR_SMOKE_SUCCESS: &str =
+    "strukt editor smoke: open, edit, save, and restore passed";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DocumentNotice {
@@ -50,6 +52,9 @@ pub enum LaunchMode {
     WorkspaceFilesSmoke {
         root: PathBuf,
     },
+    EditorSmoke {
+        root: PathBuf,
+    },
 }
 
 impl LaunchMode {
@@ -62,6 +67,9 @@ impl LaunchMode {
                     root: PathBuf::from(root),
                 }
             }
+            [flag, root] if flag == "--editor-smoke" && !root.is_empty() => Self::EditorSmoke {
+                root: PathBuf::from(root),
+            },
             _ if args.iter().any(|argument| argument == "--smoke-test") => Self::SmokeTest,
             _ => Self::Interactive,
         }
@@ -70,7 +78,7 @@ impl LaunchMode {
     #[must_use]
     pub const fn smoke_timeout(&self) -> Option<Duration> {
         match self {
-            Self::Interactive | Self::WorkspaceFilesSmoke { .. } => None,
+            Self::Interactive | Self::WorkspaceFilesSmoke { .. } | Self::EditorSmoke { .. } => None,
             Self::SmokeTest => Some(SMOKE_TEST_DURATION),
         }
     }
@@ -2589,6 +2597,152 @@ pub(crate) fn run_workspace_files_smoke(root: PathBuf) -> Result<(), String> {
 
 pub(crate) async fn workspace_files_smoke_task(root: PathBuf) -> Result<(), String> {
     tokio::task::spawn_blocking(move || run_workspace_files_smoke(root))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+struct SmokeRecoveryKeyProvider;
+
+impl RecoveryKeyProvider for SmokeRecoveryKeyProvider {
+    fn load_or_create(&self) -> Result<RecoveryKey, RecoveryKeyError> {
+        Ok(RecoveryKey::new([0x5a; 32]))
+    }
+
+    fn delete(&self) -> Result<(), RecoveryKeyError> {
+        Ok(())
+    }
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "the smoke keeps its end-to-end contract explicit in one linear workflow"
+)]
+pub(crate) fn run_editor_smoke(root: &Path) -> Result<(), String> {
+    const SENTINEL: &str = "strukt-editor-smoke.txt";
+    const EDIT: &str = "edited by strukt\n";
+
+    let workspace_root = WorkspaceRoot::open(root).map_err(|error| error.to_string())?;
+    let opened = read_document(&workspace_root, SENTINEL, ReadOptions::default())
+        .map_err(|error| error.to_string())?;
+    let DocumentKind::Text {
+        read_only: false, ..
+    } = opened.kind
+    else {
+        return Err(format!("{SENTINEL} must be an editable UTF-8 text file"));
+    };
+    let initial = opened
+        .text
+        .ok_or_else(|| format!("{SENTINEL} had no text payload"))?;
+    let mut editor = EditorWorkspace::new(workspace_root.id().clone());
+    let id = editor
+        .open(
+            RelativeDocumentPath::new(SENTINEL).map_err(|error| error.to_string())?,
+            &initial,
+            opened.disk_revision,
+            false,
+            OpenDisposition::Preview,
+        )
+        .map_err(|error| error.to_string())?;
+    let revision = editor
+        .document(id)
+        .ok_or_else(|| "smoke document was not opened".to_owned())?
+        .revision();
+    editor
+        .edit(
+            id,
+            EditTransaction::insert(revision, initial.chars().count(), EDIT),
+            EditKind::Other,
+            0,
+            0,
+        )
+        .map_err(|error| error.to_string())?;
+    if !editor.view_state().tabs[0].pinned {
+        return Err("editing did not pin the preview tab".into());
+    }
+    editor.undo(id).map_err(|error| error.to_string())?;
+    editor.redo(id).map_err(|error| error.to_string())?;
+
+    let application_data = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let recovery_store = EditorRecoveryStore::at(application_data.path().join("recovery"));
+    let document = editor
+        .document(id)
+        .ok_or_else(|| "smoke document disappeared".to_owned())?;
+    let metadata = RecoveryMetadata::new(
+        workspace_root.id().as_str(),
+        SENTINEL,
+        document.disk_revision().as_str(),
+    );
+    let payload = RecoveryPayload::new(
+        metadata.clone(),
+        document.revision().as_u64(),
+        document.text(),
+    );
+    recovery_store
+        .save(&SmokeRecoveryKeyProvider, &payload)
+        .map_err(|error| error.to_string())?;
+    let recovered = recovery_store
+        .load(&SmokeRecoveryKeyProvider, &metadata)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "encrypted recovery did not round trip".to_owned())?;
+    if recovered.text != document.text() {
+        return Err("encrypted recovery content changed".into());
+    }
+
+    let expected_revision = document.revision();
+    let request = SaveRequest::new(
+        SENTINEL,
+        document.text().into_bytes(),
+        document.disk_revision().clone(),
+    );
+    let saved = save_document(&workspace_root, &request).map_err(|error| error.to_string())?;
+    editor
+        .complete_save(id, expected_revision, saved.disk_revision)
+        .map_err(|error| error.to_string())?;
+    recovery_store
+        .delete(&metadata)
+        .map_err(|error| error.to_string())?;
+
+    let document = editor
+        .document(id)
+        .ok_or_else(|| "saved smoke document disappeared".to_owned())?;
+    let disk = read_document(&workspace_root, SENTINEL, ReadOptions::default())
+        .map_err(|error| error.to_string())?;
+    let document_text = document.text();
+    if disk.text.as_deref() != Some(document_text.as_str()) {
+        return Err("saved editor content did not round trip through disk".into());
+    }
+
+    let mut tab = EditorTabSnapshot::new(SENTINEL, 0, 0, 0.0);
+    tab.disk_revision = Some(document.disk_revision().as_str().to_owned());
+    let session = EditorSessionSnapshot::new(vec![tab], Some(SENTINEL.into()), None);
+    let mut state = WorkspaceState::new(workspace_root);
+    state
+        .set_contribution("editor", &session)
+        .map_err(|error| error.to_string())?;
+    let workspace_store = WorkspaceStore::at(application_data.path().join("workspaces"));
+    workspace_store
+        .save(&state)
+        .map_err(|error| error.to_string())?;
+    let restored = workspace_store
+        .load_for_root(&state.root)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "workspace snapshot did not restore".to_owned())?;
+    let restored_editor = restored
+        .state
+        .contribution::<EditorSessionSnapshot>("editor")
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "editor snapshot did not restore".to_owned())?;
+    if restored_editor.active_path.as_deref() != Some(SENTINEL) {
+        return Err("restored editor snapshot lost its active tab".into());
+    }
+    if root.join(".strukt").exists() {
+        return Err("editor smoke created forbidden workspace metadata".into());
+    }
+    Ok(())
+}
+
+pub(crate) async fn editor_smoke_task(root: PathBuf) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || run_editor_smoke(&root))
         .await
         .map_err(|error| error.to_string())?
 }

@@ -564,12 +564,12 @@ git commit -m "feat: restore and reconcile editor state"
 - Modify: `.github/workflows/ci.yml`
 - Create: `docs/evidence/m2-editor-validation.md`
 
-- [ ] **Step 1: Write failing launch-mode tests**
+- [x] **Step 1: Write failing launch-mode tests**
 
 Accept only `--editor-smoke <fixture-root>`. Reject missing paths, extra arguments,
 near-match flags, binary fixtures, and fixtures without `strukt-editor-smoke.txt`.
 
-- [ ] **Step 2: Implement the smoke workflow**
+- [x] **Step 2: Implement the smoke workflow**
 
 The smoke opens the sentinel through the workspace capability, creates a preview,
 edits and pins it, undoes/redoes, saves, verifies disk content, writes and reloads a
@@ -582,13 +582,13 @@ strukt editor smoke: open, edit, save, and restore passed
 and exits zero. Use an isolated application-data directory and in-memory recovery
 key provider so CI never touches a real credential store.
 
-- [ ] **Step 3: Add hosted smoke steps**
+- [x] **Step 3: Add hosted smoke steps**
 
 Create the same temporary UTF-8 fixture on macOS, Ubuntu, and Windows. Require the
 exact marker and a zero exit code. Keep the existing native startup and workspace
 files smokes.
 
-- [ ] **Step 4: Draft evidence and commit**
+- [x] **Step 4: Draft evidence and commit**
 
 Record the local commands, smoke contract, manual checklist, Windows-hosted key
 provider contract, known Iced limitations, and remaining M2 slices.
