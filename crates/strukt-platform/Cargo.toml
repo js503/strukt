@@ -12,6 +12,9 @@ windows-sys = { version = "0.61.2", features = [
   "Win32_Storage_FileSystem",
 ] }
 
+[target.'cfg(windows)'.dev-dependencies]
+tempfile.workspace = true
+
 [lints.clippy]
 all = "deny"
 pedantic = "deny"
