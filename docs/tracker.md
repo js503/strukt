@@ -10,7 +10,7 @@ Milestone order, dependencies, outcomes, and exit criteria are defined in
 | M2 | Local development workspace (overall milestone) | In progress | [`specs/0003-local-development-workspace.md`](specs/0003-local-development-workspace.md) | — | — | — |
 | M2.1 | Workspace and files slice | Complete | [`specs/0003-local-development-workspace.md`](specs/0003-local-development-workspace.md) | [`plans/0003-m2-workspace-files.md`](plans/0003-m2-workspace-files.md) | [#3](https://github.com/js503/strukt/issues/3) | [#4](https://github.com/js503/strukt/pull/4) |
 | M2.2 | Editor slice | Complete | [`specs/0004-m2-editor.md`](specs/0004-m2-editor.md) | [`plans/0004-m2-editor.md`](plans/0004-m2-editor.md) | [#5](https://github.com/js503/strukt/issues/5) | [#6](https://github.com/js503/strukt/pull/6) |
-| M2.3 | Local terminal slice | Planned | [`specs/0005-m2-local-terminal.md`](specs/0005-m2-local-terminal.md) | [`plans/0005-m2-local-terminal.md`](plans/0005-m2-local-terminal.md) | Not created | Not created |
+| M2.3 | Local terminal slice | In progress | [`specs/0005-m2-local-terminal.md`](specs/0005-m2-local-terminal.md) | [`plans/0005-m2-local-terminal.md`](plans/0005-m2-local-terminal.md) | [#7](https://github.com/js503/strukt/issues/7) | Not created |
 | M3 | Local persistent sessions | Not planned | Not created | Not created | Not created | Not created |
 | M4 | SSH remote workspace | Not planned | Not created | Not created | Not created | Not created |
 | M5 | Remote persistent sessions | Not planned | Not created | Not created | Not created | Not created |
