@@ -4,8 +4,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use strukt_terminal::{
-    DrainBudget, ExitStatus, GridSize, OutputChunk, RuntimePaneState, SpawnRequest, TerminalPaneId,
-    TerminalProcess, TerminalRuntime, TerminalSize, TerminalTransport, TransportError,
+    DrainBudget, ExitStatus, GridSize, OutputChunk, PasteDecision, RuntimePaneState, Selection,
+    SpawnRequest, TerminalKey, TerminalPaneId, TerminalProcess, TerminalRuntime, TerminalSize,
+    TerminalTransport, TransportError,
 };
 
 #[test]
@@ -139,6 +140,31 @@ fn explicit_termination_reduces_to_an_exited_pane() {
         runtime.state(pane),
         Some(RuntimePaneState::Exited { code: None })
     ));
+}
+
+#[test]
+fn runtime_exposes_model_interactions_without_leaking_mutable_model_access() {
+    let transport = Arc::new(FakeTransport::default());
+    let mut runtime = TerminalRuntime::new(transport, 100);
+    let pane = TerminalPaneId::new();
+    let generation = runtime.prepare(pane, GridSize::new(2, 20).unwrap());
+    runtime
+        .apply_output(pane, generation, OutputChunk::new(0, b"hello".to_vec()))
+        .unwrap();
+    let _ = runtime.drain(DrainBudget::default());
+
+    assert_eq!(
+        runtime
+            .copy_text(pane, &Selection::linear((0, 0), (0, 4)))
+            .unwrap(),
+        "hello"
+    );
+    assert_eq!(runtime.encode_key(pane, TerminalKey::Enter).unwrap(), b"\r");
+    assert!(matches!(
+        runtime.prepare_paste(pane, "safe", false).unwrap(),
+        PasteDecision::Send(bytes) if bytes == b"safe"
+    ));
+    assert_eq!(runtime.snapshot_at(pane, 1).unwrap().viewport_offset(), 0);
 }
 
 fn spawn_request() -> SpawnRequest {

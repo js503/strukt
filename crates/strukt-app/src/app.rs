@@ -22,13 +22,19 @@ use strukt_fs::{
 use strukt_persistence::{
     EditorRecoveryStore, EditorSessionSnapshot, EditorTabSnapshot, RecentWorkspaces, RecoveryKey,
     RecoveryKeyError, RecoveryKeyProvider, RecoveryMetadata, RecoveryPayload, WorkspaceStore,
+    set_terminal_contribution, terminal_contribution,
 };
 use strukt_shell::{Activity, ShellAction, ShellState};
+use strukt_terminal::{
+    PasteDecision, Selection, SplitAxis, TerminalKey, TerminalPaneId, TerminalTabId,
+};
 use strukt_theme::ThemeMode;
 use strukt_workspace::{WorkspaceRoot, WorkspaceState};
 
 use crate::editor::EditorSurfaces;
 use crate::recovery_key::NativeRecoveryKeyProvider;
+use crate::terminal::TerminalSurfaces;
+use crate::terminal_widget::TerminalWidgetEvent;
 use crate::workspace::{OpenedWorkspace, open_workspace_without_store};
 
 const SMOKE_TEST_DURATION: Duration = Duration::from_secs(3);
@@ -117,6 +123,13 @@ pub struct StruktApp {
     pub editor_replace_text: String,
     pub editor_find_options: FindOptions,
     pub editor_language_overrides: HashMap<DocumentId, String>,
+    pub(crate) terminal: TerminalSurfaces,
+    pub terminal_error: Option<String>,
+    pub terminal_tab_name: String,
+    pub pending_terminal_close: Option<TerminalPaneId>,
+    pub pending_terminal_paste: Option<(TerminalPaneId, String)>,
+    pub pending_terminal_link: Option<String>,
+    terminal_input_active: bool,
     editor_scroll_lines: HashMap<DocumentId, f32>,
     editor_restore_active: Option<String>,
     editor_restore_tabs: HashMap<String, EditorTabSnapshot>,
@@ -190,6 +203,35 @@ pub enum Message {
     OpenFolder,
     FolderPicked(Option<PathBuf>),
     WorkspaceOpened(Result<OpenedWorkspace, String>),
+    NewTerminal,
+    StartTerminal(TerminalPaneId),
+    SplitTerminal(SplitAxis),
+    ActivateTerminalTab(TerminalTabId),
+    TerminalTabNameChanged(String),
+    RenameTerminalTab,
+    RestartTerminal(TerminalPaneId),
+    RequestCloseTerminal(TerminalPaneId),
+    ResolveCloseTerminal(bool),
+    TerminalWidget(TerminalWidgetEvent),
+    TerminalInput {
+        pane: TerminalPaneId,
+        bytes: Vec<u8>,
+    },
+    TerminalKey {
+        pane: TerminalPaneId,
+        key: TerminalKey,
+    },
+    CopyTerminal(TerminalPaneId),
+    RequestTerminalPaste(TerminalPaneId),
+    TerminalClipboardRead {
+        pane: TerminalPaneId,
+        text: Option<String>,
+    },
+    ResolveTerminalPaste(bool),
+    InspectTerminalLink(String),
+    ResolveTerminalLink(bool),
+    TerminalLinkOpened(Result<(), String>),
+    PollTerminal,
     ToggleHiddenFiles,
     ToggleIgnoredFiles,
     FilesRefreshed {
@@ -401,6 +443,13 @@ impl StruktApp {
             editor_replace_text: String::new(),
             editor_find_options: FindOptions::default(),
             editor_language_overrides: HashMap::new(),
+            terminal: TerminalSurfaces::default(),
+            terminal_error: None,
+            terminal_tab_name: String::new(),
+            pending_terminal_close: None,
+            pending_terminal_paste: None,
+            pending_terminal_link: None,
+            terminal_input_active: false,
             editor_scroll_lines: HashMap::new(),
             editor_restore_active: None,
             editor_restore_tabs: HashMap::new(),
@@ -479,6 +528,230 @@ impl StruktApp {
     )]
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::NewTerminal => {
+                if !self.capabilities.is_enabled(CapabilityId::TERMINAL) {
+                    return Task::none();
+                }
+                let Some(root) = self
+                    .workspace
+                    .as_ref()
+                    .map(|workspace| workspace.root.path().to_path_buf())
+                else {
+                    return Task::none();
+                };
+                match self.terminal.new_tab(&root) {
+                    Ok(pane) => {
+                        self.terminal_error = None;
+                        self.shell.drawer_visible = true;
+                        self.sync_terminal_contribution();
+                        return Task::done(Message::StartTerminal(pane));
+                    }
+                    Err(error) => self.terminal_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::SplitTerminal(axis) => {
+                if self.workspace.is_none() || !self.capabilities.is_enabled(CapabilityId::TERMINAL)
+                {
+                    return Task::none();
+                }
+                match self.terminal.split_focused(axis) {
+                    Ok(pane) => {
+                        self.terminal_error = None;
+                        self.sync_terminal_contribution();
+                        return Task::done(Message::StartTerminal(pane));
+                    }
+                    Err(error) => self.terminal_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::ActivateTerminalTab(tab) => {
+                match self.terminal.activate_tab(tab) {
+                    Ok(()) => {
+                        self.terminal_error = None;
+                        self.terminal_tab_name = self
+                            .terminal
+                            .workspace()
+                            .active_tab()
+                            .map_or_else(String::new, |tab| tab.name().to_owned());
+                        self.sync_terminal_contribution();
+                    }
+                    Err(error) => self.terminal_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::TerminalTabNameChanged(name) => {
+                self.terminal_tab_name = name;
+                return Task::none();
+            }
+            Message::RenameTerminalTab => {
+                match self
+                    .terminal
+                    .rename_active_tab(self.terminal_tab_name.clone())
+                {
+                    Ok(()) => {
+                        self.terminal_error = None;
+                        self.sync_terminal_contribution();
+                    }
+                    Err(error) => self.terminal_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::StartTerminal(pane) => {
+                if self.workspace.is_none() || !self.capabilities.is_enabled(CapabilityId::TERMINAL)
+                {
+                    return Task::none();
+                }
+                if let Err(error) = self.terminal.start(pane) {
+                    self.terminal_error = Some(error.to_string());
+                } else {
+                    self.terminal_error = None;
+                }
+                return Task::none();
+            }
+            Message::RestartTerminal(pane) => {
+                if let Err(error) = self.terminal.start(pane) {
+                    self.terminal_error = Some(error.to_string());
+                } else {
+                    self.terminal_error = None;
+                }
+                return Task::none();
+            }
+            Message::RequestCloseTerminal(pane) => {
+                if self.terminal.running(pane) {
+                    self.pending_terminal_close = Some(pane);
+                } else if let Err(error) = self.terminal.close(pane) {
+                    self.terminal_error = Some(error.to_string());
+                } else {
+                    self.sync_terminal_contribution();
+                }
+                return Task::none();
+            }
+            Message::ResolveCloseTerminal(close) => {
+                let pane = self.pending_terminal_close.take();
+                if close && let Some(pane) = pane {
+                    if let Err(error) = self.terminal.close(pane) {
+                        self.terminal_error = Some(error.to_string());
+                    } else {
+                        self.terminal_error = None;
+                        self.sync_terminal_contribution();
+                    }
+                }
+                return Task::none();
+            }
+            Message::TerminalWidget(event) => {
+                let result = match event {
+                    TerminalWidgetEvent::Focus(pane) => {
+                        self.terminal_input_active = true;
+                        self.terminal.focus_pane(pane)
+                    }
+                    TerminalWidgetEvent::Resize { pane, size } => self.terminal.resize(pane, size),
+                    TerminalWidgetEvent::Select { pane, start, end } => {
+                        self.terminal.select(pane, Selection::linear(start, end))
+                    }
+                    TerminalWidgetEvent::Scroll { pane, lines } => {
+                        self.terminal.scroll(pane, lines)
+                    }
+                };
+                if let Err(error) = result {
+                    self.terminal_error = Some(error.to_string());
+                }
+                return Task::none();
+            }
+            Message::TerminalInput { pane, bytes } => {
+                if let Err(error) = self.terminal.write(pane, &bytes) {
+                    self.terminal_error = Some(error.to_string());
+                }
+                return Task::none();
+            }
+            Message::TerminalKey { pane, key } => {
+                if let Err(error) = self.terminal.write_key(pane, key) {
+                    self.terminal_error = Some(error.to_string());
+                }
+                return Task::none();
+            }
+            Message::CopyTerminal(pane) => {
+                return match self.terminal.copy_selection(pane) {
+                    Ok(Some(text)) => iced::clipboard::write(text),
+                    Ok(None) => Task::none(),
+                    Err(error) => {
+                        self.terminal_error = Some(error.to_string());
+                        Task::none()
+                    }
+                };
+            }
+            Message::RequestTerminalPaste(pane) => {
+                return iced::clipboard::read()
+                    .map(move |text| Message::TerminalClipboardRead { pane, text });
+            }
+            Message::TerminalClipboardRead { pane, text } => {
+                let Some(text) = text else {
+                    return Task::none();
+                };
+                match self.terminal.prepare_paste(pane, &text, false) {
+                    Ok(PasteDecision::Send(bytes)) => {
+                        return self.update(Message::TerminalInput { pane, bytes });
+                    }
+                    Ok(PasteDecision::Confirm { .. }) => {
+                        self.pending_terminal_paste = Some((pane, text));
+                    }
+                    Err(error) => self.terminal_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::ResolveTerminalPaste(send) => {
+                let pending = self.pending_terminal_paste.take();
+                if send && let Some((pane, text)) = pending {
+                    match self.terminal.prepare_paste(pane, &text, true) {
+                        Ok(PasteDecision::Send(bytes)) => {
+                            return self.update(Message::TerminalInput { pane, bytes });
+                        }
+                        Ok(PasteDecision::Confirm { .. }) => {
+                            self.terminal_error = Some(
+                                "terminal paste remained unconfirmed after approval".to_owned(),
+                            );
+                        }
+                        Err(error) => self.terminal_error = Some(error.to_string()),
+                    }
+                }
+                return Task::none();
+            }
+            Message::InspectTerminalLink(target) => {
+                if supported_terminal_link_target(&target) {
+                    self.pending_terminal_link = Some(target);
+                    self.terminal_error = None;
+                } else {
+                    self.terminal_error = Some("unsupported terminal link scheme".to_owned());
+                }
+                return Task::none();
+            }
+            Message::ResolveTerminalLink(open_link) => {
+                let target = self.pending_terminal_link.take();
+                if !open_link {
+                    return Task::none();
+                }
+                let Some(target) = target else {
+                    return Task::none();
+                };
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || open::that(target))
+                            .await
+                            .map_err(|error| error.to_string())?
+                            .map_err(|error| error.to_string())
+                    },
+                    Message::TerminalLinkOpened,
+                );
+            }
+            Message::TerminalLinkOpened(result) => {
+                self.terminal_error = result.err();
+                return Task::none();
+            }
+            Message::PollTerminal => {
+                let batch = self.terminal.poll();
+                let _ = batch;
+                return Task::none();
+            }
             Message::OpenFolder => {
                 if self.open_folder_in_flight || self.recent_mutation_in_flight {
                     return Task::none();
@@ -506,6 +779,25 @@ impl StruktApp {
                 return Task::none();
             }
             Message::WorkspaceOpened(Ok(mut opened)) => {
+                let terminal_restore = terminal_contribution(&opened.state).ok().flatten();
+                match TerminalSurfaces::restore(terminal_restore.as_ref()) {
+                    Ok(terminal) => {
+                        self.terminal = terminal;
+                        self.terminal_error = None;
+                        self.terminal_tab_name = self
+                            .terminal
+                            .workspace()
+                            .active_tab()
+                            .map_or_else(String::new, |tab| tab.name().to_owned());
+                        self.terminal_input_active = false;
+                    }
+                    Err(error) => {
+                        self.terminal = TerminalSurfaces::default();
+                        self.terminal_error = Some(error.to_string());
+                        self.terminal_tab_name.clear();
+                        self.terminal_input_active = false;
+                    }
+                }
                 let editor_restore = opened
                     .state
                     .contribution::<EditorSessionSnapshot>("editor")
@@ -693,6 +985,7 @@ impl StruktApp {
                         .any(|entry| entry.relative_path == path && entry.kind == FileKind::File);
                     self.selected_entry = Some(path.clone());
                     if is_file {
+                        self.terminal_input_active = false;
                         self.editor_restore_active = None;
                         return self.open_document_task(path, OpenDisposition::Preview, false);
                     }
@@ -704,6 +997,7 @@ impl StruktApp {
                 disposition,
                 force_full,
             } => {
+                self.terminal_input_active = false;
                 self.editor_restore_active = None;
                 return self.open_document_task(path, disposition, force_full);
             }
@@ -885,6 +1179,7 @@ impl StruktApp {
                 return Task::none();
             }
             Message::EditorAction { id, action } => {
+                self.terminal_input_active = false;
                 let is_edit = action.is_edit();
                 let scroll_delta = match &action {
                     text_editor::Action::Scroll { lines } => Some(scroll_lines_as_f32(*lines)),
@@ -909,6 +1204,7 @@ impl StruktApp {
                 return Task::none();
             }
             Message::SelectDocument(id) => {
+                self.terminal_input_active = false;
                 if let Some(editor) = &mut self.editor
                     && let Err(error) = editor.select(id)
                 {
@@ -1719,6 +2015,26 @@ impl StruktApp {
             Message::OpenFolder
             | Message::FolderPicked(_)
             | Message::WorkspaceOpened(_)
+            | Message::NewTerminal
+            | Message::StartTerminal(_)
+            | Message::SplitTerminal(_)
+            | Message::ActivateTerminalTab(_)
+            | Message::TerminalTabNameChanged(_)
+            | Message::RenameTerminalTab
+            | Message::RestartTerminal(_)
+            | Message::RequestCloseTerminal(_)
+            | Message::ResolveCloseTerminal(_)
+            | Message::TerminalWidget(_)
+            | Message::TerminalInput { .. }
+            | Message::TerminalKey { .. }
+            | Message::CopyTerminal(_)
+            | Message::RequestTerminalPaste(_)
+            | Message::TerminalClipboardRead { .. }
+            | Message::ResolveTerminalPaste(_)
+            | Message::InspectTerminalLink(_)
+            | Message::ResolveTerminalLink(_)
+            | Message::TerminalLinkOpened(_)
+            | Message::PollTerminal
             | Message::ToggleHiddenFiles
             | Message::ToggleIgnoredFiles
             | Message::FilesRefreshed { .. }
@@ -1779,9 +2095,59 @@ impl StruktApp {
             | Message::ToggleSearchIgnored => {
                 unreachable!("handled before shell actions")
             }
-            Message::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
-                if modifiers.command() =>
-            {
+            Message::Keyboard(keyboard::Event::KeyPressed {
+                key,
+                modifiers,
+                text,
+                ..
+            }) => {
+                let terminal_pane = self
+                    .terminal_input_active
+                    .then(|| self.terminal.workspace().focused_pane())
+                    .flatten();
+                if let Some(pane) = terminal_pane {
+                    if modifiers.command() {
+                        match key.as_ref() {
+                            Key::Character("t") => return self.update(Message::NewTerminal),
+                            Key::Character("d") => {
+                                return self.update(Message::SplitTerminal(if modifiers.shift() {
+                                    SplitAxis::Horizontal
+                                } else {
+                                    SplitAxis::Vertical
+                                }));
+                            }
+                            Key::Character("c") => {
+                                return self.update(Message::CopyTerminal(pane));
+                            }
+                            Key::Character("v") => {
+                                return self.update(Message::RequestTerminalPaste(pane));
+                            }
+                            Key::Character("w") => {
+                                return self.update(Message::RequestCloseTerminal(pane));
+                            }
+                            _ => {}
+                        }
+                    } else if modifiers.control()
+                        && let Key::Character(character) = key.as_ref()
+                        && let Some(byte) = control_byte(character)
+                    {
+                        return self.update(Message::TerminalInput {
+                            pane,
+                            bytes: vec![byte],
+                        });
+                    } else if let Some(key) = semantic_terminal_key(&key.as_ref()) {
+                        return self.update(Message::TerminalKey { pane, key });
+                    } else if let Some(text) = text.filter(|text| !text.is_empty()) {
+                        return self.update(Message::TerminalInput {
+                            pane,
+                            bytes: text.as_bytes().to_vec(),
+                        });
+                    }
+                }
+
+                if !modifiers.command() {
+                    return Task::none();
+                }
                 match key.as_ref() {
                     Key::Character("b") => Some(ShellAction::ToggleExplorer),
                     Key::Character("j") => Some(ShellAction::ToggleDrawer),
@@ -1836,8 +2202,12 @@ impl StruktApp {
             }
         };
         let explorer_was_visible = self.shell.explorer_visible;
+        let drawer_was_visible = self.shell.drawer_visible;
         if let Some(action) = action {
             self.shell.apply(action);
+        }
+        if drawer_was_visible && !self.shell.drawer_visible {
+            self.terminal_input_active = false;
         }
 
         if self.shell.explorer_visible != explorer_was_visible
@@ -2233,6 +2603,11 @@ impl StruktApp {
         let Some(mut state) = self.workspace.clone() else {
             return Task::none();
         };
+        let terminal_snapshot = self.terminal.session_snapshot();
+        let _ = set_terminal_contribution(&mut state, &terminal_snapshot);
+        if let Some(workspace) = &mut self.workspace {
+            let _ = set_terminal_contribution(workspace, &terminal_snapshot);
+        }
         if let Some(snapshot) = self.editor_session_snapshot() {
             let _ = state.set_contribution("editor", &snapshot);
             if let Some(workspace) = &mut self.workspace {
@@ -2247,6 +2622,15 @@ impl StruktApp {
             Task::none()
         } else {
             self.start_persistence(state)
+        }
+    }
+
+    fn sync_terminal_contribution(&mut self) {
+        let snapshot = self.terminal.session_snapshot();
+        if let Some(workspace) = &mut self.workspace
+            && let Err(error) = set_terminal_contribution(workspace, &snapshot)
+        {
+            self.terminal_error = Some(error.to_string());
         }
     }
 
@@ -2608,11 +2992,44 @@ impl StruktApp {
             subscriptions
                 .push(time::every(Duration::from_millis(250)).map(|_| Message::PollWatcher));
         }
+        if self.terminal.running_processes() > 0 {
+            subscriptions
+                .push(time::every(Duration::from_millis(16)).map(|_| Message::PollTerminal));
+        }
         if let Some(timeout) = self.launch_mode.smoke_timeout() {
             subscriptions.push(time::every(timeout).map(|_| Message::SmokeTimeout));
         }
         Subscription::batch(subscriptions)
     }
+}
+
+fn semantic_terminal_key(key: &Key<&str>) -> Option<TerminalKey> {
+    use keyboard::key::Named;
+
+    match key {
+        Key::Named(Named::ArrowUp) => Some(TerminalKey::ArrowUp),
+        Key::Named(Named::ArrowDown) => Some(TerminalKey::ArrowDown),
+        Key::Named(Named::ArrowRight) => Some(TerminalKey::ArrowRight),
+        Key::Named(Named::ArrowLeft) => Some(TerminalKey::ArrowLeft),
+        Key::Named(Named::Home) => Some(TerminalKey::Home),
+        Key::Named(Named::End) => Some(TerminalKey::End),
+        Key::Named(Named::Enter) => Some(TerminalKey::Enter),
+        Key::Named(Named::Backspace) => Some(TerminalKey::Backspace),
+        Key::Named(Named::Tab) => Some(TerminalKey::Tab),
+        Key::Named(Named::Escape) => Some(TerminalKey::Escape),
+        _ => None,
+    }
+}
+
+fn control_byte(character: &str) -> Option<u8> {
+    let byte = character.as_bytes().first()?.to_ascii_lowercase();
+    byte.is_ascii_lowercase().then(|| byte - b'a' + 1)
+}
+
+pub(crate) fn supported_terminal_link_target(target: &str) -> bool {
+    ["https://", "http://", "mailto:", "file://"]
+        .iter()
+        .any(|scheme| target.starts_with(scheme))
 }
 
 #[derive(Debug, Default, Eq, PartialEq)]

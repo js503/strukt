@@ -14,6 +14,11 @@ fn terminal_and_connection_tokens_are_semantic() {
     let theme = ThemeTokens::builtin(ThemeMode::Dark);
 
     assert_ne!(theme.terminal_background, theme.panel);
+    assert_eq!(theme.terminal_ansi.len(), 16);
+    assert_ne!(theme.terminal_foreground, theme.terminal_background);
+    assert_ne!(theme.terminal_selection, theme.terminal_cursor);
+    assert_ne!(theme.terminal_link, theme.terminal_foreground);
+    assert_ne!(theme.terminal_exited, theme.terminal_backpressure);
     assert_ne!(theme.connection_remote, theme.status_warning);
 }
 

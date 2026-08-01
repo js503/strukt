@@ -3,6 +3,8 @@
 mod app;
 mod editor;
 mod recovery_key;
+mod terminal;
+mod terminal_widget;
 mod view;
 mod workspace;
 
@@ -59,15 +61,16 @@ mod tests {
     };
     use strukt_persistence::{
         EditorRecoveryStore, EditorSessionSnapshot, RecoveryMetadata, RecoveryPayload,
-        WorkspaceStore,
+        TerminalSessionSnapshot, WorkspaceStore, set_terminal_contribution, terminal_contribution,
     };
     use strukt_shell::Activity;
+    use strukt_terminal::{PaneState, SplitAxis, TerminalWorkspace};
     use strukt_workspace::{WorkspaceRoot, WorkspaceState};
     use tempfile::{TempDir, tempdir};
 
     use crate::app::{
         ExplorerDialog, LaunchMode, Message, StruktApp, operation_from_dialog, run_editor_smoke,
-        run_workspace_files_smoke,
+        run_workspace_files_smoke, supported_terminal_link_target,
     };
 
     fn key_pressed(character: &'static str, code: key::Code, modifiers: Modifiers) -> Message {
@@ -411,6 +414,146 @@ mod tests {
         assert!(app.capabilities.is_enabled(CapabilityId::AI));
         assert!(app.capabilities.is_enabled(CapabilityId::EDITOR_DOCUMENTS));
         assert!(app.capabilities.is_enabled(CapabilityId::EDITOR_SYNTAX));
+    }
+
+    #[test]
+    fn terminal_commands_require_a_workspace_and_never_spawn_on_open() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        assert_eq!(app.update(Message::NewTerminal).units(), 0);
+
+        app.workspace = Some(workspace_state(project.path()));
+        assert!(app.terminal.workspace().tabs().is_empty());
+        assert_eq!(app.update(Message::NewTerminal).units(), 1);
+
+        assert_eq!(app.terminal.workspace().tabs().len(), 1);
+        assert_eq!(app.terminal.running_processes(), 0);
+    }
+
+    #[test]
+    fn restored_terminal_contribution_creates_only_stopped_placeholders() {
+        let project = tempdir().unwrap();
+        let mut terminal = TerminalWorkspace::default();
+        terminal.create_tab("build", project.path()).unwrap();
+        terminal.split_focused(SplitAxis::Vertical).unwrap();
+        let snapshot = TerminalSessionSnapshot::from_workspace(&terminal);
+        let mut opened = open_workspace(&project);
+        set_terminal_contribution(&mut opened.state, &snapshot).unwrap();
+        let mut app = StruktApp::default();
+
+        let _ = app.update(Message::WorkspaceOpened(Ok(opened)));
+
+        assert!(
+            app.terminal
+                .workspace()
+                .panes()
+                .all(|pane| matches!(pane.state(), PaneState::Stopped))
+        );
+        assert_eq!(app.terminal.running_processes(), 0);
+    }
+
+    #[test]
+    fn terminal_layout_changes_persist_and_capability_disablement_is_isolated() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        app.capabilities
+            .set_enabled(CapabilityId::TERMINAL, false)
+            .unwrap();
+        assert_eq!(app.update(Message::NewTerminal).units(), 0);
+        assert!(app.terminal.workspace().tabs().is_empty());
+        assert!(app.capabilities.is_enabled(CapabilityId::FILES));
+        assert!(app.capabilities.is_enabled(CapabilityId::EDITOR_DOCUMENTS));
+
+        app.capabilities
+            .set_enabled(CapabilityId::TERMINAL, true)
+            .unwrap();
+        let _ = app.update(Message::NewTerminal);
+        let _ = app.update(Message::SplitTerminal(SplitAxis::Horizontal));
+        let saved = terminal_contribution(app.workspace.as_ref().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.tabs.len(), 1);
+        assert!(matches!(
+            saved.tabs[0].root,
+            strukt_terminal::LayoutNode::Split { .. }
+        ));
+    }
+
+    #[test]
+    fn replacing_a_workspace_discards_the_previous_terminal_runtime() {
+        let first = tempdir().unwrap();
+        let second = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(first.path()));
+        let _ = app.update(Message::NewTerminal);
+        assert_eq!(app.terminal.workspace().tabs().len(), 1);
+
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&second))));
+
+        assert!(app.terminal.workspace().tabs().is_empty());
+        assert_eq!(app.terminal.running_processes(), 0);
+    }
+
+    #[test]
+    fn terminal_tabs_can_be_renamed_activated_and_closed_without_spawning() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        let _ = app.update(Message::NewTerminal);
+        let first = app.terminal.workspace().active_tab().unwrap().id();
+        let first_pane = app.terminal.workspace().focused_pane().unwrap();
+        let _ = app.update(Message::NewTerminal);
+
+        let _ = app.update(Message::ActivateTerminalTab(first));
+        let _ = app.update(Message::TerminalTabNameChanged("server".to_owned()));
+        let _ = app.update(Message::RenameTerminalTab);
+        assert_eq!(
+            app.terminal.workspace().active_tab().unwrap().name(),
+            "server"
+        );
+
+        let _ = app.update(Message::RequestCloseTerminal(first_pane));
+        assert_eq!(app.terminal.workspace().tabs().len(), 1);
+        assert_eq!(app.terminal.running_processes(), 0);
+    }
+
+    #[test]
+    fn oversized_terminal_paste_requires_explicit_confirmation() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        let _ = app.update(Message::NewTerminal);
+        let pane = app.terminal.workspace().focused_pane().unwrap();
+        let large = "x".repeat(1024 * 1024 + 1);
+
+        let _ = app.update(Message::TerminalClipboardRead {
+            pane,
+            text: Some(large),
+        });
+
+        assert!(app.pending_terminal_paste.is_some());
+        let _ = app.update(Message::ResolveTerminalPaste(false));
+        assert!(app.pending_terminal_paste.is_none());
+    }
+
+    #[test]
+    fn terminal_links_require_supported_exact_targets_and_second_action() {
+        assert!(supported_terminal_link_target("https://example.com/path"));
+        assert!(supported_terminal_link_target("mailto:dev@example.com"));
+        assert!(!supported_terminal_link_target("javascript:alert(1)"));
+        assert!(!supported_terminal_link_target("HTTPS://example.com"));
+
+        let mut app = StruktApp::default();
+        let _ = app.update(Message::InspectTerminalLink(
+            "https://example.com/path".to_owned(),
+        ));
+        assert_eq!(
+            app.pending_terminal_link.as_deref(),
+            Some("https://example.com/path")
+        );
+        let _ = app.update(Message::ResolveTerminalLink(false));
+        assert!(app.pending_terminal_link.is_none());
     }
 
     #[test]

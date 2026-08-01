@@ -44,6 +44,16 @@ impl Selection {
             }
         }
     }
+
+    #[must_use]
+    pub const fn start(self) -> TerminalCoordinate {
+        self.start
+    }
+
+    #[must_use]
+    pub const fn end(self) -> TerminalCoordinate {
+        self.end
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]

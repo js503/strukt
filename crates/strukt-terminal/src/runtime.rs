@@ -5,8 +5,9 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 
 use crate::{
-    GridSize, OutputChunk, SpawnRequest, TerminalModel, TerminalPaneId, TerminalProcess,
-    TerminalSize, TerminalSnapshot, TerminalTransport, TransportError,
+    GridSize, OutputChunk, PasteDecision, Selection, SelectionError, SpawnRequest, TerminalKey,
+    TerminalLink, TerminalModel, TerminalPaneId, TerminalProcess, TerminalSize, TerminalSnapshot,
+    TerminalTransport, TransportError,
 };
 
 const MAX_PENDING_BYTES: usize = 4 * 1024 * 1024;
@@ -226,10 +227,97 @@ impl TerminalRuntime {
     }
 
     #[must_use]
+    pub fn running_processes(&self) -> usize {
+        self.panes
+            .values()
+            .filter(|runtime| runtime.process.is_some())
+            .count()
+    }
+
+    #[must_use]
     pub fn snapshot(&self, pane: TerminalPaneId) -> Option<TerminalSnapshot> {
+        self.snapshot_at(pane, 0)
+    }
+
+    #[must_use]
+    pub fn snapshot_at(
+        &self,
+        pane: TerminalPaneId,
+        viewport_offset: usize,
+    ) -> Option<TerminalSnapshot> {
         self.panes
             .get(&pane)
-            .map(|runtime| runtime.model.snapshot(0))
+            .map(|runtime| runtime.model.snapshot(viewport_offset))
+    }
+
+    /// Copies selected visible text through the pane's bounded model.
+    ///
+    /// # Errors
+    ///
+    /// Returns a missing-pane or selection-bounds error.
+    pub fn copy_text(
+        &self,
+        pane: TerminalPaneId,
+        selection: &Selection,
+    ) -> Result<String, RuntimeError> {
+        self.panes
+            .get(&pane)
+            .ok_or(RuntimeError::PaneNotFound)?
+            .model
+            .copy_text(selection)
+            .map_err(RuntimeError::Selection)
+    }
+
+    /// Encodes a semantic key using the pane's current terminal modes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::PaneNotFound`] for an unknown pane.
+    pub fn encode_key(
+        &self,
+        pane: TerminalPaneId,
+        key: TerminalKey,
+    ) -> Result<Vec<u8>, RuntimeError> {
+        Ok(self
+            .panes
+            .get(&pane)
+            .ok_or(RuntimeError::PaneNotFound)?
+            .model
+            .encode_key(key))
+    }
+
+    /// Applies paste sanitization, size confirmation, and bracketed-paste policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::PaneNotFound`] for an unknown pane.
+    pub fn prepare_paste(
+        &self,
+        pane: TerminalPaneId,
+        text: &str,
+        confirmed: bool,
+    ) -> Result<PasteDecision, RuntimeError> {
+        Ok(self
+            .panes
+            .get(&pane)
+            .ok_or(RuntimeError::PaneNotFound)?
+            .model
+            .prepare_paste(text, confirmed))
+    }
+
+    /// Discovers links in the pane snapshot without opening them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::PaneNotFound`] for an unknown pane.
+    pub fn links(&self, pane: TerminalPaneId) -> Result<Vec<TerminalLink>, RuntimeError> {
+        Ok(self
+            .panes
+            .get(&pane)
+            .ok_or(RuntimeError::PaneNotFound)?
+            .model
+            .links()
+            .collect())
     }
 
     #[must_use]
@@ -285,6 +373,11 @@ impl TerminalRuntime {
         self.record_transport_result(pane, result)
     }
 
+    /// Removes a stopped or terminated pane runtime from memory.
+    pub fn discard(&mut self, pane: TerminalPaneId) {
+        self.panes.remove(&pane);
+    }
+
     fn process_mut(
         &mut self,
         pane: TerminalPaneId,
@@ -309,6 +402,16 @@ impl TerminalRuntime {
                     runtime.last_error = Some(error.to_string());
                 }
                 Err(RuntimeError::Transport(error))
+            }
+        }
+    }
+}
+
+impl Drop for TerminalRuntime {
+    fn drop(&mut self) {
+        for runtime in self.panes.values_mut() {
+            if let Some(process) = &mut runtime.process {
+                let _ = process.terminate(Duration::from_millis(500));
             }
         }
     }
@@ -456,6 +559,8 @@ pub enum RuntimeError {
     OutOfOrder,
     #[error("terminal pane output queue is full")]
     QueueFull,
+    #[error(transparent)]
+    Selection(#[from] SelectionError),
     #[error(transparent)]
     Transport(#[from] TransportError),
 }
