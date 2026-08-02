@@ -163,8 +163,15 @@ service.
   [#8 — feat: add M2 local terminals](https://github.com/js503/strukt/pull/8)
 - Third-slice local-terminal validation:
   [`evidence/m2-local-terminal-validation.md`](evidence/m2-local-terminal-validation.md)
-- Remaining after the third slice: language intelligence and final M2
-  integration/restoration validation
+- Fourth-slice language-intelligence spec:
+  [`specs/0006-m2-language-intelligence.md`](specs/0006-m2-language-intelligence.md)
+- Fourth-slice implementation plan:
+  [`plans/0006-m2-language-intelligence.md`](plans/0006-m2-language-intelligence.md)
+- Fourth-slice issue:
+  [#9 — M2.4: Language intelligence and M2 integration](https://github.com/js503/strukt/issues/9)
+- Fourth-slice pull request:
+  [#10 — feat: add M2 language intelligence](https://github.com/js503/strukt/pull/10)
+- Remaining after the fourth slice: final review, validation, and M2 completion
 - Workspace reference:
   [`mockups/workspace-shell/focus-context.html`](mockups/workspace-shell/focus-context.html)
 
