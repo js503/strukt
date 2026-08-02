@@ -61,7 +61,6 @@ impl TerminalTransport for PortableTransport {
                 return Err(adapter_error(error));
             }
         };
-        cursor_bootstrap.store(false, Ordering::Release);
         drop(pair.slave);
 
         Ok(Box::new(PortableProcess {
