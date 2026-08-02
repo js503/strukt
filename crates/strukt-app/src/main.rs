@@ -1425,6 +1425,18 @@ mod tests {
     }
 
     #[test]
+    fn terminal_smoke_resizes_only_after_visible_output_is_observed() {
+        assert!(!crate::app::terminal_smoke_should_resize(
+            false, false, false
+        ));
+        assert!(!crate::app::terminal_smoke_should_resize(
+            true, false, false
+        ));
+        assert!(crate::app::terminal_smoke_should_resize(true, true, false));
+        assert!(!crate::app::terminal_smoke_should_resize(true, true, true));
+    }
+
+    #[test]
     fn workspace_files_smoke_opens_discovers_and_round_trips_without_repo_metadata() {
         let project = tempdir().unwrap();
         std::fs::write(project.path().join("strukt-smoke.txt"), "strukt\n").unwrap();

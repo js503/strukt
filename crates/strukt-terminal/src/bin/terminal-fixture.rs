@@ -4,6 +4,7 @@ use std::time::Duration;
 fn main() {
     match std::env::args().nth(1).as_deref() {
         Some("echo") => echo_one_line(),
+        Some("echo-resize") => echo_then_wait_for_completion(),
         Some("wait") => wait_until_terminated(),
         Some("burst") => write_bounded_burst(),
         Some("stress") => write_stress_stream(),
@@ -12,6 +13,21 @@ fn main() {
 }
 
 fn echo_one_line() {
+    echo_line();
+}
+
+fn echo_then_wait_for_completion() {
+    echo_line();
+    let mut stdin = std::io::stdin().lock();
+    loop {
+        let mut completion = String::new();
+        if stdin.read_line(&mut completion).unwrap() == 0 || !completion.trim().is_empty() {
+            break;
+        }
+    }
+}
+
+fn echo_line() {
     let mut line = String::new();
     std::io::stdin().lock().read_line(&mut line).unwrap();
     let line = line.trim_end_matches(['\r', '\n']);

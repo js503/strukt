@@ -3400,7 +3400,7 @@ pub(crate) fn run_terminal_smoke(root: &Path) -> Result<(), String> {
     runtime
         .restart(
             interactive,
-            terminal_fixture_request(&fixture, root, "echo", initial),
+            terminal_fixture_request(&fixture, root, "echo-resize", initial),
         )
         .map_err(|error| error.to_string())?;
     runtime
@@ -3413,9 +3413,6 @@ pub(crate) fn run_terminal_smoke(root: &Path) -> Result<(), String> {
         .write(interactive, &terminal_smoke_line("héllø界"))
         .map_err(|error| error.to_string())?;
     let resized = TerminalSize::new(6, 60).map_err(|error| error.to_string())?;
-    runtime
-        .resize(interactive, resized)
-        .map_err(|error| error.to_string())?;
     let mut stress_process = PortableTransport::new()
         .spawn(terminal_fixture_request(&fixture, root, "stress", initial))
         .map_err(|error| error.to_string())?;
@@ -3425,6 +3422,8 @@ pub(crate) fn run_terminal_smoke(root: &Path) -> Result<(), String> {
     let mut observed_quiet = false;
     let mut observed_echo = false;
     let mut observed_ansi = false;
+    let mut resized_applied = false;
+    let mut completion_sent = false;
     let mut stress_exited = false;
     while started.elapsed() < DEADLINE {
         let batch = runtime.drain(DrainBudget::default());
@@ -3463,14 +3462,27 @@ pub(crate) fn run_terminal_smoke(root: &Path) -> Result<(), String> {
                 .iter()
                 .flatten()
                 .any(|cell| cell.foreground == TerminalColor::Indexed(1));
-            if snapshot.rows().len() != usize::from(resized.rows())
-                || snapshot
-                    .rows()
-                    .iter()
-                    .any(|row| row.len() != usize::from(resized.columns()))
+            if resized_applied
+                && (snapshot.rows().len() != usize::from(resized.rows())
+                    || snapshot
+                        .rows()
+                        .iter()
+                        .any(|row| row.len() != usize::from(resized.columns())))
             {
                 return Err("terminal resize did not reach the renderer snapshot".to_owned());
             }
+        }
+        if terminal_smoke_should_resize(observed_echo, observed_ansi, resized_applied) {
+            runtime
+                .resize(interactive, resized)
+                .map_err(|error| error.to_string())?;
+            resized_applied = true;
+        }
+        if resized_applied && !completion_sent {
+            runtime
+                .write(interactive, &terminal_smoke_line("complete"))
+                .map_err(|error| error.to_string())?;
+            completion_sent = true;
         }
         observed_quiet |= runtime
             .snapshot(quiet)
@@ -3481,6 +3493,7 @@ pub(crate) fn run_terminal_smoke(root: &Path) -> Result<(), String> {
         );
         if observed_echo
             && observed_ansi
+            && resized_applied
             && observed_quiet
             && interactive_exited
             && stress_exited
@@ -3544,6 +3557,14 @@ pub(crate) fn run_terminal_smoke(root: &Path) -> Result<(), String> {
 
 pub(crate) fn terminal_smoke_line(text: &str) -> Vec<u8> {
     format!("{text}\r\n").into_bytes()
+}
+
+pub(crate) const fn terminal_smoke_should_resize(
+    observed_echo: bool,
+    observed_ansi: bool,
+    resized_applied: bool,
+) -> bool {
+    observed_echo && observed_ansi && !resized_applied
 }
 
 pub(crate) async fn terminal_smoke_task(root: PathBuf) -> Result<(), String> {
