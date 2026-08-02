@@ -745,7 +745,11 @@ fn context_panel(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Messa
             row![
                 text("PROBLEMS").size(12),
                 Space::new().width(Fill),
-                text(format!("×{}  ⚠{}", counts.errors, counts.warnings)).size(12),
+                text(format!(
+                    "E {}  W {}  I {}  H {}",
+                    counts.errors, counts.warnings, counts.information, counts.hints
+                ))
+                .size(12),
                 button("Hide").on_press(Message::ToggleProblems),
             ]
             .align_y(iced::Alignment::Center)
@@ -761,7 +765,12 @@ fn context_panel(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Messa
         );
         let mut problems = column![].spacing(5);
         let visible_problems = app.language.visible_problems();
+        let mut previous_path = None;
         for problem in &visible_problems {
+            if previous_path.as_deref() != Some(problem.path()) {
+                problems = problems.push(text(problem.path().display().to_string()).size(12));
+                previous_path = Some(problem.path().to_path_buf());
+            }
             let severity_color = match problem.severity() {
                 DiagnosticSeverity::Error => tokens.diagnostic_error,
                 DiagnosticSeverity::Warning => tokens.diagnostic_warning,
@@ -828,8 +837,21 @@ fn context_panel(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Messa
                     }
                 }
                 LanguageState::Unavailable | LanguageState::Disabled | LanguageState::Failed => {
-                    server_row = server_row
-                        .push(button("Retry").on_press(Message::RetryLanguage(language.clone())));
+                    server_row = if state == LanguageState::Disabled {
+                        server_row.push(button("Enable").on_press(Message::SetLanguageEnabled {
+                            language_id: language.clone(),
+                            enabled: true,
+                        }))
+                    } else {
+                        server_row
+                            .push(
+                                button("Retry").on_press(Message::RetryLanguage(language.clone())),
+                            )
+                            .push(button("Disable").on_press(Message::SetLanguageEnabled {
+                                language_id: language.clone(),
+                                enabled: false,
+                            }))
+                    };
                     if state == LanguageState::Failed {
                         server_row = server_row.push(
                             button("Copy error")
@@ -840,10 +862,17 @@ fn context_panel(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Messa
                         }
                     }
                 }
-                LanguageState::Stopped
-                | LanguageState::Discovering
-                | LanguageState::Starting
-                | LanguageState::Ready => {}
+                LanguageState::Stopped | LanguageState::Discovering | LanguageState::Starting => {}
+                LanguageState::Ready => {
+                    server_row = server_row
+                        .push(
+                            button("Restart").on_press(Message::RestartLanguage(language.clone())),
+                        )
+                        .push(button("Disable").on_press(Message::SetLanguageEnabled {
+                            language_id: language.clone(),
+                            enabled: false,
+                        }));
+                }
             }
             content = content.push(server_row);
         }

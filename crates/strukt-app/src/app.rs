@@ -393,6 +393,11 @@ pub enum Message {
     ApproveLanguage(String),
     DenyLanguage(String),
     RetryLanguage(String),
+    SetLanguageEnabled {
+        language_id: String,
+        enabled: bool,
+    },
+    RestartLanguage(String),
     CopyLanguageFailure(String),
     ToggleProblems,
     SetProblemFilter(ProblemFilter),
@@ -1579,6 +1584,7 @@ impl StruktApp {
                 return Task::none();
             }
             Message::PollLanguage => {
+                let mut followups = Vec::new();
                 for event in self.language_runtime.poll() {
                     match event {
                         LanguageRuntimeEvent::Ready {
@@ -1648,11 +1654,12 @@ impl StruktApp {
                             language_id,
                             generation,
                         } => {
-                            self.language.mark_stopped(&language_id, generation);
+                            let effects = self.language.mark_stopped(&language_id, generation);
+                            followups.push(self.language_effects_task(effects));
                         }
                     }
                 }
-                return Task::none();
+                return Task::batch(followups);
             }
             Message::ApproveLanguage(language_id) => {
                 let Some((generation, server)) = self.language.approve(&language_id) else {
@@ -1681,6 +1688,36 @@ impl StruktApp {
             Message::RetryLanguage(language_id) => {
                 let effects = self.language.retry(&language_id);
                 return self.language_effects_task(effects);
+            }
+            Message::SetLanguageEnabled {
+                language_id,
+                enabled,
+            } => {
+                let task = if enabled {
+                    let effects = self.language.enable_language(&language_id);
+                    self.language_effects_task(effects)
+                } else {
+                    if let Some(generation) = self.language.disable_language(&language_id) {
+                        let _ = self
+                            .language_runtime
+                            .begin_shutdown(&language_id, generation);
+                    }
+                    Task::none()
+                };
+                return Task::batch([task, self.request_persistence(false)]);
+            }
+            Message::RestartLanguage(language_id) => {
+                let Some(generation) = self.language.restart_language(&language_id) else {
+                    return Task::none();
+                };
+                if let Err(error) = self
+                    .language_runtime
+                    .begin_shutdown(&language_id, generation)
+                {
+                    self.language
+                        .fail_with_message(&language_id, generation, &error);
+                }
+                return Task::none();
             }
             Message::CopyLanguageFailure(language_id) => {
                 return self
@@ -2683,6 +2720,8 @@ impl StruktApp {
             | Message::ApproveLanguage(_)
             | Message::DenyLanguage(_)
             | Message::RetryLanguage(_)
+            | Message::SetLanguageEnabled { .. }
+            | Message::RestartLanguage(_)
             | Message::CopyLanguageFailure(_)
             | Message::ToggleProblems
             | Message::SetProblemFilter(_)

@@ -696,6 +696,7 @@ struct ServerBinding {
     position_encoding: PositionEncoding,
     pending_approval: Option<DiscoveredServer>,
     last_error: Option<String>,
+    shutdown_pending: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1341,20 +1342,88 @@ impl LanguageCoordinator {
         self.servers.get(language_id)?.last_error.as_deref()
     }
 
-    pub(crate) fn mark_stopped(&mut self, language_id: &str, generation: u64) -> bool {
+    pub(crate) fn mark_stopped(
+        &mut self,
+        language_id: &str,
+        generation: u64,
+    ) -> Vec<LanguageEffect> {
+        let enabled = self.selection_enabled(language_id);
         let Some(server) = self.servers.get_mut(language_id) else {
-            return false;
+            return Vec::new();
         };
         if server.generation != generation {
-            return false;
+            return Vec::new();
         }
-        server.state = LanguageState::Stopped;
+        server.shutdown_pending = false;
+        server.state = if enabled {
+            LanguageState::Stopped
+        } else {
+            LanguageState::Disabled
+        };
         server.last_error = None;
         self.diagnostics.retain(|_, diagnostics| {
             diagnostics.language_id != language_id || diagnostics.generation != generation
         });
         self.clear_transient_features();
-        true
+        if enabled
+            && self
+                .documents
+                .values()
+                .any(|document| document.eligible && document.language_id == language_id)
+        {
+            self.ensure_language_started(language_id)
+        } else {
+            Vec::new()
+        }
+    }
+
+    pub(crate) fn disable_language(&mut self, language_id: &str) -> Option<u64> {
+        let descriptor_id = self.descriptor_id_for_language(language_id)?;
+        let selection = LanguageSelectionSnapshot::new(language_id, descriptor_id, false).ok()?;
+        self.selections.insert(language_id.to_owned(), selection);
+        self.persistence_dirty = true;
+        let server = self.servers.entry(language_id.to_owned()).or_default();
+        let generation = (server.state == LanguageState::Ready).then_some(server.generation);
+        server.shutdown_pending = generation.is_some();
+        server.state = LanguageState::Disabled;
+        self.diagnostics
+            .retain(|_, diagnostics| diagnostics.language_id != language_id);
+        self.clear_transient_features();
+        generation
+    }
+
+    pub(crate) fn enable_language(&mut self, language_id: &str) -> Vec<LanguageEffect> {
+        let Some(descriptor_id) = self.descriptor_id_for_language(language_id) else {
+            return Vec::new();
+        };
+        let Ok(selection) = LanguageSelectionSnapshot::new(language_id, descriptor_id, true) else {
+            return Vec::new();
+        };
+        self.selections.insert(language_id.to_owned(), selection);
+        self.persistence_dirty = true;
+        let server = self.servers.entry(language_id.to_owned()).or_default();
+        if server.shutdown_pending {
+            return Vec::new();
+        }
+        server.state = LanguageState::Stopped;
+        if self
+            .documents
+            .values()
+            .any(|document| document.eligible && document.language_id == language_id)
+        {
+            self.ensure_language_started(language_id)
+        } else {
+            Vec::new()
+        }
+    }
+
+    pub(crate) fn restart_language(&mut self, language_id: &str) -> Option<u64> {
+        let server = self.servers.get_mut(language_id)?;
+        if server.state != LanguageState::Ready || server.shutdown_pending {
+            return None;
+        }
+        server.shutdown_pending = true;
+        Some(server.generation)
     }
 
     #[must_use]
@@ -1621,6 +1690,18 @@ impl LanguageCoordinator {
         self.selections
             .get(language_id)
             .is_none_or(LanguageSelectionSnapshot::enabled_state)
+    }
+
+    fn descriptor_id_for_language(&self, language_id: &str) -> Option<String> {
+        self.selections
+            .get(language_id)
+            .map(|selection| selection.descriptor_id().to_owned())
+            .or_else(|| {
+                built_in_descriptors()
+                    .ok()?
+                    .for_language(language_id)
+                    .map(|descriptor| descriptor.id().to_owned())
+            })
     }
 
     fn ensure_language_started(&mut self, language_id: &str) -> Vec<LanguageEffect> {
@@ -2078,7 +2159,7 @@ mod tests {
             [LanguageEffect::Close { .. }]
         ));
 
-        assert!(coordinator.mark_stopped("rust", generation));
+        assert!(coordinator.mark_stopped("rust", generation).is_empty());
         assert_eq!(coordinator.state("rust"), LanguageState::Stopped);
         assert!(matches!(
             coordinator
@@ -2090,6 +2171,56 @@ mod tests {
                     Some("fn main() {}"),
                 )
                 .as_slice(),
+            [LanguageEffect::Discover {
+                generation: next_generation,
+                ..
+            }] if *next_generation != generation
+        ));
+    }
+
+    #[test]
+    fn language_enablement_waits_for_the_old_process_to_stop_before_rediscovery() {
+        let mut coordinator = LanguageCoordinator::new("workspace-a");
+        let id = document_id(23);
+        let effects =
+            coordinator.open_document(id, Path::new("main.rs"), None, 1, Some("fn main() {}"));
+        let LanguageEffect::Discover { generation, .. } = effects[0] else {
+            panic!("expected discovery");
+        };
+        assert!(coordinator.discovery_available("workspace-a", "rust", generation));
+        let _ = coordinator.mark_ready("rust", generation, PositionEncoding::Utf16);
+
+        assert_eq!(coordinator.disable_language("rust"), Some(generation));
+        assert_eq!(coordinator.state("rust"), LanguageState::Disabled);
+        assert!(coordinator.enable_language("rust").is_empty());
+        assert!(matches!(
+            coordinator.mark_stopped("rust", generation).as_slice(),
+            [LanguageEffect::Discover {
+                generation: next_generation,
+                ..
+            }] if *next_generation != generation
+        ));
+    }
+
+    #[test]
+    fn ready_language_restart_waits_for_shutdown_before_rediscovery() {
+        let mut coordinator = LanguageCoordinator::new("workspace-a");
+        let effects = coordinator.open_document(
+            document_id(24),
+            Path::new("main.rs"),
+            None,
+            1,
+            Some("fn main() {}"),
+        );
+        let LanguageEffect::Discover { generation, .. } = effects[0] else {
+            panic!("expected discovery");
+        };
+        assert!(coordinator.discovery_available("workspace-a", "rust", generation));
+        let _ = coordinator.mark_ready("rust", generation, PositionEncoding::Utf16);
+
+        assert_eq!(coordinator.restart_language("rust"), Some(generation));
+        assert!(matches!(
+            coordinator.mark_stopped("rust", generation).as_slice(),
             [LanguageEffect::Discover {
                 generation: next_generation,
                 ..
