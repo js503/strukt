@@ -119,6 +119,7 @@ pub(crate) enum LanguageRuntimeEvent {
     Ready {
         language_id: String,
         generation: u64,
+        position_encoding: PositionEncoding,
     },
     Failed {
         language_id: String,
@@ -351,6 +352,7 @@ fn handle_frame(
             Ok(Some(LanguageRuntimeEvent::Ready {
                 language_id: language_id.to_owned(),
                 generation: running.generation,
+                position_encoding: capabilities.position_encoding(),
             }))
         }
         IncomingMessage::Notification(notification) => {
@@ -414,10 +416,59 @@ fn file_uri(root: &Path, relative: &Path) -> Result<String, String> {
         .map_err(|()| "document path could not be represented as a file URI".to_owned())
 }
 
+pub(crate) fn parse_publish_diagnostics(
+    params: Option<&serde_json::Value>,
+    workspace_root: &Path,
+) -> Option<(PathBuf, Option<u64>, Vec<PublishedDiagnostic>)> {
+    let params = params?;
+    let uri = params.get("uri")?.as_str()?;
+    let absolute = Url::parse(uri).ok()?.to_file_path().ok()?;
+    let relative = absolute.strip_prefix(workspace_root).ok()?.to_path_buf();
+    if relative.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir | std::path::Component::RootDir
+        )
+    }) {
+        return None;
+    }
+    let version = params.get("version").and_then(serde_json::Value::as_u64);
+    let diagnostics = params
+        .get("diagnostics")?
+        .as_array()?
+        .iter()
+        .take(2_000)
+        .filter_map(|diagnostic| {
+            let start = diagnostic.get("range")?.get("start")?;
+            let line = u32::try_from(start.get("line")?.as_u64()?).ok()?;
+            let character = u32::try_from(start.get("character")?.as_u64()?).ok()?;
+            let message = diagnostic.get("message")?.as_str()?;
+            let severity = match diagnostic
+                .get("severity")
+                .and_then(serde_json::Value::as_u64)
+            {
+                Some(1) => DiagnosticSeverity::Error,
+                Some(2) => DiagnosticSeverity::Warning,
+                Some(4) => DiagnosticSeverity::Hint,
+                _ => DiagnosticSeverity::Information,
+            };
+            Some(PublishedDiagnostic::new(
+                line,
+                character,
+                severity,
+                message,
+                diagnostic.get("source").and_then(serde_json::Value::as_str),
+            ))
+        })
+        .collect();
+    Some((relative, version, diagnostics))
+}
+
 pub(crate) fn discover_workspace_language(
     workspace: &WorkspaceRoot,
     language_id: &str,
     descriptor_id: Option<&str>,
+    approvals: &[ApprovalSnapshot],
 ) -> Result<LanguageDiscoveryCompletion, String> {
     let builtins = built_in_descriptors().map_err(|error| error.to_string())?;
     let workspace_registry =
@@ -443,7 +494,13 @@ pub(crate) fn discover_workspace_language(
     Ok(match outcome {
         DiscoveryOutcome::Available(server) => LanguageDiscoveryCompletion::Available(server),
         DiscoveryOutcome::ApprovalRequired(server) => {
-            LanguageDiscoveryCompletion::ApprovalRequired(server)
+            if approvals.iter().any(|approval| {
+                approval.language_id() == language_id && approval.matches(server.command())
+            }) {
+                LanguageDiscoveryCompletion::Available(server)
+            } else {
+                LanguageDiscoveryCompletion::ApprovalRequired(server)
+            }
         }
         DiscoveryOutcome::Unavailable { .. } => LanguageDiscoveryCompletion::Unavailable,
         DiscoveryOutcome::Disabled => LanguageDiscoveryCompletion::Disabled,
@@ -464,6 +521,115 @@ struct DocumentBinding {
 struct ServerBinding {
     state: LanguageState,
     generation: u64,
+    position_encoding: PositionEncoding,
+    pending_approval: Option<DiscoveredServer>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DiagnosticSeverity {
+    Error,
+    Warning,
+    Information,
+    Hint,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PublishedDiagnostic {
+    line: u32,
+    character: u32,
+    severity: DiagnosticSeverity,
+    message: String,
+    source: Option<String>,
+}
+
+impl PublishedDiagnostic {
+    #[must_use]
+    pub(crate) fn new(
+        line: u32,
+        character: u32,
+        severity: DiagnosticSeverity,
+        message: impl Into<String>,
+        source: Option<&str>,
+    ) -> Self {
+        Self {
+            line,
+            character,
+            severity,
+            message: message.into(),
+            source: source.map(ToOwned::to_owned),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Problem {
+    document_id: DocumentId,
+    path: PathBuf,
+    line: u32,
+    character: u32,
+    severity: DiagnosticSeverity,
+    message: String,
+    source: Option<String>,
+}
+
+impl Problem {
+    #[must_use]
+    pub(crate) const fn document_id(&self) -> DocumentId {
+        self.document_id
+    }
+
+    #[must_use]
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    #[must_use]
+    pub(crate) const fn line(&self) -> u32 {
+        self.line
+    }
+
+    #[must_use]
+    pub(crate) const fn character(&self) -> u32 {
+        self.character
+    }
+
+    #[must_use]
+    pub(crate) const fn severity(&self) -> DiagnosticSeverity {
+        self.severity
+    }
+
+    #[must_use]
+    pub(crate) fn message(&self) -> &str {
+        &self.message
+    }
+
+    #[must_use]
+    pub(crate) fn source(&self) -> Option<&str> {
+        self.source.as_deref()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ProblemCounts {
+    pub(crate) errors: usize,
+    pub(crate) warnings: usize,
+    pub(crate) information: usize,
+    pub(crate) hints: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum ProblemFilter {
+    #[default]
+    All,
+    Errors,
+    Warnings,
+}
+
+#[derive(Clone, Debug)]
+struct DiagnosticSet {
+    language_id: String,
+    generation: u64,
+    problems: Vec<Problem>,
 }
 
 #[derive(Clone, Debug)]
@@ -474,6 +640,8 @@ pub(crate) struct LanguageCoordinator {
     problems_visible: bool,
     documents: HashMap<DocumentId, DocumentBinding>,
     servers: HashMap<String, ServerBinding>,
+    diagnostics: HashMap<DocumentId, DiagnosticSet>,
+    problem_filter: ProblemFilter,
     persistence_dirty: bool,
 }
 
@@ -493,6 +661,8 @@ impl LanguageCoordinator {
             problems_visible: true,
             documents: HashMap::new(),
             servers: HashMap::new(),
+            diagnostics: HashMap::new(),
+            problem_filter: ProblemFilter::All,
             persistence_dirty: false,
         }
     }
@@ -514,6 +684,8 @@ impl LanguageCoordinator {
             problems_visible: restored.problems_visible(),
             documents: HashMap::new(),
             servers: HashMap::new(),
+            diagnostics: HashMap::new(),
+            problem_filter: ProblemFilter::All,
             persistence_dirty: false,
         }
     }
@@ -523,6 +695,7 @@ impl LanguageCoordinator {
         self.workspace_id = workspace_id.into();
         self.documents.clear();
         self.servers.clear();
+        self.diagnostics.clear();
         self.persistence_dirty = false;
     }
 
@@ -532,6 +705,17 @@ impl LanguageCoordinator {
             .values()
             .filter(|server| matches!(server.state, LanguageState::Starting | LanguageState::Ready))
             .count()
+    }
+
+    #[must_use]
+    pub(crate) fn server_states(&self) -> Vec<(String, LanguageState)> {
+        let mut states = self
+            .servers
+            .iter()
+            .map(|(language, server)| (language.clone(), server.state))
+            .collect::<Vec<_>>();
+        states.sort_by(|left, right| left.0.cmp(&right.0));
+        states
     }
 
     #[must_use]
@@ -573,6 +757,18 @@ impl LanguageCoordinator {
         );
         if !eligible || !self.selection_enabled(&language_id) {
             return Vec::new();
+        }
+        if let Some(server) = self.servers.get(&language_id)
+            && server.state == LanguageState::Ready
+        {
+            return vec![LanguageEffect::Open {
+                language_id,
+                generation: server.generation,
+                document_id: id,
+                path: path.to_path_buf(),
+                revision,
+                text: text.unwrap_or_default().to_owned(),
+            }];
         }
         self.ensure_language_started(&language_id)
     }
@@ -624,6 +820,7 @@ impl LanguageCoordinator {
     }
 
     pub(crate) fn close_document(&mut self, id: DocumentId) -> Vec<LanguageEffect> {
+        self.diagnostics.remove(&id);
         let Some(binding) = self.documents.remove(&id) else {
             return Vec::new();
         };
@@ -703,10 +900,114 @@ impl LanguageCoordinator {
             return false;
         }
         server.state = state;
+        server.pending_approval = None;
         true
     }
 
-    pub(crate) fn mark_ready(&mut self, language_id: &str, generation: u64) -> Vec<LanguageEffect> {
+    pub(crate) fn discovery_requires_approval(
+        &mut self,
+        workspace_id: &str,
+        language_id: &str,
+        generation: u64,
+        discovered: DiscoveredServer,
+    ) -> bool {
+        let Some(server) = self.servers.get_mut(language_id) else {
+            return false;
+        };
+        if self.workspace_id != workspace_id
+            || server.generation != generation
+            || server.state != LanguageState::Discovering
+        {
+            return false;
+        }
+        server.state = LanguageState::ApprovalRequired;
+        server.pending_approval = Some(discovered);
+        true
+    }
+
+    pub(crate) fn approve(&mut self, language_id: &str) -> Option<(u64, DiscoveredServer)> {
+        let server = self.servers.get_mut(language_id)?;
+        if server.state != LanguageState::ApprovalRequired {
+            return None;
+        }
+        let discovered = server.pending_approval.take()?;
+        let approval =
+            ApprovalSnapshot::new(language_id, discovered.command().fingerprint()).ok()?;
+        self.approvals
+            .retain(|approval| approval.language_id() != language_id);
+        self.approvals.push(approval);
+        self.persistence_dirty = true;
+        server.state = LanguageState::Starting;
+        Some((server.generation, discovered))
+    }
+
+    pub(crate) fn deny(&mut self, language_id: &str) -> bool {
+        let Some(server) = self.servers.get_mut(language_id) else {
+            return false;
+        };
+        if server.state != LanguageState::ApprovalRequired {
+            return false;
+        }
+        server.pending_approval = None;
+        server.state = LanguageState::Disabled;
+        self.approvals
+            .retain(|approval| approval.language_id() != language_id);
+        self.persistence_dirty = true;
+        true
+    }
+
+    pub(crate) fn retry(&mut self, language_id: &str) -> Vec<LanguageEffect> {
+        let Some(server) = self.servers.get_mut(language_id) else {
+            return Vec::new();
+        };
+        if !matches!(
+            server.state,
+            LanguageState::Unavailable | LanguageState::Disabled | LanguageState::Failed
+        ) {
+            return Vec::new();
+        }
+        server.generation = server.generation.wrapping_add(1);
+        server.state = LanguageState::Discovering;
+        server.pending_approval = None;
+        let descriptor_id = self
+            .selections
+            .get(language_id)
+            .map(|selection| selection.descriptor_id().to_owned());
+        vec![LanguageEffect::Discover {
+            workspace_id: self.workspace_id.clone(),
+            language_id: language_id.to_owned(),
+            descriptor_id,
+            generation: server.generation,
+        }]
+    }
+
+    #[must_use]
+    pub(crate) fn approval_command(&self, language_id: &str) -> Option<String> {
+        let command = self
+            .servers
+            .get(language_id)?
+            .pending_approval
+            .as_ref()?
+            .command();
+        let mut display = command.executable().display().to_string();
+        for argument in command.arguments() {
+            display.push(' ');
+            display.push_str(&argument.to_string_lossy());
+        }
+        Some(display.chars().take(512).collect())
+    }
+
+    #[must_use]
+    pub(crate) fn approvals(&self) -> Vec<ApprovalSnapshot> {
+        self.approvals.clone()
+    }
+
+    pub(crate) fn mark_ready(
+        &mut self,
+        language_id: &str,
+        generation: u64,
+        position_encoding: PositionEncoding,
+    ) -> Vec<LanguageEffect> {
         let Some(server) = self.servers.get_mut(language_id) else {
             return Vec::new();
         };
@@ -714,6 +1015,7 @@ impl LanguageCoordinator {
             return Vec::new();
         }
         server.state = LanguageState::Ready;
+        server.position_encoding = position_encoding;
         self.documents
             .iter()
             .filter(|(_, binding)| binding.eligible && binding.language_id == language_id)
@@ -736,7 +1038,135 @@ impl LanguageCoordinator {
             return false;
         }
         server.state = LanguageState::Failed;
+        self.diagnostics.retain(|_, diagnostics| {
+            diagnostics.language_id != language_id || diagnostics.generation != generation
+        });
         true
+    }
+
+    pub(crate) fn publish_diagnostics(
+        &mut self,
+        language_id: &str,
+        generation: u64,
+        path: &Path,
+        version: Option<u64>,
+        diagnostics: Vec<PublishedDiagnostic>,
+    ) -> bool {
+        let Some(server) = self.servers.get(language_id) else {
+            return false;
+        };
+        if server.generation != generation || server.state != LanguageState::Ready {
+            return false;
+        }
+        let Some((&document_id, binding)) = self.documents.iter().find(|(_, binding)| {
+            binding.eligible && binding.language_id == language_id && binding.path == path
+        }) else {
+            return false;
+        };
+        if version.is_some_and(|version| version != binding.revision) {
+            return false;
+        }
+        let problems = diagnostics
+            .into_iter()
+            .take(2_000)
+            .map(|diagnostic| Problem {
+                document_id,
+                path: path.to_path_buf(),
+                line: diagnostic.line,
+                character: diagnostic.character,
+                severity: diagnostic.severity,
+                message: diagnostic.message.chars().take(4_096).collect(),
+                source: diagnostic
+                    .source
+                    .map(|source| source.chars().take(128).collect()),
+            })
+            .collect::<Vec<_>>();
+        if problems.is_empty() {
+            self.diagnostics.remove(&document_id);
+        } else {
+            self.diagnostics.insert(
+                document_id,
+                DiagnosticSet {
+                    language_id: language_id.to_owned(),
+                    generation,
+                    problems,
+                },
+            );
+        }
+        true
+    }
+
+    #[must_use]
+    pub(crate) fn problems(&self) -> Vec<&Problem> {
+        let mut problems = self
+            .diagnostics
+            .values()
+            .flat_map(|set| set.problems.iter())
+            .collect::<Vec<_>>();
+        problems.sort_by(|left, right| {
+            left.path
+                .cmp(&right.path)
+                .then(left.line.cmp(&right.line))
+                .then(left.character.cmp(&right.character))
+        });
+        problems
+    }
+
+    #[must_use]
+    pub(crate) fn visible_problems(&self) -> Vec<&Problem> {
+        self.problems()
+            .into_iter()
+            .filter(|problem| match self.problem_filter {
+                ProblemFilter::All => true,
+                ProblemFilter::Errors => problem.severity == DiagnosticSeverity::Error,
+                ProblemFilter::Warnings => problem.severity == DiagnosticSeverity::Warning,
+            })
+            .collect()
+    }
+
+    pub(crate) const fn set_problem_filter(&mut self, filter: ProblemFilter) {
+        self.problem_filter = filter;
+    }
+
+    #[must_use]
+    pub(crate) fn problem_counts(&self) -> ProblemCounts {
+        self.problems()
+            .into_iter()
+            .fold(ProblemCounts::default(), |mut counts, problem| {
+                match problem.severity {
+                    DiagnosticSeverity::Error => counts.errors += 1,
+                    DiagnosticSeverity::Warning => counts.warnings += 1,
+                    DiagnosticSeverity::Information => counts.information += 1,
+                    DiagnosticSeverity::Hint => counts.hints += 1,
+                }
+                counts
+            })
+    }
+
+    #[must_use]
+    pub(crate) fn position_encoding(&self, language_id: &str) -> PositionEncoding {
+        self.servers
+            .get(language_id)
+            .map_or(PositionEncoding::Utf16, |server| server.position_encoding)
+    }
+
+    #[must_use]
+    pub(crate) fn document_position_encoding(&self, id: DocumentId) -> PositionEncoding {
+        self.documents
+            .get(&id)
+            .map_or(PositionEncoding::Utf16, |binding| {
+                self.position_encoding(&binding.language_id)
+            })
+    }
+
+    #[must_use]
+    pub(crate) const fn problems_visible(&self) -> bool {
+        self.problems_visible
+    }
+
+    pub(crate) fn toggle_problems(&mut self) {
+        self.problems_visible = !self.problems_visible;
+        self.persistence_dirty = true;
     }
 
     pub(crate) fn snapshot(&mut self) -> Option<LanguageSessionSnapshot> {
@@ -794,13 +1224,16 @@ mod tests {
 
     use strukt_editor::DocumentId;
     use strukt_language::{
-        FrameDecoder, FrameLimits, LanguageProcess, ProcessExit, TransportError, encode_frame,
+        FrameDecoder, FrameLimits, LanguageProcess, PositionEncoding, ProcessExit, TransportError,
+        encode_frame,
     };
     use strukt_persistence::{LanguageSelectionSnapshot, LanguageSessionSnapshot};
+    use url::Url;
 
     use super::{
-        LanguageCoordinator, LanguageEffect, LanguageRuntime, LanguageRuntimeEvent,
-        LanguageSpawnCompletion, LanguageState,
+        DiagnosticSeverity, LanguageCoordinator, LanguageEffect, LanguageRuntime,
+        LanguageRuntimeEvent, LanguageSpawnCompletion, LanguageState, PublishedDiagnostic,
+        parse_publish_diagnostics,
     };
 
     #[test]
@@ -919,10 +1352,10 @@ mod tests {
             .push_back(encode_frame(&response, FrameLimits::default()).unwrap());
         assert!(matches!(
             runtime.poll().as_slice(),
-            [LanguageRuntimeEvent::Ready { language_id, generation: ready_generation }]
+            [LanguageRuntimeEvent::Ready { language_id, generation: ready_generation, .. }]
                 if language_id == "rust" && *ready_generation == generation
         ));
-        let opens = coordinator.mark_ready("rust", generation);
+        let opens = coordinator.mark_ready("rust", generation, PositionEncoding::Utf16);
         runtime.apply_effects(opens).unwrap();
 
         assert_eq!(
@@ -987,6 +1420,138 @@ mod tests {
                 .is_err()
         );
         assert_eq!(coordinator.state("python"), LanguageState::ApprovalRequired);
+    }
+
+    #[test]
+    fn language_diagnostics_replace_current_revision_and_reject_stale_publications() {
+        let mut coordinator = LanguageCoordinator::new("workspace-a");
+        let id = document_id(12);
+        let effects =
+            coordinator.open_document(id, Path::new("src/main.rs"), None, 4, Some("fn main() {}"));
+        let LanguageEffect::Discover { generation, .. } = effects[0] else {
+            panic!("expected discovery");
+        };
+        assert!(coordinator.discovery_available("workspace-a", "rust", generation));
+        let _ = coordinator.mark_ready("rust", generation, PositionEncoding::Utf16);
+
+        assert!(coordinator.publish_diagnostics(
+            "rust",
+            generation,
+            Path::new("src/main.rs"),
+            Some(4),
+            vec![PublishedDiagnostic::new(
+                1,
+                2,
+                DiagnosticSeverity::Error,
+                "expected semicolon",
+                Some("rustc"),
+            )],
+        ));
+        assert_eq!(coordinator.problems().len(), 1);
+        assert_eq!(coordinator.problem_counts().errors, 1);
+
+        assert!(!coordinator.publish_diagnostics(
+            "rust",
+            generation,
+            Path::new("src/main.rs"),
+            Some(3),
+            vec![PublishedDiagnostic::new(
+                0,
+                0,
+                DiagnosticSeverity::Warning,
+                "stale",
+                None,
+            )],
+        ));
+        assert_eq!(coordinator.problems()[0].message(), "expected semicolon");
+
+        assert!(coordinator.publish_diagnostics(
+            "rust",
+            generation,
+            Path::new("src/main.rs"),
+            Some(4),
+            Vec::new(),
+        ));
+        assert!(coordinator.problems().is_empty());
+    }
+
+    #[test]
+    fn language_diagnostics_clear_when_document_closes_or_server_fails() {
+        let mut coordinator = LanguageCoordinator::new("workspace-a");
+        let id = document_id(13);
+        let effects =
+            coordinator.open_document(id, Path::new("main.py"), None, 1, Some("print('hello')"));
+        let LanguageEffect::Discover { generation, .. } = effects[0] else {
+            panic!("expected discovery");
+        };
+        assert!(coordinator.discovery_available("workspace-a", "python", generation));
+        let _ = coordinator.mark_ready("python", generation, PositionEncoding::Utf16);
+        assert!(coordinator.publish_diagnostics(
+            "python",
+            generation,
+            Path::new("main.py"),
+            Some(1),
+            vec![PublishedDiagnostic::new(
+                0,
+                0,
+                DiagnosticSeverity::Hint,
+                "consider a module docstring",
+                Some("ruff"),
+            )],
+        ));
+
+        let _ = coordinator.close_document(id);
+        assert!(coordinator.problems().is_empty());
+
+        let effects =
+            coordinator.open_document(id, Path::new("main.py"), None, 1, Some("print('hello')"));
+        let LanguageEffect::Open { .. } = effects[0] else {
+            panic!("expected reopen");
+        };
+        assert!(coordinator.publish_diagnostics(
+            "python",
+            generation,
+            Path::new("main.py"),
+            Some(1),
+            vec![PublishedDiagnostic::new(
+                0,
+                0,
+                DiagnosticSeverity::Warning,
+                "warning",
+                None,
+            )],
+        ));
+        assert!(coordinator.fail("python", generation));
+        assert!(coordinator.problems().is_empty());
+    }
+
+    #[test]
+    fn diagnostic_publication_parser_confines_file_uris_to_the_workspace() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("src/main.rs");
+        let params = serde_json::json!({
+            "uri": Url::from_file_path(&file).unwrap().to_string(),
+            "version": 7,
+            "diagnostics": [{
+                "range": {"start": {"line": 2, "character": 3}, "end": {"line": 2, "character": 4}},
+                "severity": 2,
+                "message": "warning",
+                "source": "fixture"
+            }]
+        });
+        let (path, version, diagnostics) =
+            parse_publish_diagnostics(Some(&params), root.path()).unwrap();
+        assert_eq!(path, Path::new("src/main.rs"));
+        assert_eq!(version, Some(7));
+        assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Warning);
+
+        let outside = serde_json::json!({
+            "uri": Url::from_file_path(root.path().parent().unwrap().join("outside.rs"))
+                .unwrap()
+                .to_string(),
+            "diagnostics": []
+        });
+        assert!(parse_publish_diagnostics(Some(&outside), root.path()).is_none());
     }
 
     #[derive(Default)]

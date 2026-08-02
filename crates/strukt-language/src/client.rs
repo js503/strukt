@@ -60,6 +60,11 @@ impl ServerCapabilities {
     pub const fn supports(&self, kind: FeatureRequestKind) -> bool {
         self.features & kind.flag() != 0
     }
+
+    #[must_use]
+    pub const fn position_encoding(&self) -> PositionEncoding {
+        self.position_encoding
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

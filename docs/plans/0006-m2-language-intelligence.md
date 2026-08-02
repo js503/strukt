@@ -624,13 +624,13 @@ git commit -m "feat: coordinate workspace language servers"
 - Modify: `crates/strukt-theme/src/tokens.rs`
 - Modify: `crates/strukt-theme/tests/builtin_themes.rs`
 
-- [ ] **Step 1: Write failing diagnostic reducer and theme tests**
+- [x] **Step 1: Write failing diagnostic reducer and theme tests**
 
 Require current-version diagnostics, stale rejection, clearing, severity counts,
 confined navigation, external confirmation, and distinct semantic colors in light
 and dark modes.
 
-- [ ] **Step 2: Run focused tests and confirm UI state is absent**
+- [x] **Step 2: Run focused tests and confirm UI state is absent**
 
 Run: `cargo test -p strukt-app --locked --offline diagnostic_`
 
@@ -638,7 +638,7 @@ Run: `cargo test -p strukt-theme --locked --offline diagnostic_`
 
 Expected: fail for missing diagnostic UI types/tokens.
 
-- [ ] **Step 3: Implement immutable diagnostic projection**
+- [x] **Step 3: Implement immutable diagnostic projection**
 
 Store normalized diagnostics by document and generation. Project current ranges to
 editor markers and Problems rows; never store raw protocol JSON. Selecting a row
@@ -650,7 +650,7 @@ Add a keyboard-focusable Problems pane with severity counts, file grouping,
 filtering, and navigation. Add status actions for discover, select, enable/disable,
 approve/deny exact command, restart, copy bounded failure, and open documentation.
 
-- [ ] **Step 5: Verify focus, confinement, capability isolation, and themes**
+- [x] **Step 5: Verify focus, confinement, capability isolation, and themes**
 
 Run: `cargo test -p strukt-app --locked --offline diagnostic_`
 

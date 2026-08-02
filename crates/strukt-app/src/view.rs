@@ -10,6 +10,7 @@ use strukt_terminal::{LayoutNode, PaneState, SplitAxis, TerminalPaneId};
 use strukt_theme::{Rgb, ThemeTokens};
 
 use crate::app::{DocumentNotice, ExplorerDialog, Message, StruktApp};
+use crate::language::{DiagnosticSeverity, LanguageState, ProblemFilter};
 use crate::terminal_widget::TerminalWidget;
 
 fn color(rgb: Rgb) -> Color {
@@ -75,6 +76,12 @@ fn header(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Message> {
             open_folder,
             button("Toggle theme").on_press(Message::ToggleTheme),
             button("Context").on_press(Message::ToggleContext),
+            button(if app.language.problems_visible() {
+                "Hide problems"
+            } else {
+                "Problems"
+            })
+            .on_press(Message::ToggleProblems),
         ]
         .spacing(8),
     )
@@ -667,8 +674,12 @@ fn search_canvas(app: &StruktApp) -> iced::widget::Column<'_, Message> {
     .spacing(10)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "context, language status, and Problems presentation remain colocated for a coherent panel"
+)]
 fn context_panel(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Message> {
-    if !app.shell.context_visible {
+    if !app.shell.context_visible && !app.language.problems_visible() {
         return container(Space::new()).width(Length::Shrink).into();
     }
 
@@ -678,23 +689,119 @@ fn context_panel(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Messa
         "WORKSPACE CONTEXT"
     };
 
-    container(
-        column![
-            text(ai_status),
-            text("Current workspace"),
-            text(format!(
+    let counts = app.language.problem_counts();
+    let mut content = column![].spacing(8);
+    if app.language.problems_visible() {
+        content = content.push(
+            row![
+                text("PROBLEMS").size(12),
+                Space::new().width(Fill),
+                text(format!("×{}  ⚠{}", counts.errors, counts.warnings)).size(12),
+                button("Hide").on_press(Message::ToggleProblems),
+            ]
+            .align_y(iced::Alignment::Center)
+            .spacing(5),
+        );
+        content = content.push(
+            row![
+                button("All").on_press(Message::SetProblemFilter(ProblemFilter::All)),
+                button("Errors").on_press(Message::SetProblemFilter(ProblemFilter::Errors)),
+                button("Warnings").on_press(Message::SetProblemFilter(ProblemFilter::Warnings)),
+            ]
+            .spacing(4),
+        );
+        let mut problems = column![].spacing(5);
+        let visible_problems = app.language.visible_problems();
+        for problem in &visible_problems {
+            let severity_color = match problem.severity() {
+                DiagnosticSeverity::Error => tokens.diagnostic_error,
+                DiagnosticSeverity::Warning => tokens.diagnostic_warning,
+                DiagnosticSeverity::Information => tokens.diagnostic_information,
+                DiagnosticSeverity::Hint => tokens.diagnostic_hint,
+            };
+            let source = problem
+                .source()
+                .map_or_else(String::new, |source| format!(" · {source}"));
+            let label = format!(
+                "{}:{}:{} · {}{}",
+                problem.path().display(),
+                problem.line() + 1,
+                problem.character() + 1,
+                problem.message(),
+                source,
+            );
+            problems = problems.push(
+                button(text(label).size(12).color(color(severity_color))).on_press(
+                    Message::OpenProblem {
+                        id: problem.document_id(),
+                        line: problem.line(),
+                        character: problem.character(),
+                    },
+                ),
+            );
+        }
+        if visible_problems.is_empty() {
+            problems = problems.push(text("No problems in synchronized files").size(12));
+        }
+        content = content.push(scrollable(problems).height(Fill));
+    }
+    if app.shell.context_visible {
+        content = content
+            .push(text(ai_status))
+            .push(text("LANGUAGE SERVERS").size(12));
+        let states = app.language.server_states();
+        if states.is_empty() {
+            content = content.push(text("Open a code file to discover a server").size(12));
+        }
+        for (language, state) in states {
+            let state_label = match state {
+                LanguageState::Stopped => "stopped",
+                LanguageState::Discovering => "discovering",
+                LanguageState::Unavailable => "not installed",
+                LanguageState::ApprovalRequired => "approval required",
+                LanguageState::Disabled => "disabled",
+                LanguageState::Starting => "starting",
+                LanguageState::Ready => "ready",
+                LanguageState::Failed => "failed",
+            };
+            let mut server_row = row![text(format!("{language} · {state_label}")).size(12)]
+                .spacing(4)
+                .align_y(iced::Alignment::Center);
+            match state {
+                LanguageState::ApprovalRequired => {
+                    server_row = server_row
+                        .push(
+                            button("Approve").on_press(Message::ApproveLanguage(language.clone())),
+                        )
+                        .push(button("Deny").on_press(Message::DenyLanguage(language.clone())));
+                    if let Some(command) = app.language.approval_command(&language) {
+                        content = content.push(text(command).size(11));
+                    }
+                }
+                LanguageState::Unavailable | LanguageState::Disabled | LanguageState::Failed => {
+                    server_row = server_row
+                        .push(button("Retry").on_press(Message::RetryLanguage(language.clone())));
+                }
+                LanguageState::Stopped
+                | LanguageState::Discovering
+                | LanguageState::Starting
+                | LanguageState::Ready => {}
+            }
+            content = content.push(server_row);
+        }
+        content = content
+            .push(text(format!(
                 "{} capabilities enabled",
                 app.capabilities.enabled_count()
-            )),
-            Space::new().height(Fill),
-            button("Hide context").on_press(Message::ToggleContext),
-        ]
-        .spacing(10),
-    )
-    .padding(10)
-    .width(Length::Fixed(250.0))
-    .style(panel_style(tokens, tokens.panel))
-    .into()
+            )))
+            .push(button("Hide context").on_press(Message::ToggleContext));
+    }
+
+    container(content)
+        .padding(10)
+        .width(Length::Fixed(250.0))
+        .style(panel_style(tokens, tokens.panel))
+        .into()
 }
 
 #[expect(

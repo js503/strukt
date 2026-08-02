@@ -7,6 +7,7 @@ use strukt_editor::{
     CharRange, DocumentId, EditKind, EditTransaction, EditorWorkspace, EditorWorkspaceError,
     Replacement,
 };
+use strukt_language::{LspPosition, PositionEncoding, from_lsp_position};
 
 #[derive(Default)]
 pub(crate) struct EditorSurfaces {
@@ -80,6 +81,42 @@ impl EditorSurfaces {
                 lines: scroll_lines.clamp(i32::MIN as f32, i32::MAX as f32) as i32,
             });
         }
+        Ok(())
+    }
+
+    pub(crate) fn move_to_lsp(
+        &mut self,
+        id: DocumentId,
+        position: LspPosition,
+        encoding: PositionEncoding,
+    ) -> Result<(), EditorSurfaceError> {
+        let content = self.content_mut(id)?;
+        let text = content.text();
+        let scalar = from_lsp_position(&text, position, encoding)
+            .map_err(|_| EditorSurfaceError::InvalidCursor)?;
+        let line_index =
+            usize::try_from(scalar.line).map_err(|_| EditorSurfaceError::InvalidCursor)?;
+        let scalar_column =
+            usize::try_from(scalar.character).map_err(|_| EditorSurfaceError::InvalidCursor)?;
+        let line = content
+            .line(line_index)
+            .ok_or(EditorSurfaceError::InvalidCursor)?;
+        let column = if scalar_column == line.text.chars().count() {
+            line.text.len()
+        } else {
+            line.text
+                .char_indices()
+                .nth(scalar_column)
+                .map(|(index, _)| index)
+                .ok_or(EditorSurfaceError::InvalidCursor)?
+        };
+        content.move_to(Cursor {
+            position: Position {
+                line: line_index,
+                column,
+            },
+            selection: None,
+        });
         Ok(())
     }
 
@@ -313,6 +350,7 @@ pub(crate) enum EditorSurfaceError {
 mod tests {
     use super::*;
     use strukt_editor::{DiskRevision, OpenDisposition, RelativeDocumentPath};
+    use strukt_language::{LspPosition, PositionEncoding};
     use strukt_workspace::WorkspaceRoot;
 
     #[test]
@@ -398,6 +436,30 @@ mod tests {
 
         assert_eq!(workspace.document(id).unwrap().text(), "é!x");
         assert_eq!(surfaces.cursor_offsets(id).unwrap(), (2, 2));
+    }
+
+    #[test]
+    fn diagnostic_navigation_converts_utf16_positions_for_the_native_editor() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = WorkspaceRoot::open(directory.path()).unwrap();
+        let mut workspace = EditorWorkspace::new(root.id().clone());
+        let id = workspace
+            .open(
+                RelativeDocumentPath::new("file.txt").unwrap(),
+                "one\n😀value",
+                DiskRevision::new("disk"),
+                false,
+                OpenDisposition::Pinned,
+            )
+            .unwrap();
+        let mut surfaces = EditorSurfaces::default();
+        surfaces.insert(id, "one\n😀value");
+
+        surfaces
+            .move_to_lsp(id, LspPosition::new(1, 2), PositionEncoding::Utf16)
+            .unwrap();
+
+        assert_eq!(surfaces.cursor_offsets(id).unwrap(), (5, 5));
     }
 
     #[test]
