@@ -155,7 +155,7 @@ git commit -m "feat: add language server descriptors"
 - Create: `crates/strukt-language/tests/positions.rs`
 - Create: `crates/strukt-language/tests/features.rs`
 
-- [ ] **Step 1: Write failing fragmented-frame and bound tests**
+- [x] **Step 1: Write failing fragmented-frame and bound tests**
 
 ```rust
 #[test]
@@ -184,13 +184,13 @@ fn decoder_rejects_oversized_headers_and_bodies_without_retaining_them() {
 }
 ```
 
-- [ ] **Step 2: Run framing tests and confirm missing types**
+- [x] **Step 2: Run framing tests and confirm missing types**
 
 Run: `cargo test -p strukt-language --test framing --locked --offline`
 
 Expected: compile failure for `FrameDecoder`.
 
-- [ ] **Step 3: Implement incremental `Content-Length` framing**
+- [x] **Step 3: Implement incremental `Content-Length` framing**
 
 Use a small state machine with a 16 KiB header budget and 16 MiB body budget.
 Encode bodies with exact UTF-8 byte lengths:
@@ -206,13 +206,13 @@ pub fn encode_frame(body: &[u8], limits: FrameLimits) -> Result<Vec<u8>, FrameEr
 }
 ```
 
-- [ ] **Step 4: Write failing JSON-RPC routing and normalized feature tests**
+- [x] **Step 4: Write failing JSON-RPC routing and normalized feature tests**
 
 Require monotonic numeric IDs, duplicate-response rejection, notification routing,
 bounded error text, push diagnostics, completion limits, safe hover Markdown, and
 file-definition normalization.
 
-- [ ] **Step 5: Implement the protocol and normalized feature boundary**
+- [x] **Step 5: Implement the protocol and normalized feature boundary**
 
 Expose:
 
@@ -243,7 +243,7 @@ pub struct CompletionItem {
 Deserialize only the supported subset while tolerating unknown additive fields.
 Cap completion output at 200 items and hover content at 256 KiB.
 
-- [ ] **Step 6: Write failing UTF-8/UTF-16 round-trip tests**
+- [x] **Step 6: Write failing UTF-8/UTF-16 round-trip tests**
 
 ```rust
 #[test]
@@ -256,13 +256,13 @@ fn utf16_positions_round_trip_astral_and_combining_text() {
 }
 ```
 
-- [ ] **Step 7: Implement strict position conversion**
+- [x] **Step 7: Implement strict position conversion**
 
 Walk line slices without normalizing line endings. Reject columns inside surrogate
 pairs, beyond line bounds, or after invalid line numbers. Support UTF-8 and UTF-16;
 default to UTF-16 when initialization does not negotiate an encoding.
 
-- [ ] **Step 8: Run protocol verification and commit**
+- [x] **Step 8: Run protocol verification and commit**
 
 Run: `cargo test -p strukt-language --locked --offline`
 
