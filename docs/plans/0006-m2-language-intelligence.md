@@ -408,13 +408,13 @@ change coalescing, 256 request/message limits, 10-second initialize timeout,
 5-second request timeout, 30-second idle shutdown, and restart delays of 250 ms,
 1 second, and 4 seconds within a ten-minute window.
 
-- [ ] **Step 5: Add failure and isolation tests**
+- [x] **Step 5: Add failure and isolation tests**
 
 Cover malformed frames, oversized declarations, stderr flood, write failure,
 initialize error/timeout, request timeout, unexpected server requests, shutdown
 timeout, process crash, manual restart, and independent clients.
 
-- [ ] **Step 6: Run strict lifecycle verification and commit**
+- [x] **Step 6: Run strict lifecycle verification and commit**
 
 Run: `cargo test -p strukt-language --locked --offline`
 
@@ -435,19 +435,19 @@ git commit -m "feat: run bounded language server clients"
 - Create: `crates/strukt-language/tests/native_contract.rs`
 - Modify: `crates/strukt-language/Cargo.toml`
 
-- [ ] **Step 1: Write the failing native contract**
+- [x] **Step 1: Write the failing native contract**
 
 Spawn the repository fixture through `StdioLanguageTransport`, initialize it,
 open a Unicode/CRLF document, and assert diagnostics, completion, hover, definition,
 cancellation observation, bounded stderr, shutdown, and exit.
 
-- [ ] **Step 2: Run and confirm the fixture is missing**
+- [x] **Step 2: Run and confirm the fixture is missing**
 
 Run: `cargo test -p strukt-language --test native_contract --locked --offline`
 
 Expected: fail because `CARGO_BIN_EXE_language-fixture` is unavailable.
 
-- [ ] **Step 3: Implement explicit fixture modes**
+- [x] **Step 3: Implement explicit fixture modes**
 
 The binary accepts exactly one mode:
 
@@ -468,7 +468,7 @@ enum FixtureMode {
 exercise one bounded failure. The fixture never reads workspace files or uses the
 network.
 
-- [ ] **Step 4: Run native and cross-target checks**
+- [x] **Step 4: Run native and cross-target checks**
 
 Run: `cargo test -p strukt-language --test native_contract --locked --offline`
 
@@ -478,7 +478,7 @@ Run: `cargo clippy -p strukt-language --target x86_64-pc-windows-msvc --all-targ
 
 Expected: pass; hosted Windows later executes the native process contract.
 
-- [ ] **Step 5: Commit the fake server contract**
+- [x] **Step 5: Commit the fake server contract**
 
 ```bash
 git add crates/strukt-language
