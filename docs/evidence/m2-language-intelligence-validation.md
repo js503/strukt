@@ -1,6 +1,6 @@
 # M2.4 Language Intelligence Validation
 
-- Status: Code validation complete; exact documentation head pending
+- Status: Merge-readiness validation complete
 - Date: 2026-08-02
 - Issue: [#9](https://github.com/js503/strukt/issues/9)
 - Pull request: [#10](https://github.com/js503/strukt/pull/10)
@@ -120,6 +120,14 @@ code-head matrix for `5bb0cd2`. It passed:
   deterministic M2 smoke.
 
 The docs-only merge-ready head must pass the same matrix before merge.
+
+Documentation head `870a55f` passed the exact final matrix in run
+[30769782274](https://github.com/js503/strukt/actions/runs/30769782274):
+[macOS 14](https://github.com/js503/strukt/actions/runs/30769782274/job/91554756614),
+[Ubuntu 24.04](https://github.com/js503/strukt/actions/runs/30769782274/job/91554756566),
+and [Windows Server 2022](https://github.com/js503/strukt/actions/runs/30769782274/job/91554756617)
+all passed. The subsequent closeout-only commit changes this status and the final
+plan checkbox; it must pass the same required matrix before merge.
 
 ## Security and privacy observations
 

@@ -846,7 +846,7 @@ git add README.md docs/decisions/0001-native-ui-framework.md \
 git commit -m "docs: complete M2 local development workspace"
 ```
 
-- [ ] **Step 6: Require the exact final head before merge**
+- [x] **Step 6: Require the exact final head before merge**
 
 Push the evidence head, require the complete macOS/Ubuntu/Windows matrix, update the
 issue and PR with verification and substantive review findings, mark ready, and
