@@ -5,10 +5,11 @@ use std::time::{Duration, Instant};
 
 use strukt_editor::{DocumentId, GrammarRegistry};
 use strukt_language::{
-    ApprovalStatus, DiscoveredServer, DiscoveryOutcome, FeatureRequestKind, FrameDecoder,
-    FrameLimits, IncomingMessage, LanguageClient, LanguageProcess, LanguageTransport,
-    PositionEncoding, ServerCapabilities, SpawnRequest, StdioTransport, SynchronizationKind,
-    built_in_descriptors, discover, encode_frame, load_workspace_registry, parse_message,
+    ApprovalStatus, DiscoveredServer, DiscoveryOutcome, FeatureRequest, FeatureRequestKind,
+    FrameDecoder, FrameLimits, IncomingMessage, LanguageClient, LanguageProcess, LanguageTransport,
+    PositionEncoding, RequestId, ResponseDisposition, ServerCapabilities, SpawnRequest,
+    StdioTransport, SynchronizationKind, built_in_descriptors, discover, encode_frame,
+    load_workspace_registry, parse_message, sanitize_hover_markdown,
 };
 use strukt_persistence::{
     ApprovalSnapshot, LanguageSelectionSnapshot, LanguageSessionSnapshot, RestoredLanguageSession,
@@ -132,6 +133,13 @@ pub(crate) enum LanguageRuntimeEvent {
         method: String,
         params: Option<serde_json::Value>,
     },
+    FeatureResponse {
+        language_id: String,
+        generation: u64,
+        request: FeatureRequest,
+        kind: FeatureRequestKind,
+        result: serde_json::Value,
+    },
 }
 
 struct RunningLanguage {
@@ -141,6 +149,7 @@ struct RunningLanguage {
     decoder: FrameDecoder,
     client: LanguageClient,
     initialize_id: strukt_language::RequestId,
+    feature_requests: HashMap<RequestId, FeatureRequest>,
 }
 
 pub(crate) struct LanguageRuntime {
@@ -185,6 +194,7 @@ impl LanguageRuntime {
                 decoder: FrameDecoder::new(FrameLimits::default()),
                 client,
                 initialize_id,
+                feature_requests: HashMap::new(),
             },
         );
         Ok(())
@@ -266,6 +276,35 @@ impl LanguageRuntime {
             flush_client(running)?;
         }
         Ok(())
+    }
+
+    pub(crate) fn request_feature(
+        &mut self,
+        language_id: &str,
+        generation: u64,
+        path: &Path,
+        revision: u64,
+        kind: FeatureRequestKind,
+        position: strukt_language::LspPosition,
+    ) -> Result<FeatureRequest, String> {
+        let now = self.now();
+        let running = self
+            .processes
+            .get_mut(language_id)
+            .ok_or("language server is not running")?;
+        if running.generation != generation {
+            return Err("language server generation is stale".to_owned());
+        }
+        let uri = file_uri(&running.root, path)?;
+        let request = running
+            .client
+            .request_feature(kind, &uri, revision, position, now)
+            .map_err(|error| error.to_string())?;
+        running
+            .feature_requests
+            .insert(request.id(), request.clone());
+        flush_client(running)?;
+        Ok(request)
     }
 
     pub(crate) fn poll(&mut self) -> Vec<LanguageRuntimeEvent> {
@@ -363,7 +402,25 @@ fn handle_frame(
                 params: notification.params().cloned(),
             }))
         }
-        IncomingMessage::Response(_) | IncomingMessage::Request(_) => Ok(None),
+        IncomingMessage::Response(response) => {
+            let Some(request) = running.feature_requests.remove(&response.id()) else {
+                return Ok(None);
+            };
+            if running.client.accept_feature_response(&request) == ResponseDisposition::Stale {
+                return Ok(None);
+            }
+            Ok(Some(LanguageRuntimeEvent::FeatureResponse {
+                language_id: language_id.to_owned(),
+                generation: running.generation,
+                kind: request.kind(),
+                request,
+                result: response
+                    .result()
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            }))
+        }
+        IncomingMessage::Request(_) => Ok(None),
     }
 }
 
@@ -617,6 +674,93 @@ pub(crate) struct ProblemCounts {
     pub(crate) hints: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CompletionCandidate {
+    label: String,
+    insertion: String,
+    range: Option<strukt_language::LanguageRange>,
+}
+
+impl CompletionCandidate {
+    #[must_use]
+    pub(crate) fn label(&self) -> &str {
+        &self.label
+    }
+
+    #[must_use]
+    pub(crate) fn insertion(&self) -> &str {
+        &self.insertion
+    }
+
+    #[must_use]
+    pub(crate) const fn range(&self) -> Option<strukt_language::LanguageRange> {
+        self.range
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DefinitionLocation {
+    path: Option<PathBuf>,
+    line: u32,
+    character: u32,
+    external: bool,
+    uri: String,
+}
+
+impl DefinitionLocation {
+    #[must_use]
+    pub(crate) fn label(&self) -> String {
+        self.path.as_ref().map_or_else(
+            || self.uri.clone(),
+            |path| {
+                format!(
+                    "{}:{}:{}",
+                    path.display(),
+                    self.line + 1,
+                    self.character + 1
+                )
+            },
+        )
+    }
+
+    #[must_use]
+    pub(crate) fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    #[must_use]
+    pub(crate) const fn line(&self) -> u32 {
+        self.line
+    }
+
+    #[must_use]
+    pub(crate) const fn character(&self) -> u32 {
+        self.character
+    }
+
+    #[must_use]
+    pub(crate) const fn external(&self) -> bool {
+        self.external
+    }
+}
+
+#[derive(Clone, Debug)]
+struct FeatureGuard {
+    document_id: DocumentId,
+    revision: u64,
+    generation: u64,
+    kind: FeatureRequestKind,
+    position: strukt_language::LspPosition,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct LanguageRequestContext {
+    pub(crate) language_id: String,
+    pub(crate) generation: u64,
+    pub(crate) path: PathBuf,
+    pub(crate) revision: u64,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum ProblemFilter {
     #[default]
@@ -642,6 +786,12 @@ pub(crate) struct LanguageCoordinator {
     servers: HashMap<String, ServerBinding>,
     diagnostics: HashMap<DocumentId, DiagnosticSet>,
     problem_filter: ProblemFilter,
+    feature_guards: HashMap<RequestId, FeatureGuard>,
+    completion_document: Option<(DocumentId, u64)>,
+    completion_items: Vec<CompletionCandidate>,
+    hover_text: Option<String>,
+    definition_document: Option<DocumentId>,
+    definition_locations: Vec<DefinitionLocation>,
     persistence_dirty: bool,
 }
 
@@ -663,6 +813,12 @@ impl LanguageCoordinator {
             servers: HashMap::new(),
             diagnostics: HashMap::new(),
             problem_filter: ProblemFilter::All,
+            feature_guards: HashMap::new(),
+            completion_document: None,
+            completion_items: Vec::new(),
+            hover_text: None,
+            definition_document: None,
+            definition_locations: Vec::new(),
             persistence_dirty: false,
         }
     }
@@ -686,6 +842,12 @@ impl LanguageCoordinator {
             servers: HashMap::new(),
             diagnostics: HashMap::new(),
             problem_filter: ProblemFilter::All,
+            feature_guards: HashMap::new(),
+            completion_document: None,
+            completion_items: Vec::new(),
+            hover_text: None,
+            definition_document: None,
+            definition_locations: Vec::new(),
             persistence_dirty: false,
         }
     }
@@ -696,6 +858,7 @@ impl LanguageCoordinator {
         self.documents.clear();
         self.servers.clear();
         self.diagnostics.clear();
+        self.clear_transient_features();
         self.persistence_dirty = false;
     }
 
@@ -779,6 +942,7 @@ impl LanguageCoordinator {
         revision: u64,
         text: &str,
     ) -> Vec<LanguageEffect> {
+        self.clear_features_for_document(id);
         let Some(binding) = self.documents.get_mut(&id) else {
             return Vec::new();
         };
@@ -821,6 +985,7 @@ impl LanguageCoordinator {
 
     pub(crate) fn close_document(&mut self, id: DocumentId) -> Vec<LanguageEffect> {
         self.diagnostics.remove(&id);
+        self.clear_features_for_document(id);
         let Some(binding) = self.documents.remove(&id) else {
             return Vec::new();
         };
@@ -1041,7 +1206,129 @@ impl LanguageCoordinator {
         self.diagnostics.retain(|_, diagnostics| {
             diagnostics.language_id != language_id || diagnostics.generation != generation
         });
+        self.clear_transient_features();
         true
+    }
+
+    #[must_use]
+    pub(crate) fn request_context(&self, id: DocumentId) -> Option<LanguageRequestContext> {
+        let binding = self.documents.get(&id)?;
+        let server = self.servers.get(&binding.language_id)?;
+        (binding.eligible && server.state == LanguageState::Ready).then(|| LanguageRequestContext {
+            language_id: binding.language_id.clone(),
+            generation: server.generation,
+            path: binding.path.clone(),
+            revision: binding.revision,
+        })
+    }
+
+    pub(crate) fn begin_feature(
+        &mut self,
+        document_id: DocumentId,
+        server_generation: u64,
+        request: &FeatureRequest,
+    ) {
+        self.feature_guards
+            .retain(|_, guard| guard.document_id != document_id || guard.kind != request.kind());
+        self.feature_guards.insert(
+            request.id(),
+            FeatureGuard {
+                document_id,
+                revision: request.revision(),
+                generation: server_generation,
+                kind: request.kind(),
+                position: request.position(),
+            },
+        );
+    }
+
+    pub(crate) fn accept_feature_response(
+        &mut self,
+        generation: u64,
+        request: &FeatureRequest,
+        result: &serde_json::Value,
+        workspace_root: &Path,
+    ) -> bool {
+        let Some(guard) = self.feature_guards.remove(&request.id()) else {
+            return false;
+        };
+        let Some(binding) = self.documents.get(&guard.document_id) else {
+            return false;
+        };
+        if guard.generation != generation
+            || guard.revision != binding.revision
+            || guard.kind != request.kind()
+            || guard.position != request.position()
+        {
+            return false;
+        }
+        match guard.kind {
+            FeatureRequestKind::Completion => {
+                self.completion_document = Some((guard.document_id, guard.revision));
+                self.completion_items = parse_completion_items(result);
+            }
+            FeatureRequestKind::Hover => {
+                self.hover_text = parse_hover(result);
+            }
+            FeatureRequestKind::Definition => {
+                self.definition_document = Some(guard.document_id);
+                self.definition_locations = parse_definitions(result, workspace_root);
+            }
+        }
+        true
+    }
+
+    #[must_use]
+    pub(crate) fn completion(&self) -> Option<(DocumentId, u64, &[CompletionCandidate])> {
+        let (id, revision) = self.completion_document?;
+        Some((id, revision, &self.completion_items))
+    }
+
+    #[must_use]
+    pub(crate) fn hover_text(&self) -> Option<&str> {
+        self.hover_text.as_deref()
+    }
+
+    #[must_use]
+    pub(crate) fn definitions(&self) -> &[DefinitionLocation] {
+        &self.definition_locations
+    }
+
+    pub(crate) fn dismiss_features(&mut self) {
+        self.clear_transient_features();
+    }
+
+    #[must_use]
+    pub(crate) fn has_transient_features(&self) -> bool {
+        self.completion_document.is_some()
+            || self.hover_text.is_some()
+            || !self.definition_locations.is_empty()
+    }
+
+    fn clear_features_for_document(&mut self, id: DocumentId) {
+        self.feature_guards
+            .retain(|_, guard| guard.document_id != id);
+        if self
+            .completion_document
+            .is_some_and(|(document, _)| document == id)
+        {
+            self.completion_document = None;
+            self.completion_items.clear();
+        }
+        if self.definition_document == Some(id) {
+            self.definition_document = None;
+            self.definition_locations.clear();
+        }
+        self.hover_text = None;
+    }
+
+    fn clear_transient_features(&mut self) {
+        self.feature_guards.clear();
+        self.completion_document = None;
+        self.completion_items.clear();
+        self.hover_text = None;
+        self.definition_document = None;
+        self.definition_locations.clear();
     }
 
     pub(crate) fn publish_diagnostics(
@@ -1208,6 +1495,122 @@ impl LanguageCoordinator {
     }
 }
 
+fn parse_completion_items(result: &serde_json::Value) -> Vec<CompletionCandidate> {
+    let items = result
+        .as_array()
+        .or_else(|| result.get("items").and_then(serde_json::Value::as_array));
+    items
+        .into_iter()
+        .flatten()
+        .take(200)
+        .filter_map(|item| {
+            let label = item.get("label")?.as_str()?.trim();
+            if label.is_empty() {
+                return None;
+            }
+            let raw = item
+                .get("textEdit")
+                .and_then(|edit| edit.get("newText"))
+                .or_else(|| item.get("insertText"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(label);
+            let insertion = if item
+                .get("insertTextFormat")
+                .and_then(serde_json::Value::as_u64)
+                == Some(2)
+            {
+                flatten_snippet(raw)
+            } else {
+                raw.to_owned()
+            };
+            Some(CompletionCandidate {
+                label: label.chars().take(512).collect(),
+                insertion: insertion.chars().take(64 * 1024).collect(),
+                range: item
+                    .get("textEdit")
+                    .and_then(|edit| edit.get("range"))
+                    .and_then(|range| serde_json::from_value(range.clone()).ok()),
+            })
+        })
+        .collect()
+}
+
+fn flatten_snippet(snippet: &str) -> String {
+    let mut output = String::with_capacity(snippet.len());
+    let characters = snippet.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < characters.len() {
+        if characters[index] != '$' {
+            output.push(characters[index]);
+            index += 1;
+            continue;
+        }
+        if characters.get(index + 1) == Some(&'{') {
+            let Some(end) = characters[index + 2..]
+                .iter()
+                .position(|value| *value == '}')
+            else {
+                index += 1;
+                continue;
+            };
+            let inner = &characters[index + 2..index + 2 + end];
+            if let Some(colon) = inner.iter().position(|value| *value == ':') {
+                output.extend(inner[colon + 1..].iter());
+            }
+            index += end + 3;
+        } else {
+            index += 1;
+            while characters.get(index).is_some_and(char::is_ascii_digit) {
+                index += 1;
+            }
+        }
+    }
+    output
+}
+
+fn parse_hover(result: &serde_json::Value) -> Option<String> {
+    let contents = result.get("contents").unwrap_or(result);
+    let value = contents
+        .as_str()
+        .or_else(|| contents.get("value").and_then(serde_json::Value::as_str))?;
+    let sanitized = sanitize_hover_markdown(value);
+    (!sanitized.value().trim().is_empty()).then(|| sanitized.value().to_owned())
+}
+
+fn parse_definitions(result: &serde_json::Value, workspace_root: &Path) -> Vec<DefinitionLocation> {
+    let locations = result
+        .as_array()
+        .map_or_else(|| vec![result], |locations| locations.iter().collect());
+    locations
+        .into_iter()
+        .take(100)
+        .filter_map(|location| {
+            let uri = location
+                .get("uri")
+                .or_else(|| location.get("targetUri"))?
+                .as_str()?;
+            let range = location
+                .get("range")
+                .or_else(|| location.get("targetSelectionRange"))?;
+            let start = range.get("start")?;
+            let line = u32::try_from(start.get("line")?.as_u64()?).ok()?;
+            let character = u32::try_from(start.get("character")?.as_u64()?).ok()?;
+            let absolute = Url::parse(uri).ok().and_then(|uri| uri.to_file_path().ok());
+            let path = absolute
+                .as_ref()
+                .and_then(|path| path.strip_prefix(workspace_root).ok())
+                .map(Path::to_path_buf);
+            Some(DefinitionLocation {
+                external: absolute.is_some() && path.is_none(),
+                path,
+                line,
+                character,
+                uri: uri.chars().take(2_048).collect(),
+            })
+        })
+        .collect()
+}
+
 fn detect_language(path: &Path, language_override: Option<&str>) -> String {
     if let Some(language_override) = language_override {
         return language_override.to_owned();
@@ -1224,8 +1627,8 @@ mod tests {
 
     use strukt_editor::DocumentId;
     use strukt_language::{
-        FrameDecoder, FrameLimits, LanguageProcess, PositionEncoding, ProcessExit, TransportError,
-        encode_frame,
+        FeatureRequestKind, FrameDecoder, FrameLimits, LanguageProcess, PositionEncoding,
+        ProcessExit, TransportError, encode_frame,
     };
     use strukt_persistence::{LanguageSelectionSnapshot, LanguageSessionSnapshot};
     use url::Url;
@@ -1233,6 +1636,7 @@ mod tests {
     use super::{
         DiagnosticSeverity, LanguageCoordinator, LanguageEffect, LanguageRuntime,
         LanguageRuntimeEvent, LanguageSpawnCompletion, LanguageState, PublishedDiagnostic,
+        flatten_snippet, parse_completion_items, parse_definitions, parse_hover,
         parse_publish_diagnostics,
     };
 
@@ -1362,6 +1766,35 @@ mod tests {
             written_methods(&shared),
             vec!["initialize", "initialized", "textDocument/didOpen"]
         );
+
+        let request = runtime
+            .request_feature(
+                "rust",
+                generation,
+                Path::new("src/main.rs"),
+                1,
+                FeatureRequestKind::Completion,
+                strukt_language::LspPosition::new(0, 2),
+            )
+            .unwrap();
+        let response = serde_json::to_vec(&serde_json::json!({
+            "jsonrpc":"2.0",
+            "id":request.id().get(),
+            "result":{"items":[{"label":"main","insertText":"main"}]}
+        }))
+        .unwrap();
+        shared
+            .lock()
+            .unwrap()
+            .reads
+            .push_back(encode_frame(&response, FrameLimits::default()).unwrap());
+        assert!(matches!(
+            runtime.poll().as_slice(),
+            [LanguageRuntimeEvent::FeatureResponse {
+                kind: FeatureRequestKind::Completion,
+                ..
+            }]
+        ));
     }
 
     #[test]
@@ -1552,6 +1985,38 @@ mod tests {
             "diagnostics": []
         });
         assert!(parse_publish_diagnostics(Some(&outside), root.path()).is_none());
+    }
+
+    #[test]
+    fn completion_hover_and_definition_results_are_bounded_and_safe() {
+        let completion = serde_json::json!({"items": [
+            {"label":"call", "insertText":"call(${1:value})$0", "insertTextFormat":2},
+            {"label":"plain", "insertText":"plain"}
+        ]});
+        let items = parse_completion_items(&completion);
+        assert_eq!(items[0].insertion(), "call(value)");
+        assert_eq!(flatten_snippet("${1:first} + $2"), "first + ");
+
+        let hover = serde_json::json!({"contents": {"kind":"markdown", "value":"<script>x</script>[safe](https://example.com)"}});
+        assert_eq!(parse_hover(&hover).as_deref(), Some("xsafe"));
+
+        let root = tempfile::tempdir().unwrap();
+        let inside = Url::from_file_path(root.path().join("src/lib.rs"))
+            .unwrap()
+            .to_string();
+        let outside = Url::from_file_path(root.path().parent().unwrap().join("elsewhere.rs"))
+            .unwrap()
+            .to_string();
+        let definitions = parse_definitions(
+            &serde_json::json!([
+                {"uri": inside, "range":{"start":{"line":1,"character":2},"end":{"line":1,"character":3}}},
+                {"uri": outside, "range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}}}
+            ]),
+            root.path(),
+        );
+        assert_eq!(definitions[0].path(), Some(Path::new("src/lib.rs")));
+        assert!(!definitions[0].external());
+        assert!(definitions[1].external());
     }
 
     #[derive(Default)]

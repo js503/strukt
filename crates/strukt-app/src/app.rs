@@ -146,6 +146,8 @@ pub struct StruktApp {
     pub editor_replace_text: String,
     pub editor_find_options: FindOptions,
     pub editor_language_overrides: HashMap<DocumentId, String>,
+    pending_language_navigation: Option<(PathBuf, u32, u32, strukt_language::PositionEncoding)>,
+    pub(crate) language_navigation_back: Vec<(DocumentId, usize, usize)>,
     pub(crate) language: LanguageCoordinator,
     pub(crate) language_runtime: LanguageRuntime,
     pub(crate) terminal: TerminalSurfaces,
@@ -367,6 +369,11 @@ pub enum Message {
     RetryLanguage(String),
     ToggleProblems,
     SetProblemFilter(ProblemFilter),
+    RequestLanguageFeature(strukt_language::FeatureRequestKind),
+    ApplyCompletion(usize),
+    OpenDefinition(usize),
+    NavigateLanguageBack,
+    DismissLanguageFeatures,
     OpenProblem {
         id: DocumentId,
         line: u32,
@@ -502,6 +509,8 @@ impl StruktApp {
             editor_replace_text: String::new(),
             editor_find_options: FindOptions::default(),
             editor_language_overrides: HashMap::new(),
+            pending_language_navigation: None,
+            language_navigation_back: Vec::new(),
             language: LanguageCoordinator::default(),
             language_runtime: LanguageRuntime::default(),
             terminal: TerminalSurfaces::default(),
@@ -1170,6 +1179,19 @@ impl StruktApp {
                                         .unwrap_or_default()
                                         .as_u64();
                                     self.editor_surfaces.insert(id, &surface_text);
+                                    if self
+                                        .pending_language_navigation
+                                        .as_ref()
+                                        .is_some_and(|(pending_path, ..)| pending_path == &path)
+                                        && let Some((_, line, character, encoding)) =
+                                            self.pending_language_navigation.take()
+                                    {
+                                        let _ = self.editor_surfaces.move_to_lsp(
+                                            id,
+                                            strukt_language::LspPosition::new(line, character),
+                                            encoding,
+                                        );
+                                    }
                                     if let Some(snapshot) =
                                         self.editor_restore_tabs.get(&path_string).cloned()
                                     {
@@ -1575,6 +1597,21 @@ impl StruktApp {
                                 );
                             }
                         }
+                        LanguageRuntimeEvent::FeatureResponse {
+                            generation,
+                            request,
+                            result,
+                            ..
+                        } => {
+                            if let Some(root) = self
+                                .workspace
+                                .as_ref()
+                                .map(|workspace| workspace.root.path().to_path_buf())
+                            {
+                                self.language
+                                    .accept_feature_response(generation, &request, &result, &root);
+                            }
+                        }
                     }
                 }
                 return Task::none();
@@ -1613,6 +1650,159 @@ impl StruktApp {
             }
             Message::SetProblemFilter(filter) => {
                 self.language.set_problem_filter(filter);
+                return Task::none();
+            }
+            Message::RequestLanguageFeature(kind) => {
+                let Some(id) = self
+                    .editor
+                    .as_ref()
+                    .and_then(EditorWorkspace::active_document_id)
+                else {
+                    return Task::none();
+                };
+                let Some(context) = self.language.request_context(id) else {
+                    self.editor_error = Some("language server is not ready".to_owned());
+                    return Task::none();
+                };
+                let encoding = self.language.document_position_encoding(id);
+                let result = self
+                    .editor_surfaces
+                    .current_lsp_position(id, encoding)
+                    .map_err(|error| error.to_string())
+                    .and_then(|position| {
+                        self.language_runtime.request_feature(
+                            &context.language_id,
+                            context.generation,
+                            &context.path,
+                            context.revision,
+                            kind,
+                            position,
+                        )
+                    });
+                match result {
+                    Ok(request) => {
+                        self.language
+                            .begin_feature(id, context.generation, &request);
+                        self.editor_error = None;
+                    }
+                    Err(error) => self.editor_error = Some(error),
+                }
+                return Task::none();
+            }
+            Message::ApplyCompletion(index) => {
+                let candidate = self
+                    .language
+                    .completion()
+                    .and_then(|(id, revision, items)| {
+                        items
+                            .get(index)
+                            .map(|item| (id, revision, item.insertion().to_owned(), item.range()))
+                    });
+                let Some((id, revision, insertion, range)) = candidate else {
+                    return Task::none();
+                };
+                let Some(editor) = &mut self.editor else {
+                    return Task::none();
+                };
+                match self.editor_surfaces.insert_completion(
+                    editor,
+                    id,
+                    Revision::new(revision),
+                    &insertion,
+                    range,
+                    self.language.document_position_encoding(id),
+                ) {
+                    Ok(()) => {
+                        self.language.dismiss_features();
+                        let effects = self.language_document_changed(id);
+                        let recovery = self.schedule_recovery(id);
+                        let persistence = self.request_persistence(false);
+                        let language = self.language_effects_task(effects);
+                        return Task::batch([recovery, persistence, language]);
+                    }
+                    Err(error) => self.editor_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::OpenDefinition(index) => {
+                let Some(location) = self.language.definitions().get(index).cloned() else {
+                    return Task::none();
+                };
+                if location.external() {
+                    self.editor_error = Some(
+                        "external definition requires explicit confirmation and was not opened"
+                            .to_owned(),
+                    );
+                    return Task::none();
+                }
+                let Some(path) = location.path().map(Path::to_path_buf) else {
+                    self.editor_error = Some("definition URI is unsupported".to_owned());
+                    return Task::none();
+                };
+                let encoding = self
+                    .editor
+                    .as_ref()
+                    .and_then(EditorWorkspace::active_document_id)
+                    .map_or(strukt_language::PositionEncoding::Utf16, |id| {
+                        self.language.document_position_encoding(id)
+                    });
+                if let Some(source_id) = self
+                    .editor
+                    .as_ref()
+                    .and_then(EditorWorkspace::active_document_id)
+                    && let Ok((cursor, anchor)) = self.editor_surfaces.cursor_offsets(source_id)
+                {
+                    self.language_navigation_back
+                        .push((source_id, cursor, anchor));
+                }
+                if let Some(id) = self.editor.as_ref().and_then(|editor| {
+                    editor
+                        .view_state()
+                        .tabs
+                        .iter()
+                        .find(|tab| Path::new(tab.path.as_str()) == path)
+                        .map(|tab| tab.id)
+                }) {
+                    if let Some(editor) = &mut self.editor {
+                        let _ = editor.select(id);
+                    }
+                    if let Err(error) = self.editor_surfaces.move_to_lsp(
+                        id,
+                        strukt_language::LspPosition::new(location.line(), location.character()),
+                        encoding,
+                    ) {
+                        self.editor_error = Some(error.to_string());
+                    }
+                    self.language.dismiss_features();
+                    return self.request_persistence(false);
+                }
+                self.pending_language_navigation = Some((
+                    path.clone(),
+                    location.line(),
+                    location.character(),
+                    encoding,
+                ));
+                self.language.dismiss_features();
+                return self.update(Message::OpenDocument {
+                    path,
+                    disposition: OpenDisposition::Pinned,
+                    force_full: false,
+                });
+            }
+            Message::NavigateLanguageBack => {
+                let Some((id, cursor, anchor)) = self.language_navigation_back.pop() else {
+                    return Task::none();
+                };
+                if let Some(editor) = &mut self.editor {
+                    let _ = editor.select(id);
+                }
+                if let Err(error) = self.editor_surfaces.restore_view(id, cursor, anchor, 0.0) {
+                    self.editor_error = Some(error.to_string());
+                }
+                return self.request_persistence(false);
+            }
+            Message::DismissLanguageFeatures => {
+                self.language.dismiss_features();
                 return Task::none();
             }
             Message::OpenProblem {
@@ -2449,6 +2639,11 @@ impl StruktApp {
             | Message::RetryLanguage(_)
             | Message::ToggleProblems
             | Message::SetProblemFilter(_)
+            | Message::RequestLanguageFeature(_)
+            | Message::ApplyCompletion(_)
+            | Message::OpenDefinition(_)
+            | Message::NavigateLanguageBack
+            | Message::DismissLanguageFeatures
             | Message::OpenProblem { .. }
             | Message::ReplaceAll(_)
             | Message::BeginCreateFile
@@ -2487,6 +2682,11 @@ impl StruktApp {
                 text,
                 ..
             }) => {
+                if matches!(key.as_ref(), Key::Named(keyboard::key::Named::Escape))
+                    && self.language.has_transient_features()
+                {
+                    return self.update(Message::DismissLanguageFeatures);
+                }
                 let terminal_pane = self
                     .terminal_input_active
                     .then(|| self.terminal.workspace().focused_pane())

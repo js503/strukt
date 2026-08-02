@@ -431,6 +431,18 @@ fn editor_canvas(app: &StruktApp) -> Element<'_, Message> {
         button("Redo")
             .on_press_maybe((!document.is_read_only()).then_some(Message::RedoDocument(active_id))),
         button("Find").on_press(Message::ToggleEditorFind),
+        button("Complete").on_press(Message::RequestLanguageFeature(
+            strukt_language::FeatureRequestKind::Completion,
+        )),
+        button("Hover").on_press(Message::RequestLanguageFeature(
+            strukt_language::FeatureRequestKind::Hover,
+        )),
+        button("Definition").on_press(Message::RequestLanguageFeature(
+            strukt_language::FeatureRequestKind::Definition,
+        )),
+        button("Back").on_press_maybe(
+            (!app.language_navigation_back.is_empty()).then_some(Message::NavigateLanguageBack),
+        ),
         pick_list(
             std::iter::once("auto")
                 .chain(GrammarRegistry::all().iter().map(|grammar| grammar.id))
@@ -467,6 +479,43 @@ fn editor_canvas(app: &StruktApp) -> Element<'_, Message> {
         },
     );
     let mut body = column![tabs, controls].spacing(8);
+    if let Some((document_id, _, items)) = app.language.completion()
+        && document_id == active_id
+    {
+        let mut menu = column![text("COMPLETIONS").size(12)].spacing(3);
+        for (index, item) in items.iter().take(12).enumerate() {
+            menu = menu.push(
+                button(text(item.label().to_owned()).size(12))
+                    .on_press(Message::ApplyCompletion(index)),
+            );
+        }
+        menu = menu.push(button("Dismiss").on_press(Message::DismissLanguageFeatures));
+        body = body.push(container(menu).padding(8));
+    }
+    if let Some(hover) = app.language.hover_text() {
+        body = body.push(
+            container(
+                column![
+                    text("HOVER").size(12),
+                    text(hover.to_owned()).size(12),
+                    button("Dismiss").on_press(Message::DismissLanguageFeatures),
+                ]
+                .spacing(4),
+            )
+            .padding(8),
+        );
+    }
+    if !app.language.definitions().is_empty() {
+        let mut definitions = column![text("DEFINITIONS").size(12)].spacing(3);
+        for (index, location) in app.language.definitions().iter().enumerate() {
+            definitions = definitions.push(
+                button(text(location.label()).size(12)).on_press(Message::OpenDefinition(index)),
+            );
+        }
+        definitions =
+            definitions.push(button("Dismiss").on_press(Message::DismissLanguageFeatures));
+        body = body.push(container(definitions).padding(8));
+    }
     if let DocumentStatus::Conflict { disk_text, .. } = document.status() {
         body = body.push(
             column![

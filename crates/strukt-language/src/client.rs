@@ -151,6 +151,31 @@ impl FeatureRequest {
     pub const fn id(&self) -> RequestId {
         self.id
     }
+
+    #[must_use]
+    pub const fn kind(&self) -> FeatureRequestKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub fn document(&self) -> &str {
+        &self.document
+    }
+
+    #[must_use]
+    pub const fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    #[must_use]
+    pub const fn position(&self) -> LspPosition {
+        self.position
+    }
+
+    #[must_use]
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

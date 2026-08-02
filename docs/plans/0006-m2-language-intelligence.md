@@ -675,13 +675,13 @@ git commit -m "feat: show language diagnostics and problems"
 - Modify: `crates/strukt-app/src/editor.rs`
 - Modify: `crates/strukt-app/src/main.rs`
 
-- [ ] **Step 1: Write failing request guard and editor transaction tests**
+- [x] **Step 1: Write failing request guard and editor transaction tests**
 
 Require explicit/trigger completion, 200-item cap, safe snippet flattening, one undo
 boundary, bounded sanitized hover, single/multiple/external definition handling,
 navigation back, cancellation, and focus isolation from terminals.
 
-- [ ] **Step 2: Run focused tests and confirm features are absent**
+- [x] **Step 2: Run focused tests and confirm features are absent**
 
 Run: `cargo test -p strukt-app --locked --offline completion_`
 
@@ -691,25 +691,25 @@ Run: `cargo test -p strukt-app --locked --offline definition_`
 
 Expected: fail for missing messages and projections.
 
-- [ ] **Step 3: Implement request scheduling and stale guards**
+- [x] **Step 3: Implement request scheduling and stale guards**
 
 Create one guard per transient feature containing workspace, document, revision,
 position, server generation, and request ID. New requests invalidate old guards and
 schedule `$/cancelRequest`. Timeouts clear only their own overlay.
 
-- [ ] **Step 4: Implement completion transactions**
+- [x] **Step 4: Implement completion transactions**
 
 Normalize text edits into current-document scalar ranges, reject stale/overlapping
 or external edits, flatten snippet placeholders to safe text, and apply all accepted
 edits as one editor transaction and undo entry.
 
-- [ ] **Step 5: Implement hover and definition UI**
+- [x] **Step 5: Implement hover and definition UI**
 
 Render sanitized plain text/Markdown without HTML, images, scripts, or remote fetch.
 Open one confined definition directly; use a bounded picker for multiple results;
 require confirmation for external files; display unsupported URIs without opening.
 
-- [ ] **Step 6: Verify and commit language actions**
+- [x] **Step 6: Verify and commit language actions**
 
 Run: `cargo test -p strukt-app --locked --offline`
 
