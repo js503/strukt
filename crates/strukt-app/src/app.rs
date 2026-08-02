@@ -393,6 +393,7 @@ pub enum Message {
     ApproveLanguage(String),
     DenyLanguage(String),
     RetryLanguage(String),
+    CopyLanguageFailure(String),
     ToggleProblems,
     SetProblemFilter(ProblemFilter),
     RequestLanguageFeature(strukt_language::FeatureRequestKind),
@@ -1565,14 +1566,15 @@ impl StruktApp {
                 {
                     return Task::none();
                 }
-                if let Err(_error) = self.language_runtime.finish_start(
+                if let Err(error) = self.language_runtime.finish_start(
                     &workspace_id,
                     &language_id,
                     generation,
                     workspace_root,
                     &completion,
                 ) {
-                    self.language.fail(&language_id, generation);
+                    self.language
+                        .fail_with_message(&language_id, generation, &error);
                 }
                 return Task::none();
             }
@@ -1596,9 +1598,10 @@ impl StruktApp {
                         LanguageRuntimeEvent::Failed {
                             language_id,
                             generation,
-                            ..
+                            message,
                         } => {
-                            self.language.fail(&language_id, generation);
+                            self.language
+                                .fail_with_message(&language_id, generation, &message);
                         }
                         LanguageRuntimeEvent::Notification {
                             language_id,
@@ -1670,6 +1673,14 @@ impl StruktApp {
             Message::RetryLanguage(language_id) => {
                 let effects = self.language.retry(&language_id);
                 return self.language_effects_task(effects);
+            }
+            Message::CopyLanguageFailure(language_id) => {
+                return self
+                    .language
+                    .failure_details(&language_id)
+                    .map_or_else(Task::none, |details| {
+                        iced::clipboard::write(details.to_owned())
+                    });
             }
             Message::ToggleProblems => {
                 self.language.toggle_problems();
@@ -2664,6 +2675,7 @@ impl StruktApp {
             | Message::ApproveLanguage(_)
             | Message::DenyLanguage(_)
             | Message::RetryLanguage(_)
+            | Message::CopyLanguageFailure(_)
             | Message::ToggleProblems
             | Message::SetProblemFilter(_)
             | Message::RequestLanguageFeature(_)

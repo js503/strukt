@@ -830,6 +830,15 @@ fn context_panel(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Messa
                 LanguageState::Unavailable | LanguageState::Disabled | LanguageState::Failed => {
                     server_row = server_row
                         .push(button("Retry").on_press(Message::RetryLanguage(language.clone())));
+                    if state == LanguageState::Failed {
+                        server_row = server_row.push(
+                            button("Copy error")
+                                .on_press(Message::CopyLanguageFailure(language.clone())),
+                        );
+                        if let Some(details) = app.language.failure_details(&language) {
+                            content = content.push(text(details.to_owned()).size(11));
+                        }
+                    }
                 }
                 LanguageState::Stopped
                 | LanguageState::Discovering

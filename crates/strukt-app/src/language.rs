@@ -7,9 +7,9 @@ use strukt_editor::{DocumentId, GrammarRegistry};
 use strukt_language::{
     ApprovalStatus, DiscoveredServer, DiscoveryOutcome, FeatureRequest, FeatureRequestKind,
     FrameDecoder, FrameLimits, IncomingMessage, LanguageClient, LanguageProcess, LanguageTransport,
-    PositionEncoding, RequestId, ResponseDisposition, ServerCapabilities, SpawnRequest,
-    StdioTransport, SynchronizationKind, built_in_descriptors, discover, encode_frame,
-    load_workspace_registry, parse_message, sanitize_hover_markdown,
+    PositionEncoding, RequestId, ResponseDisposition, ServerCapabilities, ServerRequestDisposition,
+    SpawnRequest, StdioTransport, SynchronizationKind, built_in_descriptors, discover,
+    encode_frame, load_workspace_registry, parse_message, sanitize_hover_markdown,
 };
 use strukt_persistence::{
     ApprovalSnapshot, LanguageSelectionSnapshot, LanguageSessionSnapshot, RestoredLanguageSession,
@@ -471,7 +471,22 @@ fn handle_frame(
                     .unwrap_or(serde_json::Value::Null),
             }))
         }
-        IncomingMessage::Request(_) => Ok(None),
+        IncomingMessage::Request(request) => {
+            let response = match running.client.handle_server_request(request.method()) {
+                ServerRequestDisposition::Configuration(values) => serde_json::json!({
+                    "jsonrpc":"2.0",
+                    "id":request.id().get(),
+                    "result":values,
+                }),
+                ServerRequestDisposition::MethodNotFound => serde_json::json!({
+                    "jsonrpc":"2.0",
+                    "id":request.id().get(),
+                    "error":{"code":-32601,"message":"Method not found"},
+                }),
+            };
+            write_json_value(running.process.as_mut(), &response)?;
+            Ok(None)
+        }
     }
 }
 
@@ -514,6 +529,15 @@ fn write_outbound(
     message: &strukt_language::OutboundMessage,
 ) -> Result<(), String> {
     let body = serde_json::to_vec(&message.json_rpc()).map_err(|error| error.to_string())?;
+    let frame = encode_frame(&body, FrameLimits::default()).map_err(|error| error.to_string())?;
+    process.write(&frame).map_err(|error| error.to_string())
+}
+
+fn write_json_value(
+    process: &mut dyn LanguageProcess,
+    message: &serde_json::Value,
+) -> Result<(), String> {
+    let body = serde_json::to_vec(message).map_err(|error| error.to_string())?;
     let frame = encode_frame(&body, FrameLimits::default()).map_err(|error| error.to_string())?;
     process.write(&frame).map_err(|error| error.to_string())
 }
@@ -631,6 +655,7 @@ struct ServerBinding {
     generation: u64,
     position_encoding: PositionEncoding,
     pending_approval: Option<DiscoveredServer>,
+    last_error: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1247,6 +1272,15 @@ impl LanguageCoordinator {
     }
 
     pub(crate) fn fail(&mut self, language_id: &str, generation: u64) -> bool {
+        self.fail_with_message(language_id, generation, "language server failed")
+    }
+
+    pub(crate) fn fail_with_message(
+        &mut self,
+        language_id: &str,
+        generation: u64,
+        message: &str,
+    ) -> bool {
         let Some(server) = self.servers.get_mut(language_id) else {
             return false;
         };
@@ -1254,11 +1288,17 @@ impl LanguageCoordinator {
             return false;
         }
         server.state = LanguageState::Failed;
+        server.last_error = Some(message.chars().take(2_048).collect());
         self.diagnostics.retain(|_, diagnostics| {
             diagnostics.language_id != language_id || diagnostics.generation != generation
         });
         self.clear_transient_features();
         true
+    }
+
+    #[must_use]
+    pub(crate) fn failure_details(&self, language_id: &str) -> Option<&str> {
+        self.servers.get(language_id)?.last_error.as_deref()
     }
 
     #[must_use]
@@ -1761,6 +1801,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one native contract covers initialization, synchronization, features, and server requests"
+    )]
     fn language_runtime_initializes_and_opens_documents_after_readiness() {
         let root = tempfile::tempdir().unwrap();
         let id = document_id(9);
@@ -1846,6 +1890,28 @@ mod tests {
                 ..
             }]
         ));
+
+        let server_request = serde_json::to_vec(&serde_json::json!({
+            "jsonrpc":"2.0",
+            "id":77,
+            "method":"workspace/configuration",
+            "params":{"items":[]}
+        }))
+        .unwrap();
+        shared
+            .lock()
+            .unwrap()
+            .reads
+            .push_back(encode_frame(&server_request, FrameLimits::default()).unwrap());
+        assert!(runtime.poll().is_empty());
+        let writes = shared.lock().unwrap().writes.clone();
+        let mut decoder = FrameDecoder::new(FrameLimits::default());
+        let frames = decoder.push(writes.last().unwrap()).unwrap();
+        let response: serde_json::Value = serde_json::from_slice(frames[0].body()).unwrap();
+        assert_eq!(
+            response,
+            serde_json::json!({"jsonrpc":"2.0","id":77,"result":[]})
+        );
     }
 
     #[test]
