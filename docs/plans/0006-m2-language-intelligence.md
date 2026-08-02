@@ -731,13 +731,13 @@ git commit -m "feat: add core language actions"
 - Modify: `.github/workflows/ci.yml`
 - Create: `docs/evidence/m2-language-intelligence-validation.md`
 
-- [ ] **Step 1: Write failing launch-mode and integration tests**
+- [x] **Step 1: Write failing launch-mode and integration tests**
 
 Require exact `--language-smoke <existing-root>` and `--m2-integration-smoke
 <existing-root>` parsing, bounded runtime deadlines, exact markers, and rejection of
 missing roots, extra arguments, near-match flags, and `.strukt` metadata.
 
-- [ ] **Step 2: Implement `--language-smoke`**
+- [x] **Step 2: Implement `--language-smoke`**
 
 Launch only `language-fixture`, initialize, synchronize Unicode/CRLF text, observe
 diagnostics, completion, hover, definition and cancellation, shut down, restore
@@ -747,7 +747,7 @@ selection without restart, and print:
 strukt language smoke: discovery, sync, diagnostics, completion, hover, definition, cancellation, shutdown, and restore passed
 ```
 
-- [ ] **Step 3: Implement final `--m2-integration-smoke`**
+- [x] **Step 3: Implement final `--m2-integration-smoke`**
 
 Compose existing workspace-files, editor, terminal, and language smoke contracts in
 one isolated root. Verify persistence coexistence, file/editor progress during noisy
@@ -758,13 +758,13 @@ capability isolation, no runtime-content persistence, and print:
 strukt M2 integration smoke: files, editor, terminal, language, persistence, isolation, and stopped restore passed
 ```
 
-- [ ] **Step 4: Add all-platform CI steps**
+- [x] **Step 4: Add all-platform CI steps**
 
 Build both fixture binaries, run both exact smoke modes with isolated roots on
 macOS, Ubuntu, and Windows, require exact markers, reject `.strukt`, and keep the
 existing native app startup gate.
 
-- [ ] **Step 5: Run the complete local gate**
+- [x] **Step 5: Run the complete local gate**
 
 Run:
 
@@ -787,7 +787,7 @@ cargo clippy -p strukt-language -p strukt-persistence -p strukt-workspace \
 
 Expected: pass; only the documented transitive `block 0.1.6` warning may remain.
 
-- [ ] **Step 6: Commit smoke and draft evidence**
+- [x] **Step 6: Commit smoke and draft evidence**
 
 ```bash
 git add .github/workflows/ci.yml crates/strukt-app \

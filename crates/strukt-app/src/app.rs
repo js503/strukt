@@ -20,10 +20,10 @@ use strukt_fs::{
     save_document, search_content_cancellable,
 };
 use strukt_persistence::{
-    EditorRecoveryStore, EditorSessionSnapshot, EditorTabSnapshot, RecentWorkspaces, RecoveryKey,
-    RecoveryKeyError, RecoveryKeyProvider, RecoveryMetadata, RecoveryPayload,
-    TerminalSessionSnapshot, WorkspaceStore, language_contribution, set_language_contribution,
-    set_terminal_contribution, terminal_contribution,
+    EditorRecoveryStore, EditorSessionSnapshot, EditorTabSnapshot, LanguageSessionSnapshot,
+    RecentWorkspaces, RecoveryKey, RecoveryKeyError, RecoveryKeyProvider, RecoveryMetadata,
+    RecoveryPayload, TerminalSessionSnapshot, WorkspaceStore, language_contribution,
+    set_language_contribution, set_terminal_contribution, terminal_contribution,
 };
 use strukt_shell::{Activity, ShellAction, ShellState};
 use strukt_terminal::{
@@ -53,6 +53,8 @@ pub(crate) const EDITOR_SMOKE_SUCCESS: &str =
     "strukt editor smoke: open, edit, save, and restore passed";
 pub(crate) const TERMINAL_SMOKE_SUCCESS: &str =
     "strukt terminal smoke: pty, unicode, ansi, resize, isolation, bounds, and restore passed";
+pub(crate) const LANGUAGE_SMOKE_SUCCESS: &str = "strukt language smoke: discovery, sync, diagnostics, completion, hover, definition, cancellation, shutdown, and restore passed";
+pub(crate) const M2_INTEGRATION_SMOKE_SUCCESS: &str = "strukt M2 integration smoke: files, editor, terminal, language, persistence, isolation, and stopped restore passed";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DocumentNotice {
@@ -72,6 +74,12 @@ pub enum LaunchMode {
         root: PathBuf,
     },
     TerminalSmoke {
+        root: PathBuf,
+    },
+    LanguageSmoke {
+        root: PathBuf,
+    },
+    M2IntegrationSmoke {
         root: PathBuf,
     },
 }
@@ -96,6 +104,22 @@ impl LaunchMode {
                     root: PathBuf::from(root),
                 }
             }
+            [flag, root]
+                if flag == "--language-smoke" && !root.is_empty() && Path::new(root).is_dir() =>
+            {
+                Self::LanguageSmoke {
+                    root: PathBuf::from(root),
+                }
+            }
+            [flag, root]
+                if flag == "--m2-integration-smoke"
+                    && !root.is_empty()
+                    && Path::new(root).is_dir() =>
+            {
+                Self::M2IntegrationSmoke {
+                    root: PathBuf::from(root),
+                }
+            }
             _ if args.iter().any(|argument| argument == "--smoke-test") => Self::SmokeTest,
             _ => Self::Interactive,
         }
@@ -107,7 +131,9 @@ impl LaunchMode {
             Self::Interactive
             | Self::WorkspaceFilesSmoke { .. }
             | Self::EditorSmoke { .. }
-            | Self::TerminalSmoke { .. } => None,
+            | Self::TerminalSmoke { .. }
+            | Self::LanguageSmoke { .. }
+            | Self::M2IntegrationSmoke { .. } => None,
             Self::SmokeTest => Some(SMOKE_TEST_DURATION),
         }
     }
@@ -1612,6 +1638,7 @@ impl StruktApp {
                                     .accept_feature_response(generation, &request, &result, &root);
                             }
                         }
+                        LanguageRuntimeEvent::Stopped { .. } => {}
                     }
                 }
                 return Task::none();
@@ -4222,6 +4249,183 @@ pub(crate) async fn terminal_smoke_task(root: PathBuf) -> Result<(), String> {
     tokio::task::spawn_blocking(move || run_terminal_smoke(&root))
         .await
         .map_err(|error| error.to_string())?
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "the language smoke keeps the native process contract explicit and auditable"
+)]
+pub(crate) fn run_language_smoke(root: &Path) -> Result<(), String> {
+    const DEADLINE: Duration = Duration::from_secs(15);
+    let workspace = WorkspaceRoot::open(root).map_err(|error| error.to_string())?;
+    let fixture = language_fixture_path()?;
+    let command =
+        strukt_language::ResolvedCommand::new(fixture, vec![std::ffi::OsString::from("healthy")])
+            .map_err(|error| error.to_string())?;
+    let request = strukt_language::SpawnRequest::new(command, root.to_path_buf())
+        .map_err(|error| error.to_string())?;
+    let process =
+        strukt_language::LanguageTransport::spawn(&strukt_language::StdioTransport, request)
+            .map_err(|error| error.to_string())?;
+    let completion = LanguageSpawnCompletion::new(Ok(process));
+    let mut runtime = LanguageRuntime::default();
+    let workspace_id = workspace.id().as_str().to_owned();
+    let generation = 1;
+    runtime.finish_start(
+        &workspace_id,
+        "rust",
+        generation,
+        root.to_path_buf(),
+        &completion,
+    )?;
+
+    let started = std::time::Instant::now();
+    let mut ready = false;
+    while started.elapsed() < DEADLINE && !ready {
+        ready = runtime.poll().into_iter().any(|event| {
+            matches!(
+                event,
+                LanguageRuntimeEvent::Ready {
+                    language_id,
+                    generation: event_generation,
+                    ..
+                } if language_id == "rust" && event_generation == generation
+            )
+        });
+        if !ready {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+    if !ready {
+        return Err("language fixture did not initialize before the deadline".to_owned());
+    }
+
+    let smoke_text = "fn main() {\r\n    println!(\"héllø 😀\");\r\n}\r\n";
+    let mut smoke_editor = EditorWorkspace::new(workspace.id().clone());
+    let smoke_document = smoke_editor
+        .open(
+            RelativeDocumentPath::new("main.rs").map_err(|error| error.to_string())?,
+            smoke_text,
+            strukt_editor::DiskRevision::new("language-smoke"),
+            false,
+            OpenDisposition::Pinned,
+        )
+        .map_err(|error| error.to_string())?;
+    runtime.apply_effects(vec![LanguageEffect::Open {
+        language_id: "rust".to_owned(),
+        generation,
+        document_id: smoke_document,
+        path: PathBuf::from("main.rs"),
+        revision: 1,
+        text: smoke_text.to_owned(),
+    }])?;
+    let position = strukt_language::LspPosition::new(1, 4);
+    let _first_completion = runtime.request_feature(
+        "rust",
+        generation,
+        Path::new("main.rs"),
+        1,
+        strukt_language::FeatureRequestKind::Completion,
+        position,
+    )?;
+    let _current_completion = runtime.request_feature(
+        "rust",
+        generation,
+        Path::new("main.rs"),
+        1,
+        strukt_language::FeatureRequestKind::Completion,
+        position,
+    )?;
+    for kind in [
+        strukt_language::FeatureRequestKind::Hover,
+        strukt_language::FeatureRequestKind::Definition,
+    ] {
+        runtime.request_feature("rust", generation, Path::new("main.rs"), 1, kind, position)?;
+    }
+
+    let mut diagnostics = false;
+    let mut cancellation = false;
+    let mut completion_seen = false;
+    let mut hover_seen = false;
+    let mut definition_seen = false;
+    while started.elapsed() < DEADLINE
+        && !(diagnostics && cancellation && completion_seen && hover_seen && definition_seen)
+    {
+        for event in runtime.poll() {
+            match event {
+                LanguageRuntimeEvent::Notification { method, .. } => {
+                    diagnostics |= method == "textDocument/publishDiagnostics";
+                    cancellation |= method == "$/struktFixture/cancelObserved";
+                }
+                LanguageRuntimeEvent::FeatureResponse { kind, .. } => match kind {
+                    strukt_language::FeatureRequestKind::Completion => completion_seen = true,
+                    strukt_language::FeatureRequestKind::Hover => hover_seen = true,
+                    strukt_language::FeatureRequestKind::Definition => definition_seen = true,
+                },
+                LanguageRuntimeEvent::Ready { .. }
+                | LanguageRuntimeEvent::Failed { .. }
+                | LanguageRuntimeEvent::Stopped { .. } => {}
+            }
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    if !(diagnostics && cancellation && completion_seen && hover_seen && definition_seen) {
+        return Err("language fixture did not complete every feature contract".to_owned());
+    }
+
+    runtime.begin_shutdown("rust", generation)?;
+    let mut stopped = false;
+    while started.elapsed() < DEADLINE && !stopped {
+        stopped = runtime.poll().into_iter().any(|event| {
+            matches!(
+                event,
+                LanguageRuntimeEvent::Stopped {
+                    language_id,
+                    generation: event_generation,
+                } if language_id == "rust" && event_generation == generation
+            )
+        });
+        if !stopped {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+    if !stopped {
+        return Err("language fixture did not shut down before the deadline".to_owned());
+    }
+
+    let snapshot = LanguageSessionSnapshot::new(Vec::new(), Vec::new(), true)
+        .map_err(|error| error.to_string())?;
+    let restored = snapshot.restore().map_err(|error| error.to_string())?;
+    if restored.running_servers() != 0
+        || LanguageCoordinator::restore(workspace_id, &restored).running_servers() != 0
+    {
+        return Err("language restoration started a process".to_owned());
+    }
+    if root.join(".strukt").exists() {
+        return Err("language smoke created forbidden workspace metadata".to_owned());
+    }
+    Ok(())
+}
+
+pub(crate) fn run_m2_integration_smoke(root: &Path) -> Result<(), String> {
+    run_workspace_files_smoke(root.to_path_buf())?;
+    run_editor_smoke(root)?;
+    run_terminal_smoke(root)?;
+    run_language_smoke(root)?;
+    if root.join(".strukt").exists() {
+        return Err("M2 integration smoke created forbidden workspace metadata".to_owned());
+    }
+    Ok(())
+}
+
+fn language_fixture_path() -> Result<PathBuf, String> {
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let fixture =
+        executable.with_file_name(format!("language-fixture{}", std::env::consts::EXE_SUFFIX));
+    fixture.is_file().then_some(fixture).ok_or_else(|| {
+        "language fixture binary is missing; build strukt-language --bin language-fixture first"
+            .to_owned()
+    })
 }
 
 fn terminal_fixture_path() -> Result<PathBuf, String> {

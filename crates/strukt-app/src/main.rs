@@ -47,6 +47,22 @@ fn main() -> iced::Result {
         return Ok(());
     }
 
+    if let LaunchMode::LanguageSmoke { root } = &launch_mode {
+        if let Err(error) = app::run_language_smoke(root) {
+            panic!("strukt language smoke failed: {error}");
+        }
+        println!("{}", app::LANGUAGE_SMOKE_SUCCESS);
+        return Ok(());
+    }
+
+    if let LaunchMode::M2IntegrationSmoke { root } = &launch_mode {
+        if let Err(error) = app::run_m2_integration_smoke(root) {
+            panic!("strukt M2 integration smoke failed: {error}");
+        }
+        println!("{}", app::M2_INTEGRATION_SMOKE_SUCCESS);
+        return Ok(());
+    }
+
     iced::application(
         move || StruktApp::boot(launch_mode.clone()),
         StruktApp::update,
@@ -1433,6 +1449,36 @@ mod tests {
             vec![
                 "--terminal-smoke".to_owned(),
                 root.path().join("missing").display().to_string(),
+            ],
+        ] {
+            assert_eq!(LaunchMode::from_args(args), LaunchMode::Interactive);
+        }
+    }
+
+    #[test]
+    fn language_and_m2_smokes_require_exact_flags_and_existing_roots() {
+        let root = tempdir().unwrap();
+        let path = root.path().display().to_string();
+        assert_eq!(
+            LaunchMode::from_args(["--language-smoke".to_owned(), path.clone()]),
+            LaunchMode::LanguageSmoke {
+                root: root.path().to_path_buf(),
+            }
+        );
+        assert_eq!(
+            LaunchMode::from_args(["--m2-integration-smoke".to_owned(), path.clone()]),
+            LaunchMode::M2IntegrationSmoke {
+                root: root.path().to_path_buf(),
+            }
+        );
+        for args in [
+            vec!["--language-smoke".to_owned()],
+            vec!["--language-smokes".to_owned(), path.clone()],
+            vec!["--m2-integration-smoke".to_owned(), "missing".to_owned()],
+            vec![
+                "--m2-integration-smoke".to_owned(),
+                path,
+                "extra".to_owned(),
             ],
         ] {
             assert_eq!(LaunchMode::from_args(args), LaunchMode::Interactive);

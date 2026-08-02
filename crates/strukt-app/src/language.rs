@@ -140,6 +140,10 @@ pub(crate) enum LanguageRuntimeEvent {
         kind: FeatureRequestKind,
         result: serde_json::Value,
     },
+    Stopped {
+        language_id: String,
+        generation: u64,
+    },
 }
 
 struct RunningLanguage {
@@ -150,6 +154,7 @@ struct RunningLanguage {
     client: LanguageClient,
     initialize_id: strukt_language::RequestId,
     feature_requests: HashMap<RequestId, FeatureRequest>,
+    shutdown_id: Option<RequestId>,
 }
 
 pub(crate) struct LanguageRuntime {
@@ -195,6 +200,7 @@ impl LanguageRuntime {
                 client,
                 initialize_id,
                 feature_requests: HashMap::new(),
+                shutdown_id: None,
             },
         );
         Ok(())
@@ -307,11 +313,33 @@ impl LanguageRuntime {
         Ok(request)
     }
 
+    pub(crate) fn begin_shutdown(
+        &mut self,
+        language_id: &str,
+        generation: u64,
+    ) -> Result<(), String> {
+        let now = self.now();
+        let running = self
+            .processes
+            .get_mut(language_id)
+            .ok_or("language server is not running")?;
+        if running.generation != generation {
+            return Err("language server generation is stale".to_owned());
+        }
+        let shutdown = running
+            .client
+            .begin_shutdown(now)
+            .map_err(|error| error.to_string())?;
+        running.shutdown_id = shutdown.id();
+        write_outbound(running.process.as_mut(), &shutdown)
+    }
+
     pub(crate) fn poll(&mut self) -> Vec<LanguageRuntimeEvent> {
         let now = self.now();
         let languages = self.processes.keys().cloned().collect::<Vec<_>>();
         let mut events = Vec::new();
         let mut failed = Vec::new();
+        let mut stopped = Vec::new();
         for language_id in languages {
             let Some(running) = self.processes.get_mut(&language_id) else {
                 continue;
@@ -349,12 +377,26 @@ impl LanguageRuntime {
                 }
             }
             if let Ok(Some(exit)) = running.process.try_wait() {
-                failed.push((
-                    language_id.clone(),
-                    running.generation,
-                    format!("language server exited with {:?}", exit.code()),
-                ));
+                if running.shutdown_id.is_none()
+                    && running.client.state() == strukt_language::LanguageServerState::Stopping
+                {
+                    running.client.finish_shutdown();
+                    stopped.push((language_id.clone(), running.generation));
+                } else {
+                    failed.push((
+                        language_id.clone(),
+                        running.generation,
+                        format!("language server exited with {:?}", exit.code()),
+                    ));
+                }
             }
+        }
+        for (language_id, generation) in stopped {
+            self.processes.remove(&language_id);
+            events.push(LanguageRuntimeEvent::Stopped {
+                language_id,
+                generation,
+            });
         }
         for (language_id, generation, message) in failed {
             self.processes.remove(&language_id);
@@ -403,6 +445,15 @@ fn handle_frame(
             }))
         }
         IncomingMessage::Response(response) => {
+            if running.shutdown_id == Some(response.id()) {
+                running
+                    .client
+                    .accept_shutdown(response.id())
+                    .map_err(|error| error.to_string())?;
+                running.shutdown_id = None;
+                flush_client(running)?;
+                return Ok(None);
+            }
             let Some(request) = running.feature_requests.remove(&response.id()) else {
                 return Ok(None);
             };
