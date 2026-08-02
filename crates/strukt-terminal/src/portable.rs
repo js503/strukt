@@ -39,14 +39,30 @@ impl TerminalTransport for PortableTransport {
         for (key, value) in &request.environment {
             command.env(key, value);
         }
-        let child = pair.slave.spawn_command(command).map_err(adapter_error)?;
-        drop(pair.slave);
-
         let reader = pair.master.try_clone_reader().map_err(adapter_error)?;
-        let writer = pair.master.take_writer().map_err(adapter_error)?;
+        let writer = Arc::new(Mutex::new(
+            pair.master.take_writer().map_err(adapter_error)?,
+        ));
         let (sender, receiver) = sync_channel(OUTPUT_QUEUE_CHUNKS);
         let queue = Arc::new(QueueBudget::default());
-        let reader_thread = spawn_reader(reader, sender, Arc::clone(&queue))?;
+        let cursor_bootstrap = Arc::new(AtomicBool::new(cfg!(windows)));
+        let reader_thread = spawn_reader(
+            reader,
+            sender,
+            Arc::clone(&queue),
+            Arc::clone(&writer),
+            Arc::clone(&cursor_bootstrap),
+        )?;
+        let child = match pair.slave.spawn_command(command) {
+            Ok(child) => child,
+            Err(error) => {
+                cursor_bootstrap.store(false, Ordering::Release);
+                queue.close();
+                return Err(adapter_error(error));
+            }
+        };
+        cursor_bootstrap.store(false, Ordering::Release);
+        drop(pair.slave);
 
         Ok(Box::new(PortableProcess {
             master: pair.master,
@@ -63,7 +79,7 @@ impl TerminalTransport for PortableTransport {
 
 struct PortableProcess {
     master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     receiver: Receiver<ReaderEvent>,
     queue: Arc<QueueBudget>,
@@ -74,8 +90,12 @@ struct PortableProcess {
 
 impl TerminalProcess for PortableProcess {
     fn write(&mut self, bytes: &[u8]) -> Result<(), TransportError> {
-        self.writer.write_all(bytes).map_err(io_error)?;
-        self.writer.flush().map_err(io_error)
+        let mut writer = self
+            .writer
+            .lock()
+            .map_err(|error| io_error(error.to_string()))?;
+        writer.write_all(bytes).map_err(io_error)?;
+        writer.flush().map_err(io_error)
     }
 
     fn resize(&mut self, size: TerminalSize) -> Result<(), TransportError> {
@@ -229,12 +249,15 @@ fn spawn_reader(
     mut reader: Box<dyn Read + Send>,
     sender: SyncSender<ReaderEvent>,
     queue: Arc<QueueBudget>,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    cursor_bootstrap: Arc<AtomicBool>,
 ) -> Result<JoinHandle<()>, TransportError> {
     thread::Builder::new()
         .name("strukt-terminal-reader".to_owned())
         .spawn(move || {
             let sequence = AtomicU64::new(0);
             let mut buffer = vec![0; OUTPUT_CHUNK_BYTES];
+            let mut cursor_probe = CursorQueryProbe::default();
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => {
@@ -242,6 +265,24 @@ fn spawn_reader(
                         break;
                     }
                     Ok(count) => {
+                        if cursor_bootstrap.load(Ordering::Acquire)
+                            && cursor_probe.observe(&buffer[..count])
+                        {
+                            let response = writer
+                                .lock()
+                                .map_err(|error| error.to_string())
+                                .and_then(|mut writer| {
+                                    writer
+                                        .write_all(b"\x1b[1;1R")
+                                        .and_then(|()| writer.flush())
+                                        .map_err(|error| error.to_string())
+                                });
+                            cursor_bootstrap.store(false, Ordering::Release);
+                            if let Err(message) = response {
+                                let _ = sender.send(ReaderEvent::Failure(message));
+                                break;
+                            }
+                        }
                         if !queue.reserve(count) {
                             break;
                         }
@@ -262,6 +303,31 @@ fn spawn_reader(
             }
         })
         .map_err(io_error)
+}
+
+#[derive(Debug, Default)]
+struct CursorQueryProbe {
+    tail: Vec<u8>,
+    answered: bool,
+}
+
+impl CursorQueryProbe {
+    fn observe(&mut self, bytes: &[u8]) -> bool {
+        if self.answered {
+            return false;
+        }
+        for byte in bytes {
+            self.tail.push(*byte);
+            if self.tail.len() > 5 {
+                self.tail.remove(0);
+            }
+            if self.tail.ends_with(b"\x1b[6n") || self.tail.ends_with(b"\x1b[?6n") {
+                self.answered = true;
+                return true;
+            }
+        }
+        false
+    }
 }
 
 fn validate_request(request: &SpawnRequest) -> Result<(), TransportError> {
@@ -296,4 +362,25 @@ fn adapter_error(error: impl std::fmt::Display) -> TransportError {
 
 fn io_error(error: impl std::fmt::Display) -> TransportError {
     TransportError::Io(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CursorQueryProbe;
+
+    #[test]
+    fn cursor_query_probe_detects_conpty_handshakes_across_chunks_once() {
+        let mut probe = CursorQueryProbe::default();
+
+        assert!(!probe.observe(b"prefix\x1b["));
+        assert!(probe.observe(b"6n"));
+        assert!(!probe.observe(b"\x1b[6n"));
+    }
+
+    #[test]
+    fn cursor_query_probe_accepts_private_cursor_queries() {
+        let mut probe = CursorQueryProbe::default();
+
+        assert!(probe.observe(b"\x1b[?6n"));
+    }
 }
