@@ -846,7 +846,7 @@ git add README.md docs/evidence/m2-local-terminal-validation.md \
 git commit -m "docs: record M2 local terminal validation"
 ```
 
-- [ ] **Step 6: Require the exact evidence commit to pass before merge readiness**
+- [x] **Step 6: Require the exact evidence commit to pass before merge readiness**
 
 Push the evidence-only commit, require the final macOS/Ubuntu/Windows matrix, update
 the PR body with verification and substantive review findings, mark the PR ready,
