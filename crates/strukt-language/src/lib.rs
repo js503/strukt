@@ -1,12 +1,19 @@
 #![forbid(unsafe_code)]
 
+mod client;
 mod descriptor;
 mod discovery;
 mod feature;
 mod framing;
 mod position;
 mod protocol;
+mod transport;
 
+pub use client::{
+    ClientError, ClientTimeout, FeatureRequest, FeatureRequestKind, LanguageClient,
+    LanguageServerState, OutboundMessage, ResponseDisposition, ServerCapabilities,
+    ServerRequestDisposition, SynchronizationKind,
+};
 pub use descriptor::{
     CommandApproval, DescriptorError, DescriptorRegistry, DescriptorSource, ExecutableCandidate,
     LanguageServerDescriptor, ResolvedCommand, built_in_descriptors, registry_from_json,
@@ -28,4 +35,7 @@ pub use position::{
 pub use protocol::{
     IncomingMessage, NotificationMessage, ProtocolError, RequestId, RequestIdAllocator,
     RequestMessage, ResponseMessage, ResponseRouter, bounded_error_text, parse_message,
+};
+pub use transport::{
+    LanguageProcess, LanguageTransport, ProcessExit, SpawnRequest, StdioTransport, TransportError,
 };

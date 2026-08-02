@@ -352,7 +352,7 @@ git commit -m "feat: discover trusted language servers"
 - Modify: `crates/strukt-language/src/lib.rs`
 - Create: `crates/strukt-language/tests/client.rs`
 
-- [ ] **Step 1: Write failing lifecycle and stale-generation tests**
+- [x] **Step 1: Write failing lifecycle and stale-generation tests**
 
 Use a fake transport to require initialize-first ordering, capability capture,
 full synchronization, cancellation, bounded requests, restart delays, crash-loop
@@ -374,13 +374,13 @@ fn stale_response_cannot_cross_document_revision_or_server_generation() {
 }
 ```
 
-- [ ] **Step 2: Run client tests and confirm missing state machine**
+- [x] **Step 2: Run client tests and confirm missing state machine**
 
 Run: `cargo test -p strukt-language --test client --locked --offline`
 
 Expected: compile failure for `LanguageClient`.
 
-- [ ] **Step 3: Implement transport contracts and bounded stdio adapter**
+- [x] **Step 3: Implement transport contracts and bounded stdio adapter**
 
 Expose UI-independent contracts:
 
@@ -401,7 +401,7 @@ pub trait LanguageProcess: Send {
 Use piped stdin/stdout/stderr, a dedicated reader per stream, 64 KiB chunks,
 4 MiB stdout accounting, 1 MiB stderr ring accounting, and no shell.
 
-- [ ] **Step 4: Implement lifecycle reduction**
+- [x] **Step 4: Implement lifecycle reduction**
 
 Model `Discovering` through `Stopped`, generation-scoped requests, 250 ms full-text
 change coalescing, 256 request/message limits, 10-second initialize timeout,
