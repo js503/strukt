@@ -30,7 +30,7 @@ fn registry_rejects_duplicate_ids_and_invalid_executable_shapes() {
     let second = descriptor(
         "server",
         ["python"],
-        [ExecutableCandidate::absolute(PathBuf::from("/opt/server")).unwrap()],
+        [ExecutableCandidate::absolute(absolute_server_path()).unwrap()],
     );
 
     assert!(DescriptorRegistry::new(vec![first, second]).is_err());
@@ -40,11 +40,8 @@ fn registry_rejects_duplicate_ids_and_invalid_executable_shapes() {
 
 #[test]
 fn workspace_approval_is_exact_and_invalidates_on_argument_change() {
-    let command = ResolvedCommand::new(
-        PathBuf::from("/workspace/tools/server"),
-        vec![OsString::from("--stdio")],
-    )
-    .unwrap();
+    let command =
+        ResolvedCommand::new(absolute_server_path(), vec![OsString::from("--stdio")]).unwrap();
     let workspace = workspace_id();
     let approval = CommandApproval::grant(workspace.clone(), &command);
 
@@ -53,7 +50,7 @@ fn workspace_approval_is_exact_and_invalidates_on_argument_change() {
         !approval.authorizes(
             &workspace,
             &ResolvedCommand::new(
-                PathBuf::from("/workspace/tools/server"),
+                absolute_server_path(),
                 vec![OsString::from("--stdio"), OsString::from("--unsafe")],
             )
             .unwrap()
@@ -134,4 +131,14 @@ fn workspace_id() -> WorkspaceId {
 
 fn other_workspace_id() -> WorkspaceId {
     serde_json::from_str(&format!("\"{}\"", "b".repeat(64))).unwrap()
+}
+
+#[cfg(not(windows))]
+fn absolute_server_path() -> PathBuf {
+    PathBuf::from("/workspace/tools/server")
+}
+
+#[cfg(windows)]
+fn absolute_server_path() -> PathBuf {
+    PathBuf::from(r"C:\workspace\tools\server.exe")
 }
