@@ -754,9 +754,12 @@ strukt terminal smoke: pty, unicode, ansi, resize, isolation, bounds, and restor
 
 Open the fixture workspace, spawn two instances of `terminal-fixture` through
 `PortableTransport`, verify Unicode echo, ANSI attributes, resize acknowledgement,
-isolated exit states, a nested split, 64 MiB bounded producer progress, quiet-pane
+isolated exit states, a nested split, bounded native producer progress, quiet-pane
 progress, snapshot persistence/restoration as stopped, and absence of `.strukt`.
 Give the smoke a 30-second internal deadline and terminate every child on all paths.
+Run the full 64 MiB scheduler stress as a deterministic runtime test on every OS;
+use 64 MiB for the Unix native stream and 1 MiB for the ConPTY stream so the native
+gate validates adapter behavior without benchmarking Windows console rendering.
 
 - [x] **Step 3: Add all-platform workflow steps**
 
@@ -782,7 +785,7 @@ cargo clippy -p strukt-terminal -p strukt-persistence -p strukt-workspace \
 Expected: every command passes; only the documented transitive `block 0.1.6`
 future-compatibility warning may remain.
 
-- [ ] **Step 5: Commit smoke and draft evidence**
+- [x] **Step 5: Commit smoke and draft evidence**
 
 ```bash
 git add .github/workflows/ci.yml crates/strukt-app crates/strukt-terminal \
@@ -801,7 +804,7 @@ git commit -m "test: validate local terminal workflows"
 - Modify: `docs/tracker.md`
 - Modify: `docs/decisions/0001-native-ui-framework.md`
 
-- [ ] **Step 1: Complete the manual macOS walkthrough**
+- [x] **Step 1: Complete the manual macOS walkthrough**
 
 Use a native app bundle and isolated workspace. Exercise default shell spawn,
 Unicode/IME, ANSI programs, cursor, selection, copy/paste and large-paste consent,
@@ -809,7 +812,7 @@ links with explicit open, resize, tabs, nested splits, focus, rename, exit, rest
 close confirmation, light/dark themes, output load, stopped restoration, keyboard
 traversal, accessibility exposure, and no `.strukt` metadata.
 
-- [ ] **Step 2: Run full-slice review**
+- [x] **Step 2: Run full-slice review**
 
 Review against the spec for PTY ownership and cleanup, ConPTY portability, process
 tree termination, queue byte accounting, deadlocks, fairness, stale generations,
@@ -818,25 +821,27 @@ framing and consent, persistence privacy, accidental restart, custom-widget even
 routing, accessibility, rendering bounds, capability disablement, and M3/M4 scope
 drift. Resolve all critical and important findings with focused regression tests.
 
-- [ ] **Step 3: Record hosted and stress evidence**
+- [x] **Step 3: Record hosted and stress evidence**
 
 Push the final implementation SHA and require macOS 14, Ubuntu 24.04, and Windows
-Server 2022 jobs. Record run/job links, native ConPTY contract result, 64 MiB stress
-metrics, exact smoke marker, manual results, review findings, and honest Iced/human
-Windows limitations in `docs/evidence/m2-local-terminal-validation.md`.
+Server 2022 jobs. Record run/job links, native ConPTY contract result, 64 MiB
+scheduler stress metrics, exact smoke marker, manual results, review findings, and
+honest Iced/human Windows limitations in
+`docs/evidence/m2-local-terminal-validation.md`.
 
-- [ ] **Step 4: Update milestone artifacts**
+- [x] **Step 4: Update milestone artifacts**
 
 Mark M2.3 complete while M2 remains in progress. Add spec, plan, issue, PR, and
 evidence links to tracker and roadmap. Update README runtime instructions and ADR
 0001 with the M2 terminal revalidation result. Keep language intelligence and final
 M2 integration listed as remaining.
 
-- [ ] **Step 5: Commit completion evidence**
+- [x] **Step 5: Commit completion evidence**
 
 ```bash
 git add README.md docs/evidence/m2-local-terminal-validation.md \
-  docs/plans/0005-m2-local-terminal.md docs/roadmap.md docs/tracker.md \
+  docs/specs/0005-m2-local-terminal.md docs/plans/0005-m2-local-terminal.md \
+  docs/roadmap.md docs/tracker.md \
   docs/decisions/0001-native-ui-framework.md
 git commit -m "docs: record M2 local terminal validation"
 ```

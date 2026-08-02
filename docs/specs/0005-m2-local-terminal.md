@@ -359,6 +359,14 @@ editor actions. Evidence records total duration, maximum queued bytes, whether
 backpressure became visible, and confirmation that the quiet pane and editor both
 made progress.
 
+The 64 MiB gate measures the platform-independent runtime scheduler with bounded
+64 KiB chunks on every hosted OS. Native PTY/ConPTY smoke remains a separate
+adapter gate: it proves real process IO, Unicode, ANSI, resize, isolation, exit,
+and bounded chunks. Unix additionally carries the full 64 MiB native stream;
+Windows caps native screen output at 1 MiB because ConPTY renders and may coalesce
+console output rather than acting as a byte-transparent pipe. The Windows-native
+contract and scheduler stress still run in the same hosted job.
+
 ## Delivery Plan Boundary
 
 M2.3 is delivered as one reviewable terminal slice with internal commits for:

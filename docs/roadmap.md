@@ -157,6 +157,12 @@ service.
   [`specs/0005-m2-local-terminal.md`](specs/0005-m2-local-terminal.md)
 - Third-slice local-terminal plan:
   [`plans/0005-m2-local-terminal.md`](plans/0005-m2-local-terminal.md)
+- Third-slice local-terminal issue:
+  [#7 — M2.3: Local terminals](https://github.com/js503/strukt/issues/7)
+- Third-slice local-terminal pull request:
+  [#8 — feat: add M2 local terminals](https://github.com/js503/strukt/pull/8)
+- Third-slice local-terminal validation:
+  [`evidence/m2-local-terminal-validation.md`](evidence/m2-local-terminal-validation.md)
 - Remaining after the third slice: language intelligence and final M2
   integration/restoration validation
 - Workspace reference:

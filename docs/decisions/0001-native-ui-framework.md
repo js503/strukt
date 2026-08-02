@@ -106,6 +106,26 @@ passed compilation and tests on macOS, Windows, and Linux. The Windows Server 20
 job additionally launched the real native executable, reached the Iced event loop,
 printed the required success marker, and exited cleanly.
 
+### M2.3 terminal revalidation
+
+The local-terminal slice revalidated Iced with a real custom GPU terminal widget
+on 2026-07-31. A bundled macOS walkthrough rendered a live zsh, Unicode and ANSI
+content, detected links, two independent PTYs in a split, and the same panes in an
+expanded primary canvas. The renderer consumes immutable terminal snapshots; PTY
+ownership, parsing, selection, layouts, and scheduling remain outside Iced.
+
+The reducer schedules blocking spawn and termination work off-thread, bounded
+native queues and fair per-pane drains keep sustained output from monopolizing the
+interface, and the exact terminal smoke exercises native PTY/ConPTY behavior in
+hosted CI. Detailed results are in
+[`docs/evidence/m2-local-terminal-validation.md`](../evidence/m2-local-terminal-validation.md).
+
+The macOS inspection bridge still exposes only the top-level Iced window rather
+than individually addressable controls or terminal cells, and it cannot certify a
+real IME composition sequence. M2.3 records those limitations rather than treating
+them as passes. Iced remains accepted for continued implementation, while human
+accessibility, IME, and Windows visual certification remain mandatory M9 gates.
+
 ## Validation gates
 
 This M1 acceptance is supported by the following completed gates:
