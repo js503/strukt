@@ -139,8 +139,18 @@ fn snapshot(problems_visible: bool) -> LanguageSessionSnapshot {
 
 fn command(arguments: &[&str]) -> ResolvedCommand {
     ResolvedCommand::new(
-        PathBuf::from("/workspace/tools/rust-analyzer"),
+        absolute_server_path(),
         arguments.iter().map(OsString::from).collect(),
     )
     .unwrap()
+}
+
+#[cfg(unix)]
+fn absolute_server_path() -> PathBuf {
+    PathBuf::from("/workspace/tools/rust-analyzer")
+}
+
+#[cfg(windows)]
+fn absolute_server_path() -> PathBuf {
+    PathBuf::from(r"C:\workspace\tools\rust-analyzer.exe")
 }
