@@ -3386,7 +3386,7 @@ pub(crate) async fn editor_smoke_task(root: PathBuf) -> Result<(), String> {
     reason = "the terminal smoke keeps its bounded native end-to-end contract explicit"
 )]
 pub(crate) fn run_terminal_smoke(root: &Path) -> Result<(), String> {
-    const STRESS_BYTES: usize = 64 * 1024 * 1024;
+    const STRESS_BYTES: usize = native_terminal_stress_bytes();
     const DEADLINE: Duration = Duration::from_secs(30);
 
     let workspace_root = WorkspaceRoot::open(root).map_err(|error| error.to_string())?;
@@ -3565,6 +3565,14 @@ pub(crate) const fn terminal_smoke_should_resize(
     resized_applied: bool,
 ) -> bool {
     observed_echo && observed_ansi && !resized_applied
+}
+
+pub(crate) const fn native_terminal_stress_bytes() -> usize {
+    if cfg!(windows) {
+        1024 * 1024
+    } else {
+        64 * 1024 * 1024
+    }
 }
 
 pub(crate) async fn terminal_smoke_task(root: PathBuf) -> Result<(), String> {

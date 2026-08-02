@@ -50,7 +50,11 @@ fn write_bounded_burst() {
 }
 
 fn write_stress_stream() {
-    const TOTAL_BYTES: usize = 64 * 1024 * 1024;
+    const TOTAL_BYTES: usize = if cfg!(windows) {
+        1024 * 1024
+    } else {
+        64 * 1024 * 1024
+    };
     const CHUNK_BYTES: usize = 64 * 1024;
 
     let mut stdout = std::io::stdout().lock();

@@ -1437,6 +1437,16 @@ mod tests {
     }
 
     #[test]
+    fn native_terminal_stress_budget_is_bounded_per_console_adapter() {
+        let expected = if cfg!(windows) {
+            1024 * 1024
+        } else {
+            64 * 1024 * 1024
+        };
+        assert_eq!(crate::app::native_terminal_stress_bytes(), expected);
+    }
+
+    #[test]
     fn workspace_files_smoke_opens_discovers_and_round_trips_without_repo_metadata() {
         let project = tempdir().unwrap();
         std::fs::write(project.path().join("strukt-smoke.txt"), "strukt\n").unwrap();

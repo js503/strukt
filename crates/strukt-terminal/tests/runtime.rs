@@ -42,6 +42,51 @@ fn ready_panes_drain_round_robin_with_per_pane_and_aggregate_budgets() {
 }
 
 #[test]
+fn sustained_producer_advances_64_mib_without_starving_a_quiet_pane() {
+    const TOTAL_BYTES: usize = 64 * 1024 * 1024;
+    const CHUNK_BYTES: usize = 64 * 1024;
+
+    let transport = Arc::new(FakeTransport::default());
+    let mut runtime = TerminalRuntime::new(transport, 100);
+    let noisy = TerminalPaneId::new();
+    let quiet = TerminalPaneId::new();
+    let noisy_generation = runtime.prepare(noisy, GridSize::new(2, 80).unwrap());
+    let quiet_generation = runtime.prepare(quiet, GridSize::new(2, 80).unwrap());
+    runtime
+        .apply_output(
+            quiet,
+            quiet_generation,
+            OutputChunk::new(0, b"quiet-progress".to_vec()),
+        )
+        .unwrap();
+
+    let mut progressed = 0;
+    for sequence in 0..u64::try_from(TOTAL_BYTES / CHUNK_BYTES).unwrap() {
+        runtime
+            .apply_output(
+                noisy,
+                noisy_generation,
+                OutputChunk::new(sequence, vec![b'\r'; CHUNK_BYTES]),
+            )
+            .unwrap();
+        let batch = runtime.drain(DrainBudget::default());
+        progressed += batch.bytes_for(noisy);
+    }
+    while progressed < TOTAL_BYTES {
+        progressed += runtime.drain(DrainBudget::default()).bytes_for(noisy);
+    }
+
+    assert_eq!(progressed, TOTAL_BYTES);
+    assert!(
+        runtime
+            .snapshot(quiet)
+            .unwrap()
+            .plain_text()
+            .contains("quiet-progress")
+    );
+}
+
+#[test]
 fn stale_output_cannot_cross_a_restart_generation() {
     let transport = Arc::new(FakeTransport::default());
     let mut runtime = TerminalRuntime::new(transport, 100);
