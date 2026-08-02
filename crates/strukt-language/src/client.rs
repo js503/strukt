@@ -35,6 +35,7 @@ pub enum LanguageServerState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ServerCapabilities {
     synchronization: SynchronizationKind,
+    save_notifications: bool,
     features: u8,
     position_encoding: PositionEncoding,
 }
@@ -51,6 +52,7 @@ impl ServerCapabilities {
             .fold(0, |flags, feature| flags | feature.flag());
         Self {
             synchronization,
+            save_notifications: false,
             features,
             position_encoding,
         }
@@ -64,6 +66,12 @@ impl ServerCapabilities {
     #[must_use]
     pub const fn position_encoding(&self) -> PositionEncoding {
         self.position_encoding
+    }
+
+    #[must_use]
+    pub const fn with_save_notifications(mut self, enabled: bool) -> Self {
+        self.save_notifications = enabled;
+        self
     }
 }
 
@@ -392,6 +400,12 @@ impl LanguageClient {
         if !self.documents.contains_key(document) {
             return Err(ClientError::UnknownDocument);
         }
+        if !self
+            .capabilities
+            .is_some_and(|capabilities| capabilities.save_notifications)
+        {
+            return Ok(());
+        }
         self.push_outbound(OutboundMessage {
             id: None,
             method: "textDocument/didSave".to_owned(),
@@ -628,6 +642,11 @@ impl LanguageClient {
             method: "exit".to_owned(),
             params: Value::Null,
         })
+    }
+
+    #[must_use]
+    pub const fn shutdown_request_id(&self) -> Option<RequestId> {
+        self.shutdown_id
     }
 
     pub fn finish_shutdown(&mut self) {

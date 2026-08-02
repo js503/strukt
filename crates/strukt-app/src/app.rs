@@ -1641,7 +1641,15 @@ impl StruktApp {
                                     .accept_feature_response(generation, &request, &result, &root);
                             }
                         }
-                        LanguageRuntimeEvent::Stopped { .. } => {}
+                        LanguageRuntimeEvent::RequestTimedOut { request } => {
+                            self.language.expire_feature(&request);
+                        }
+                        LanguageRuntimeEvent::Stopped {
+                            language_id,
+                            generation,
+                        } => {
+                            self.language.mark_stopped(&language_id, generation);
+                        }
                     }
                 }
                 return Task::none();
@@ -4376,6 +4384,7 @@ pub(crate) fn run_language_smoke(root: &Path) -> Result<(), String> {
                 },
                 LanguageRuntimeEvent::Ready { .. }
                 | LanguageRuntimeEvent::Failed { .. }
+                | LanguageRuntimeEvent::RequestTimedOut { .. }
                 | LanguageRuntimeEvent::Stopped { .. } => {}
             }
         }

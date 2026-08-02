@@ -5,11 +5,12 @@ use std::time::{Duration, Instant};
 
 use strukt_editor::{DocumentId, GrammarRegistry};
 use strukt_language::{
-    ApprovalStatus, DiscoveredServer, DiscoveryOutcome, FeatureRequest, FeatureRequestKind,
-    FrameDecoder, FrameLimits, IncomingMessage, LanguageClient, LanguageProcess, LanguageTransport,
-    PositionEncoding, RequestId, ResponseDisposition, ServerCapabilities, ServerRequestDisposition,
-    SpawnRequest, StdioTransport, SynchronizationKind, built_in_descriptors, discover,
-    encode_frame, load_workspace_registry, parse_message, sanitize_hover_markdown,
+    ApprovalStatus, ClientTimeout, DiscoveredServer, DiscoveryOutcome, FeatureRequest,
+    FeatureRequestKind, FrameDecoder, FrameLimits, IncomingMessage, LanguageClient,
+    LanguageProcess, LanguageTransport, PositionEncoding, RequestId, ResponseDisposition,
+    ServerCapabilities, ServerRequestDisposition, SpawnRequest, StdioTransport,
+    SynchronizationKind, built_in_descriptors, discover, encode_frame, load_workspace_registry,
+    parse_message, sanitize_hover_markdown,
 };
 use strukt_persistence::{
     ApprovalSnapshot, LanguageSelectionSnapshot, LanguageSessionSnapshot, RestoredLanguageSession,
@@ -139,6 +140,9 @@ pub(crate) enum LanguageRuntimeEvent {
         request: FeatureRequest,
         kind: FeatureRequestKind,
         result: serde_json::Value,
+    },
+    RequestTimedOut {
+        request: FeatureRequest,
     },
     Stopped {
         language_id: String,
@@ -336,6 +340,10 @@ impl LanguageRuntime {
 
     pub(crate) fn poll(&mut self) -> Vec<LanguageRuntimeEvent> {
         let now = self.now();
+        self.poll_at(now)
+    }
+
+    fn poll_at(&mut self, now: Duration) -> Vec<LanguageRuntimeEvent> {
         let languages = self.processes.keys().cloned().collect::<Vec<_>>();
         let mut events = Vec::new();
         let mut failed = Vec::new();
@@ -344,6 +352,32 @@ impl LanguageRuntime {
             let Some(running) = self.processes.get_mut(&language_id) else {
                 continue;
             };
+            let mut terminal_timeout = None;
+            for timeout in running.client.poll_timeouts(now) {
+                match timeout {
+                    ClientTimeout::Initialize => {
+                        terminal_timeout = Some("language server initialization timed out");
+                    }
+                    ClientTimeout::Request(id) => {
+                        if let Some(request) = running.feature_requests.remove(&id) {
+                            events.push(LanguageRuntimeEvent::RequestTimedOut { request });
+                        }
+                    }
+                    ClientTimeout::Shutdown => terminal_timeout = Some(""),
+                    ClientTimeout::IdleShutdown => {
+                        running.shutdown_id = running.client.shutdown_request_id();
+                    }
+                }
+            }
+            if let Some(message) = terminal_timeout {
+                let _ = running.process.terminate(Duration::ZERO);
+                if message.is_empty() {
+                    stopped.push((language_id.clone(), running.generation));
+                } else {
+                    failed.push((language_id.clone(), running.generation, message.to_owned()));
+                }
+                continue;
+            }
             running.client.flush_changes(now);
             if let Err(error) = flush_client(running) {
                 failed.push((language_id, running.generation, error));
@@ -509,12 +543,18 @@ fn capabilities_from_initialize(result: &serde_json::Value) -> ServerCapabilitie
     {
         features.push(FeatureRequestKind::Definition);
     }
-    let synchronization = if capabilities["textDocumentSync"].is_null() {
+    let text_document_sync = &capabilities["textDocumentSync"];
+    let synchronization = if text_document_sync.is_null() {
         SynchronizationKind::None
     } else {
         SynchronizationKind::Full
     };
+    let save_notifications = text_document_sync
+        .as_object()
+        .and_then(|options| options.get("save"))
+        .is_some_and(|save| save.as_bool().unwrap_or_else(|| save.is_object()));
     ServerCapabilities::new(synchronization, features, encoding)
+        .with_save_notifications(save_notifications)
 }
 
 fn flush_client(running: &mut RunningLanguage) -> Result<(), String> {
@@ -1301,6 +1341,22 @@ impl LanguageCoordinator {
         self.servers.get(language_id)?.last_error.as_deref()
     }
 
+    pub(crate) fn mark_stopped(&mut self, language_id: &str, generation: u64) -> bool {
+        let Some(server) = self.servers.get_mut(language_id) else {
+            return false;
+        };
+        if server.generation != generation {
+            return false;
+        }
+        server.state = LanguageState::Stopped;
+        server.last_error = None;
+        self.diagnostics.retain(|_, diagnostics| {
+            diagnostics.language_id != language_id || diagnostics.generation != generation
+        });
+        self.clear_transient_features();
+        true
+    }
+
     #[must_use]
     pub(crate) fn request_context(&self, id: DocumentId) -> Option<LanguageRequestContext> {
         let binding = self.documents.get(&id)?;
@@ -1367,6 +1423,10 @@ impl LanguageCoordinator {
             }
         }
         true
+    }
+
+    pub(crate) fn expire_feature(&mut self, request: &FeatureRequest) {
+        self.feature_guards.remove(&request.id());
     }
 
     #[must_use]
@@ -1912,6 +1972,129 @@ mod tests {
             response,
             serde_json::json!({"jsonrpc":"2.0","id":77,"result":[]})
         );
+    }
+
+    #[test]
+    fn language_runtime_enforces_initialize_timeout() {
+        let root = tempfile::tempdir().unwrap();
+        let shared = Arc::new(Mutex::new(FakeProcessState::default()));
+        let completion = LanguageSpawnCompletion::new(Ok(Box::new(FakeProcess {
+            shared: Arc::clone(&shared),
+        })));
+        let mut runtime = LanguageRuntime::default();
+        runtime
+            .finish_start(
+                "workspace-a",
+                "rust",
+                3,
+                root.path().to_path_buf(),
+                &completion,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            runtime.poll_at(Duration::from_secs(11)).as_slice(),
+            [LanguageRuntimeEvent::Failed {
+                language_id,
+                generation: 3,
+                ..
+            }] if language_id == "rust"
+        ));
+        assert!(runtime.processes.is_empty());
+    }
+
+    #[test]
+    fn language_runtime_starts_idle_shutdown_after_last_document_closes() {
+        let root = tempfile::tempdir().unwrap();
+        let shared = Arc::new(Mutex::new(FakeProcessState::default()));
+        let completion = LanguageSpawnCompletion::new(Ok(Box::new(FakeProcess {
+            shared: Arc::clone(&shared),
+        })));
+        let mut runtime = LanguageRuntime::default();
+        runtime
+            .finish_start(
+                "workspace-a",
+                "rust",
+                4,
+                root.path().to_path_buf(),
+                &completion,
+            )
+            .unwrap();
+        let initialize = serde_json::to_vec(&serde_json::json!({
+            "jsonrpc":"2.0",
+            "id":1,
+            "result":{"capabilities":{"textDocumentSync":1}}
+        }))
+        .unwrap();
+        shared
+            .lock()
+            .unwrap()
+            .reads
+            .push_back(encode_frame(&initialize, FrameLimits::default()).unwrap());
+        assert!(matches!(
+            runtime.poll_at(Duration::ZERO).as_slice(),
+            [LanguageRuntimeEvent::Ready { .. }]
+        ));
+        runtime
+            .apply_effects(vec![LanguageEffect::Open {
+                language_id: "rust".to_owned(),
+                generation: 4,
+                document_id: document_id(21),
+                path: Path::new("main.rs").to_path_buf(),
+                revision: 1,
+                text: "fn main() {}".to_owned(),
+            }])
+            .unwrap();
+        runtime
+            .apply_effects(vec![LanguageEffect::Close {
+                language_id: "rust".to_owned(),
+                generation: 4,
+                document_id: document_id(21),
+                path: Path::new("main.rs").to_path_buf(),
+            }])
+            .unwrap();
+
+        assert!(runtime.poll_at(Duration::from_secs(31)).is_empty());
+        assert_eq!(
+            written_methods(&shared).last().map(String::as_str),
+            Some("shutdown")
+        );
+        assert!(runtime.processes["rust"].shutdown_id.is_some());
+    }
+
+    #[test]
+    fn stopped_runtime_state_rediscovers_when_a_document_reopens() {
+        let mut coordinator = LanguageCoordinator::new("workspace-a");
+        let id = document_id(22);
+        let effects =
+            coordinator.open_document(id, Path::new("main.rs"), None, 1, Some("fn main() {}"));
+        let LanguageEffect::Discover { generation, .. } = effects[0] else {
+            panic!("expected discovery");
+        };
+        assert!(coordinator.discovery_available("workspace-a", "rust", generation));
+        let _ = coordinator.mark_ready("rust", generation, PositionEncoding::Utf16);
+        assert!(matches!(
+            coordinator.close_document(id).as_slice(),
+            [LanguageEffect::Close { .. }]
+        ));
+
+        assert!(coordinator.mark_stopped("rust", generation));
+        assert_eq!(coordinator.state("rust"), LanguageState::Stopped);
+        assert!(matches!(
+            coordinator
+                .open_document(
+                    id,
+                    Path::new("main.rs"),
+                    None,
+                    1,
+                    Some("fn main() {}"),
+                )
+                .as_slice(),
+            [LanguageEffect::Discover {
+                generation: next_generation,
+                ..
+            }] if *next_generation != generation
+        ));
     }
 
     #[test]

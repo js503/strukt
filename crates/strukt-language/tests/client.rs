@@ -150,6 +150,27 @@ fn save_and_close_emit_document_lifecycle_notifications() {
 }
 
 #[test]
+fn server_without_save_capability_does_not_receive_did_save() {
+    let mut client = LanguageClient::new("workspace", "rust-analyzer");
+    let initialize = client.start(Duration::ZERO).unwrap();
+    client
+        .accept_initialize(
+            initialize.id().unwrap(),
+            ServerCapabilities::new(SynchronizationKind::Full, [], PositionEncoding::Utf16),
+        )
+        .unwrap();
+    while client.take_outbound().is_some() {}
+    client
+        .did_open("file:///workspace/main.rs", 1, "text")
+        .unwrap();
+    while client.take_outbound().is_some() {}
+
+    client.did_save("file:///workspace/main.rs").unwrap();
+
+    assert!(client.take_outbound().is_none());
+}
+
+#[test]
 fn initialize_request_and_shutdown_timeouts_fail_closed() {
     let mut initializing = LanguageClient::new("workspace", "rust-analyzer");
     initializing.start(Duration::ZERO).unwrap();
@@ -245,4 +266,5 @@ fn all_capabilities(encoding: PositionEncoding) -> ServerCapabilities {
         ],
         encoding,
     )
+    .with_save_notifications(true)
 }
