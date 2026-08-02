@@ -536,7 +536,7 @@ the real Iced executable, native window and renderer initialization, event loop,
 clean runtime exit, and Windows-native shortcut tests. It is not visual QA.
 
 Human Windows visual, accessibility, IME, packaging, and installation validation
-remain mandatory before M9 public-alpha readiness can be marked complete.
+remain mandatory before public-alpha readiness can be marked complete.
 ```
 
 Keep ADR 0001 proposed and M1 in progress until the new hosted matrix passes.
@@ -585,7 +585,7 @@ After the final run passes:
   `docs/evidence/m1-native-shell-validation.md`;
 - change ADR 0001 to `Accepted for the M1 foundation`;
 - mark M1 `Complete` in `docs/roadmap.md` and `docs/tracker.md`;
-- keep the human Windows QA requirement under M9;
+- keep the human Windows QA requirement under the public-alpha release gate;
 - mark this spec and plan complete.
 
 - [x] **Step 6: Run the final local gate**

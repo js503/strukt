@@ -148,12 +148,12 @@ After the hosted Windows smoke gate passes:
 - `docs/evidence/m1-native-shell-validation.md` records the workflow run and the
   limits of automated evidence.
 - ADR 0001 may accept Iced for the M1 foundation while explicitly deferring human
-  Windows visual QA to M9.
+  Windows visual QA to the public-alpha release gate.
 - The M1 issue and PR record the Windows smoke result.
 - The roadmap and tracker may mark M1 complete only when every other M1 exit
   criterion is also satisfied.
 
-M9 remains blocked from completion until a human validates the packaged Windows
+The public-alpha release remains blocked until a human validates the packaged Windows
 application on a real or virtual Windows desktop.
 
 ## Acceptance Criteria

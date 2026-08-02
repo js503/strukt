@@ -627,7 +627,7 @@ git commit -m "feat: coordinate workspace language servers"
 - [x] **Step 1: Write failing diagnostic reducer and theme tests**
 
 Require current-version diagnostics, stale rejection, clearing, severity counts,
-confined navigation, external confirmation, and distinct semantic colors in light
+confined navigation, blocked external locations, and distinct semantic colors in light
 and dark modes.
 
 - [x] **Step 2: Run focused tests and confirm UI state is absent**
@@ -641,14 +641,16 @@ Expected: fail for missing diagnostic UI types/tokens.
 - [x] **Step 3: Implement immutable diagnostic projection**
 
 Store normalized diagnostics by document and generation. Project current ranges to
-editor markers and Problems rows; never store raw protocol JSON. Selecting a row
+Problems rows; never store raw protocol JSON. Selecting a row
 routes through the existing safe document open and Unicode position conversion.
 
-- [ ] **Step 4: Build the Problems pane and server status actions**
+- [x] **Step 4: Build the Problems pane and server status actions**
 
 Add a keyboard-focusable Problems pane with severity counts, file grouping,
-filtering, and navigation. Add status actions for discover, select, enable/disable,
-approve/deny exact command, restart, copy bounded failure, and open documentation.
+filtering, and navigation. The delivered alpha status surface provides discovery
+retry, enable/disable, exact approve/deny, ready or failed restart, and bounded
+failure copying. Descriptor selection and documentation links remain
+configuration-driven as recorded in the delivered spec boundary.
 
 - [x] **Step 5: Verify focus, confinement, capability isolation, and themes**
 
@@ -658,7 +660,7 @@ Run: `cargo test -p strukt-theme --locked --offline`
 
 Expected: pass.
 
-- [ ] **Step 6: Commit diagnostics**
+- [x] **Step 6: Commit diagnostics**
 
 ```bash
 git add crates/strukt-app crates/strukt-theme
@@ -677,7 +679,7 @@ git commit -m "feat: show language diagnostics and problems"
 
 - [x] **Step 1: Write failing request guard and editor transaction tests**
 
-Require explicit/trigger completion, 200-item cap, safe snippet flattening, one undo
+Require explicit completion, 200-item cap, safe snippet flattening, one undo
 boundary, bounded sanitized hover, single/multiple/external definition handling,
 navigation back, cancellation, and focus isolation from terminals.
 
@@ -707,7 +709,7 @@ edits as one editor transaction and undo entry.
 
 Render sanitized plain text/Markdown without HTML, images, scripts, or remote fetch.
 Open one confined definition directly; use a bounded picker for multiple results;
-require confirmation for external files; display unsupported URIs without opening.
+display external files and unsupported URIs without opening in M2.
 
 - [x] **Step 6: Verify and commit language actions**
 
@@ -806,7 +808,7 @@ git commit -m "test: validate M2 language workflows"
 - Modify: `docs/roadmap.md`
 - Modify: `docs/tracker.md`
 
-- [ ] **Step 1: Complete the native macOS walkthrough**
+- [x] **Step 1: Complete the native macOS walkthrough**
 
 Use a temporary native app bundle and isolated workspace. Exercise visible
 diagnostics, Problems navigation, completion, hover, single/multiple definition,
@@ -814,7 +816,7 @@ language status, missing-server guidance, exact workspace approval, restart,
 failure isolation, theme contrast, keyboard focus, accessibility exposure, stopped
 restoration, and no `.strukt` metadata.
 
-- [ ] **Step 2: Run full-slice agentic review**
+- [x] **Step 2: Run full-slice agentic review**
 
 Review descriptor validation, executable trust, path/canonicalization races,
 protocol bounds, deadlocks, lifecycle ordering, stale generations/revisions,
@@ -823,19 +825,19 @@ confinement, persistence privacy, capability isolation, cross-platform process
 cleanup, fake-server fidelity, M2 integration, and M3/M4 boundary drift. Resolve all
 critical and important findings with focused regression tests.
 
-- [ ] **Step 3: Record hosted and manual evidence**
+- [x] **Step 3: Record hosted and manual evidence**
 
 Require the implementation head to pass macOS 14, Ubuntu 24.04, and Windows Server
 2022. Record run/job links, fake-server/native results, exact smoke markers, manual
 results, review findings, and honest Iced/human Windows limitations.
 
-- [ ] **Step 4: Update milestone and release-roadmap artifacts**
+- [x] **Step 4: Update milestone and release-roadmap artifacts**
 
 Mark M2.4 and M2 complete. Link the spec, plan, issue, PR, and evidence in tracker
 and roadmap. Update README and ADR 0001. Preserve M3 through M5 as the pre-release
 critical path and move M6+ to the post-release feature roadmap.
 
-- [ ] **Step 5: Commit completion evidence**
+- [x] **Step 5: Commit completion evidence**
 
 ```bash
 git add README.md docs/decisions/0001-native-ui-framework.md \

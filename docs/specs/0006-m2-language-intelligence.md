@@ -1,6 +1,6 @@
 # M2.4 Language Intelligence
 
-- Status: Approved design
+- Status: Implemented for M2
 - Date: 2026-08-02
 - Milestone: M2 — Local Development Workspace
 - Governing specs:
@@ -28,6 +28,21 @@ The protocol contract follows the current official
 [Language Server Protocol specification](https://microsoft.github.io/language-server-protocol/specifications/specification-current)
 while deliberately implementing a small interoperable subset for the public
 alpha.
+
+### Delivered alpha boundary
+
+The implemented M2 boundary is intentionally narrower than several exploratory
+interaction ideas in the original design. The status surface provides discovery
+retry, exact approve/deny, persisted enable/disable, ready-server restart, and
+bounded failure copying. Descriptor selection and documentation links remain
+configuration-driven until the post-alpha extension surface exists.
+
+Completion and hover are explicit command actions. External definition locations
+are labeled and blocked rather than opened from M2. Automatic crash backoff is
+validated in the protocol domain, while the application fails visibly and uses an
+explicit user restart so it never starts a replacement process unexpectedly.
+These safety-first boundaries govern the delivered M2 behavior where later
+exploratory language below describes a broader future interaction.
 
 ## Goals
 
@@ -216,8 +231,8 @@ Public-alpha limits are:
 - 10-second initialize timeout;
 - 5-second ordinary request timeout;
 - 2-second graceful shutdown timeout;
-- three automatic restarts within ten minutes, followed by `Failed`;
-- exponential restart delays of 250 ms, 1 second, and 4 seconds.
+- a protocol-domain restart budget of three attempts within ten minutes;
+- application-level failures enter `Failed` and require explicit restart in M2.
 
 An oversized, malformed, duplicate-ID, or invalid-state message fails only its
 server generation. The full body is never copied into an error string.
@@ -291,19 +306,17 @@ normalized into URI, range, severity, message, optional source, optional code, a
 related locations. The client accepts only the current workspace, open synchronized
 documents, and a current version when the server supplies one.
 
-Diagnostics render as editor range markers and in a Problems pane grouped by file.
+Diagnostics render in a Problems pane grouped by file with semantic severity colors.
 Selecting a problem opens the confined file and moves the cursor. Diagnostics
-outside the workspace may be displayed as external locations but never open
-without explicit confirmation.
+outside the workspace may be displayed as external locations but never open in M2.
 
 Closing a document, stopping its server, replacing the workspace, or receiving an
-empty current diagnostic set clears its markers.
+empty current diagnostic set clears its Problems entries.
 
 ### Completion
 
-Completion is explicit through a keyboard shortcut or command action in M2.4;
-server-advertised trigger characters may also request it after the editor change
-coalescing boundary. Results normalize label, detail, kind, sort/filter text,
+Completion is explicit through a keyboard shortcut or command action in M2.4.
+Results normalize label, detail, kind, sort/filter text,
 insert text or text edit, and documentation.
 
 The menu is bounded to 200 items. Unsupported snippets are inserted as plain text
@@ -313,7 +326,7 @@ revision-checked editor transaction and one undo boundary.
 
 ### Hover
 
-Hover is requested explicitly by keyboard or a pointer settled for 400 ms. Plain
+Hover is requested explicitly by keyboard or command action. Plain
 text and Markdown results normalize into a bounded presentation model. Markdown is
 rendered without embedded HTML, images, scripts, remote resource fetching, or
 automatic links. Hover content is capped at 256 KiB and disappears on edit, cursor
@@ -324,7 +337,7 @@ move, document close, focus loss, or server generation change.
 Definition is available by keyboard shortcut and command action. A single result
 opens directly through the safe document workflow. Multiple results open a bounded
 picker. Workspace files are confined and revision-safe. External `file:` locations
-require confirmation; non-file URI schemes are displayed but not opened in M2.4.
+and non-file URI schemes are displayed but not opened in M2.4.
 
 The origin location remains available for one-step navigation back during the
 current application session. Navigation history is bounded and not persisted.
@@ -335,12 +348,10 @@ The editor status row shows language mode and one language-server state. Selecti
 the state opens actions appropriate to that state:
 
 - discover again;
-- select a descriptor;
 - enable or disable for this workspace and language;
 - approve or deny the exact workspace command;
 - restart a failed or ready server;
 - copy bounded failure details;
-- open descriptor documentation.
 
 The Problems pane is a first-class workspace surface, not a modal dialog. It shows
 error, warning, information, and hint counts; file grouping; current filtering;
@@ -377,15 +388,14 @@ workspace identity changes.
 - Missing executable: report `Unavailable` with installation guidance; keep editing.
 - Approval denied: do not spawn; keep language features disabled for that pairing.
 - Spawn failure: report the exact bounded adapter error and preserve other servers.
-- Initialize timeout/error: terminate that generation and apply restart policy.
+- Initialize timeout/error: terminate that generation, enter `Failed`, and expose
+  explicit restart.
 - Malformed or oversized protocol input: fail that generation without retaining
   the body or affecting editor content.
 - Stderr flood: retain only the newest bounded diagnostic bytes.
 - Request timeout: cancel and clear only the affected transient feature.
-- Crash: clear transient results, retain editor diagnostics only until the state
-  visibly changes to restarting, then clear them before a new generation becomes
-  ready.
-- Crash loop: enter `Failed` after three automatic retries; require explicit restart.
+- Crash or protocol failure: enter `Failed`, isolate the pairing, and require an
+  explicit restart after clearing transient language results and diagnostics.
 - Workspace replacement: reject all stale work, clear language UI, and terminate all
   previous workspace servers outside the reducer.
 - Persistence failure: keep current in-memory selection and approval state, report
@@ -466,7 +476,7 @@ The native macOS walkthrough covers visible diagnostics, Problems navigation,
 completion, hover, definition, server status, approval, restart, theme contrast,
 keyboard focus, and accessibility exposure. Hosted Windows is authoritative for
 native process/protocol automation; human Windows visual, accessibility, and IME
-certification remains an M9 public-alpha gate.
+certification remains a public-alpha release gate.
 
 ## Acceptance Criteria
 

@@ -56,8 +56,8 @@ established here, while M5 will reuse the same terminal model for remote session
 - Automatically opening detected links.
 - Persisting output, input, environment variables, credentials, process handles, or
   arbitrary commands.
-- Human Windows packaging and complete visual certification, which remains an M9
-  gate.
+- Human Windows packaging and complete visual certification, which remains a
+  public-alpha release gate.
 
 ## Decisions
 

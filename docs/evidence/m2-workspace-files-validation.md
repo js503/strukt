@@ -93,7 +93,7 @@ application launch smoke.
 - Cross-workstream integration and sustained terminal-output testing remain
   pending until the editor, language, and terminal foundations exist.
 - Human Windows visual, accessibility, IME, packaging, installation, and complete
-  keyboard-workflow validation remain M9 public-alpha gates.
+  keyboard-workflow validation remain public-alpha release gates.
 - Cargo continues to warn that transitive `block 0.1.6` will be rejected by a
   future Rust version; this is tracked as dependency maintenance and did not fail
   Rust 1.97.1 verification.

@@ -90,7 +90,8 @@ IME composition could not be claimed from that walkthrough. Unicode cursor,
 selection, insertion, multiline, and CRLF behavior instead passed domain and Iced
 adapter regression tests. Human IME certification remains a public-alpha platform
 gate. Iced exposed only the window and title through the automation accessibility
-tree, so complete screen-reader labels and traversal also remain an M9 human gate.
+tree, so complete screen-reader labels and traversal also remain a public-alpha
+human gate.
 
 ## Known Iced and Platform Limitations
 

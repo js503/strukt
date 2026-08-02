@@ -19,6 +19,8 @@ exit criteria are satisfied and verified, not when a target date arrives.
 - **Shaping:** the milestone is being defined in a spec or architecture decision.
 - **Not planned:** the outcome is sequenced, but its dedicated spec and
   implementation plan have not been written.
+- **Post-alpha:** the outcome is intentionally outside the first public release
+  and will be shaped after that release.
 - **Blocked:** an unresolved dependency prevents meaningful progress.
 
 ## Milestone Sequence
@@ -27,14 +29,14 @@ exit criteria are satisfied and verified, not when a target date arrives.
 |---|---|---|---|---|
 | M0 | Product and architecture foundation | Complete | — | Approved product model, spatial design, remote-development model, and delivery process |
 | M1 | Native shell foundation | Complete | M0 | Cross-platform native shell proving capability boundaries, shell state, and semantic theming |
-| M2 | Local development workspace | In progress | M1 | Real local files, IDE-level editing, language intelligence, PTY/ConPTY terminals, terminal rendering, and workspace persistence |
+| M2 | Local development workspace | Complete | M1 | Real local files, IDE-level editing, language intelligence, PTY/ConPTY terminals, terminal rendering, and workspace persistence |
 | M3 | Local persistent sessions | Not planned | M2 | Named local sessions with windows, split panes, detach/reattach, and restoration |
 | M4 | SSH remote workspace | Not planned | M2 | A remote development box behaves as a first-class workspace over standard SSH |
 | M5 | Remote persistent sessions | Not planned | M3, M4 | Multiple persistent sessions per remote host, reconnect recovery, and tmux interoperability |
-| M6 | AI and workspace context | Not planned | M2, M4 | Optional, model-agnostic AI grounded in explicit local and remote workspace context |
-| M7 | Plugin and MCP foundation | Not planned | M1, M6 | Sandboxed extensions, MCP discovery, permissions, and host-controlled contributions |
-| M8 | Integrated developer workflows | Not planned | M2, M4, M7 | Git, tasks, logs, diagnostics, containers, and Kubernetes as cohesive workspace surfaces |
-| M9 | Public alpha readiness | Not planned | M1–M8 | Installable, documented, supportable public alpha for macOS and Windows with Linux in the build pipeline |
+| Alpha | Public alpha release | Not planned | M3, M4, M5 | Installable, documented local and remote development release for macOS and Windows with Linux in the build pipeline |
+| M6 | AI and workspace context | Post-alpha | Alpha | Optional, model-agnostic AI grounded in explicit local and remote workspace context |
+| M7 | Plugin and MCP foundation | Post-alpha | Alpha, M6 | Sandboxed extensions, MCP discovery, permissions, and host-controlled contributions |
+| M8 | Integrated developer workflows | Post-alpha | Alpha, M7 | Git, tasks, logs, diagnostics, containers, and Kubernetes as cohesive workspace surfaces |
 
 ## M0 — Product and Architecture Foundation
 
@@ -171,7 +173,9 @@ service.
   [#9 — M2.4: Language intelligence and M2 integration](https://github.com/js503/strukt/issues/9)
 - Fourth-slice pull request:
   [#10 — feat: add M2 language intelligence](https://github.com/js503/strukt/pull/10)
-- Remaining after the fourth slice: final review, validation, and M2 completion
+- Fourth-slice validation:
+  [`evidence/m2-language-intelligence-validation.md`](evidence/m2-language-intelligence-validation.md)
+- M2 completed after the fourth-slice review and validation gate.
 - Workspace reference:
   [`mockups/workspace-shell/focus-context.html`](mockups/workspace-shell/focus-context.html)
 
@@ -276,6 +280,49 @@ tmux sessions can be discovered and attached through a common provider model.
 - Interaction reference:
   [`mockups/workspace-shell/remote-multiplexer.html`](mockups/workspace-shell/remote-multiplexer.html)
 
+## Public Alpha Release Gate
+
+### Outcome
+
+After M3 through M5, `strukt` is ready for external developers to install,
+evaluate, report problems, and use for bounded local and remote development
+workflows. UI refinement may land throughout the critical path, but new product
+capabilities begin at M6 after the alpha release.
+
+### Intended Scope
+
+- Signed or appropriately packaged macOS and Windows applications
+- Linux build artifacts or a documented build path from the shared pipeline
+- First-run experience, SSH onboarding, and failure recovery
+- Accessibility, keyboard navigation, performance, and startup validation
+- Security review of SSH, remote helper, session persistence, and permissions
+- Crash reporting and telemetry only when explicitly opt-in
+- User, contributor, troubleshooting, release, and compatibility documentation
+
+### Exit Criteria
+
+- M3, M4, and M5 exit criteria are complete with linked evidence.
+- Packaged smoke tests pass on supported macOS and Windows versions.
+- A human validates visual rendering and keyboard workflows on supported macOS and
+  Windows desktops.
+- A new user can complete documented local and EC2-backed remote workflows.
+- Critical accessibility and keyboard-only workflows are verified.
+- Known limitations and experimental capabilities are documented.
+- Release artifacts, checksums, licenses, notices, and upgrade instructions are
+  published with no unresolved release-blocking defects.
+
+### Related Artifacts
+
+- Product foundation:
+  [`specs/0001-workspace-shell-and-remote-development.md`](specs/0001-workspace-shell-and-remote-development.md)
+- M3 through M5 specs, plans, and evidence: created during their milestones
+- Release criteria and packaging plan: created after M5 implementation stabilizes
+
+## Post-alpha Feature Roadmap
+
+M6 onward adds capabilities after the first public alpha. These outcomes stay on
+the roadmap without delaying the local, SSH, and persistent-session release.
+
 ## M6 — AI and Workspace Context
 
 ### Outcome
@@ -370,45 +417,6 @@ collections of terminal commands and disconnected external tools.
 - Dedicated spec: not yet created
 - Implementation plan: not yet created
 
-## M9 — Public Alpha Readiness
-
-### Outcome
-
-`strukt` is ready for external developers to install, evaluate, report problems,
-and use for bounded local and remote development workflows.
-
-### Intended Scope
-
-- Signed or appropriately packaged macOS and Windows applications
-- Linux build artifacts or documented build path from the shared pipeline
-- First-run experience, connection onboarding, and failure recovery
-- Accessibility, keyboard navigation, performance, and startup validation
-- Security review of SSH, remote helper, permissions, plugins, and AI context
-- Crash reporting and telemetry only when explicitly opt-in
-- User, contributor, troubleshooting, and extension documentation
-- Release, support, feedback, and compatibility policy
-
-### Exit Criteria
-
-- Packaged smoke tests pass on supported macOS and Windows versions.
-- A human validates visual rendering and keyboard workflows on a supported Windows
-  desktop.
-- A new user can complete documented local and EC2-backed remote workflows.
-- Critical accessibility and keyboard-only workflows are verified.
-- Known limitations and experimental capabilities are documented.
-- Security and privacy behavior matches the local-first product principles.
-- Release artifacts, checksums, licenses, notices, and upgrade instructions are
-  published.
-- No unresolved release-blocking defects remain.
-
-### Related Artifacts
-
-- Product foundation:
-  [`specs/0001-workspace-shell-and-remote-development.md`](specs/0001-workspace-shell-and-remote-development.md)
-- Release criteria spec: not yet created
-- Packaging and distribution plans: not yet created
-- Implementation plan: not yet created
-
 ## Planning Rules
 
 - A milestone cannot enter **In progress** until its dedicated behavior is covered
@@ -420,8 +428,8 @@ and use for bounded local and remote development workflows.
   [`tracker.md`](tracker.md).
 - Work may be split into smaller plans within one milestone when that keeps pull
   requests independently reviewable and verifiable.
-- Public-alpha scope is defined by M9 exit criteria, not by implementing every item
-  in the long-term product vision.
+- Public-alpha scope is defined by the release gate after M5, not by implementing
+  every item in the long-term product vision.
 
 ## Tracking
 

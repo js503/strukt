@@ -106,7 +106,7 @@ process hangs.
 
 This is native startup evidence, not visual QA. Human Windows visual,
 accessibility, IME, packaging, and installation validation remain mandatory before
-M9 public-alpha readiness can be marked complete.
+public-alpha readiness can be marked complete.
 
 ## Hosted CI Results
 
@@ -132,7 +132,7 @@ development machine.
 
 - M2: custom editor or terminal widget boundary
 - M2: accessibility semantics, focus order, keyboard traversal, and IME behavior
-- M9: human Windows visual, packaging, installation, and keyboard-workflow QA
+- Public alpha: human Windows visual, packaging, installation, and keyboard-workflow QA
 
 These are explicit later-milestone gates rather than incomplete M1 acceptance
 evidence.

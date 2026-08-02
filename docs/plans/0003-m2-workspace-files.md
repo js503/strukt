@@ -2539,7 +2539,7 @@ Create `docs/evidence/m2-workspace-files-validation.md` with:
 - manual macOS opening, explorer, ignored-file, watcher, search, restart, and
   repository-cleanliness checks;
 - known limitations and the remaining editor, terminal, language, integration, and
-  M9 Windows-human gates.
+  public-alpha Windows-human gates.
 
 Update:
 

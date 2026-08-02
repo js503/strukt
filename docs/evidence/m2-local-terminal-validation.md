@@ -126,8 +126,9 @@ The automation bridge exposes the native window but no individually addressable
 Iced controls or terminal cells. It can click the rendered controls by coordinate,
 but this is not an accessibility certification. Unicode input was verified;
 composition through a real macOS IME was not independently observable through the
-bridge. These remain explicit framework risks for continued validation and M9
-human accessibility/IME certification rather than being overstated as passes.
+bridge. These remain explicit framework risks for continued validation and
+public-alpha human accessibility/IME certification rather than being overstated as
+passes.
 
 ## Review Status
 
@@ -158,4 +159,5 @@ Resolved findings include:
 
 Every critical or important code finding was resolved with focused regression
 coverage. Remaining limitations are the explicitly recorded Iced accessibility/IME
-inspection gap and lack of human Windows visual certification, which is an M9 gate.
+inspection gap and lack of human Windows visual certification, which is a
+public-alpha release gate.
