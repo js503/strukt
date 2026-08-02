@@ -10,6 +10,7 @@ members = [
   "crates/strukt-editor",
   "crates/strukt-terminal",
   "crates/strukt-platform",
+  "crates/strukt-language",
 ]
 resolver = "3"
 
@@ -43,6 +44,7 @@ serde_json = "1"
 strukt-core = { path = "crates/strukt-core" }
 strukt-editor = { path = "crates/strukt-editor" }
 strukt-fs = { path = "crates/strukt-fs" }
+strukt-language = { path = "crates/strukt-language" }
 strukt-persistence = { path = "crates/strukt-persistence" }
 strukt-platform = { path = "crates/strukt-platform" }
 strukt-shell = { path = "crates/strukt-shell" }
@@ -53,6 +55,7 @@ tempfile = "3.27.0"
 thiserror = "2.0"
 tokio = { version = "1", features = ["rt", "sync"] }
 unicode-width = "0.2"
+url = { version = "2", features = ["serde"] }
 vte = { version = "0.15.0", default-features = false }
 zeroize = "1"
 

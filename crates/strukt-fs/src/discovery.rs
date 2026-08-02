@@ -334,13 +334,23 @@ fn load_root_ignores(
     warnings: &mut Warnings,
 ) -> Vec<Gitignore> {
     let mut ignores = Vec::new();
-    if let Some(exclude) = load_ignore_file(
-        directory,
-        Path::new(".git/info/exclude"),
-        logical_root,
-        warnings,
-    ) {
-        ignores.push(exclude);
+    match directory.symlink_metadata(".git") {
+        Ok(metadata) if metadata.is_dir() => {
+            if let Some(exclude) = load_ignore_file(
+                directory,
+                Path::new(".git/info/exclude"),
+                logical_root,
+                warnings,
+            ) {
+                ignores.push(exclude);
+            }
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => warnings.push_message(format!(
+            "could not inspect {}: {error}",
+            logical_root.join(".git").display()
+        )),
     }
     ignores.extend(load_directory_ignores(directory, logical_root, warnings));
     ignores

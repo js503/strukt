@@ -31,6 +31,24 @@ fn default_discovery_hides_ignored_and_hidden_files() {
 }
 
 #[test]
+fn linked_worktree_git_pointer_does_not_emit_an_exclude_warning() {
+    let root = tempdir().unwrap();
+    fs::write(root.path().join(".git"), "gitdir: /tmp/example-worktree\n").unwrap();
+    fs::write(root.path().join("main.rs"), "fn main() {}").unwrap();
+    let workspace = WorkspaceRoot::open(root.path()).unwrap();
+
+    let report = discover_report_for_root(&workspace, DiscoveryOptions::default()).unwrap();
+
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert!(
+        report
+            .entries
+            .iter()
+            .any(|entry| entry.relative_path == Path::new("main.rs"))
+    );
+}
+
+#[test]
 fn explicit_visibility_reveals_hidden_and_ignored_files() {
     let root = tempdir().unwrap();
     fs::write(root.path().join(".gitignore"), "target/\n").unwrap();

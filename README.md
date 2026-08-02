@@ -25,10 +25,10 @@ software engineering: one context, every tool, and any model.
 
 ## Status
 
-- Stage: local development workspace implementation
+- Stage: local persistent-session implementation
 - Current foundation: native shell plus real local workspace, file, editor, and
   ephemeral PTY/ConPTY terminal workflows
-- Milestones: M1 complete; M2 in progress
+- Milestones: M1 and M2 complete; M3 through M5 are the public-alpha critical path
 
 ## Key Docs
 
@@ -72,9 +72,13 @@ GPU-rendered Unicode and ANSI cells, tabs, recursive splits, selection, clipboar
 consent, explicit link opening, restart/close lifecycle controls, fair output
 draining, and stopped-only presentation restoration. Terminal output, commands,
 environment data, selections, and clipboard contents are never persisted.
-Language intelligence and final restoration integration remain later M2
-workstreams. SSH and persistent local or remote sessions belong to M4, M3, and M5
-respectively.
+Language intelligence discovers user-installed servers through one bounded,
+language-agnostic LSP client. It supports exact approval for workspace commands,
+diagnostics grouped in Problems, completion, hover, definition, persisted
+enablement, explicit restart, capability-aware saves, deadline enforcement, and
+stopped-only restoration without writing workspace metadata. SSH and persistent
+local or remote sessions belong to M4, M3, and M5 respectively. M6 onward is the
+post-alpha feature roadmap.
 
 The deterministic workspace-files smoke mode expects a folder containing
 `strukt-smoke.txt`:
@@ -98,6 +102,17 @@ cargo build -p strukt-terminal --bin terminal-fixture
 cargo run -p strukt-app -- --terminal-smoke "$fixture"
 ```
 
+The final M2 language and integration smokes use only repository-owned fixtures:
+
+```bash
+fixture="$(mktemp -d)"
+printf 'strukt\n' > "$fixture/strukt-smoke.txt"
+printf 'strukt\n' > "$fixture/strukt-editor-smoke.txt"
+cargo build -p strukt-language --bin language-fixture
+cargo run -p strukt-app -- --language-smoke "$fixture"
+cargo run -p strukt-app -- --m2-integration-smoke "$fixture"
+```
+
 ## Verification
 
 - Run `forj check .` to verify the governed repository manifest.
@@ -109,6 +124,8 @@ cargo run -p strukt-app -- --terminal-smoke "$fixture"
   platform limitations.
 - See `docs/evidence/m2-local-terminal-validation.md` for PTY/ConPTY, renderer,
   stress, native walkthrough, and current framework limitations.
+- See `docs/evidence/m2-language-intelligence-validation.md` for language,
+  cross-platform integration, native walkthrough, and full M2 review evidence.
 
 ## Pull Request Expectations
 

@@ -120,7 +120,8 @@ fn tampering_without_a_fallback_is_reported() {
     let path = store.current_path(record.metadata());
     let mut envelope: serde_json::Value =
         serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    envelope["ciphertext"][0] = 1.into();
+    let original = envelope["ciphertext"][0].as_u64().unwrap();
+    envelope["ciphertext"][0] = ((original + 1) % 256).into();
     fs::write(path, serde_json::to_vec(&envelope).unwrap()).unwrap();
 
     assert!(matches!(

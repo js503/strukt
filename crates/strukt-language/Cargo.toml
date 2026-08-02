@@ -1,22 +1,20 @@
 [package]
-name = "strukt-persistence"
+name = "strukt-language"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
-atomic-write-file.workspace = true
 blake3.workspace = true
-chacha20poly1305.workspace = true
-directories.workspace = true
+cap-fs-ext.workspace = true
+cap-std.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-strukt-language.workspace = true
-strukt-terminal.workspace = true
 strukt-workspace.workspace = true
 thiserror.workspace = true
-zeroize.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

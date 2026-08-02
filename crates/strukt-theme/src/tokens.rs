@@ -39,6 +39,10 @@ pub struct ThemeTokens {
     pub connection_remote: Rgb,
     pub status_success: Rgb,
     pub status_warning: Rgb,
+    pub diagnostic_error: Rgb,
+    pub diagnostic_warning: Rgb,
+    pub diagnostic_information: Rgb,
+    pub diagnostic_hint: Rgb,
     pub editor_background: Rgb,
     pub editor_foreground: Rgb,
     pub editor_gutter: Rgb,
@@ -102,6 +106,10 @@ impl ThemeTokens {
                 connection_remote: Rgb::new(35, 134, 54),
                 status_success: Rgb::new(35, 134, 54),
                 status_warning: Rgb::new(154, 103, 0),
+                diagnostic_error: Rgb::new(207, 34, 46),
+                diagnostic_warning: Rgb::new(154, 103, 0),
+                diagnostic_information: Rgb::new(5, 80, 174),
+                diagnostic_hint: Rgb::new(110, 119, 129),
                 editor_background: Rgb::new(255, 255, 255),
                 editor_foreground: Rgb::new(31, 35, 40),
                 editor_gutter: Rgb::new(110, 119, 129),
@@ -156,6 +164,10 @@ impl ThemeTokens {
                 connection_remote: Rgb::new(126, 231, 135),
                 status_success: Rgb::new(126, 231, 135),
                 status_warning: Rgb::new(227, 179, 65),
+                diagnostic_error: Rgb::new(255, 123, 114),
+                diagnostic_warning: Rgb::new(227, 179, 65),
+                diagnostic_information: Rgb::new(121, 192, 255),
+                diagnostic_hint: Rgb::new(139, 148, 158),
                 editor_background: Rgb::new(13, 17, 23),
                 editor_foreground: Rgb::new(230, 237, 243),
                 editor_gutter: Rgb::new(110, 118, 129),
@@ -173,6 +185,22 @@ impl ThemeTokens {
                 syntax_function: Rgb::new(210, 168, 255),
                 syntax_punctuation: Rgb::new(230, 237, 243),
             },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ThemeMode, ThemeTokens};
+
+    #[test]
+    fn diagnostic_tokens_are_semantic_and_distinct_in_both_builtin_themes() {
+        for mode in [ThemeMode::Light, ThemeMode::Dark] {
+            let tokens = ThemeTokens::builtin(mode);
+            assert_ne!(tokens.diagnostic_error, tokens.diagnostic_warning);
+            assert_ne!(tokens.diagnostic_warning, tokens.diagnostic_information);
+            assert_ne!(tokens.diagnostic_information, tokens.diagnostic_hint);
+            assert_ne!(tokens.diagnostic_error, tokens.editor_background);
         }
     }
 }

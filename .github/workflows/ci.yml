@@ -33,6 +33,8 @@ jobs:
         run: cargo build -p strukt-app
       - name: Build terminal fixture
         run: cargo build -p strukt-terminal --bin terminal-fixture
+      - name: Build language fixture
+        run: cargo build -p strukt-language --bin language-fixture
       - name: Smoke local workspace files
         if: runner.os != 'Windows'
         shell: bash
@@ -123,6 +125,41 @@ jobs:
           }
           if (Test-Path (Join-Path $fixture ".strukt")) {
             throw "terminal smoke created workspace metadata"
+          }
+      - name: Smoke language and M2 integration
+        if: runner.os != 'Windows'
+        shell: bash
+        timeout-minutes: 3
+        run: |
+          fixture="$(mktemp -d)"
+          printf 'strukt\n' > "$fixture/strukt-smoke.txt"
+          printf 'strukt\n' > "$fixture/strukt-editor-smoke.txt"
+          cargo run -p strukt-app -- --language-smoke "$fixture" | tee language-smoke.log
+          grep -Fx "strukt language smoke: discovery, sync, diagnostics, completion, hover, definition, cancellation, shutdown, and restore passed" language-smoke.log
+          cargo run -p strukt-app -- --m2-integration-smoke "$fixture" | tee m2-smoke.log
+          grep -Fx "strukt M2 integration smoke: files, editor, terminal, language, persistence, isolation, and stopped restore passed" m2-smoke.log
+          test ! -e "$fixture/.strukt"
+      - name: Smoke language and M2 integration
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP ("strukt-m2-smoke-" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Force -Path $fixture | Out-Null
+          Set-Content -Path (Join-Path $fixture "strukt-smoke.txt") -Value "strukt"
+          Set-Content -Path (Join-Path $fixture "strukt-editor-smoke.txt") -Value "strukt"
+          $language = & cargo run -p strukt-app -- --language-smoke $fixture 2>&1
+          $language | Write-Output
+          if ($LASTEXITCODE -ne 0 -or ($language -join "`n") -notmatch "strukt language smoke: discovery, sync, diagnostics, completion, hover, definition, cancellation, shutdown, and restore passed") {
+            throw "language smoke failed"
+          }
+          $m2 = & cargo run -p strukt-app -- --m2-integration-smoke $fixture 2>&1
+          $m2 | Write-Output
+          if ($LASTEXITCODE -ne 0 -or ($m2 -join "`n") -notmatch "strukt M2 integration smoke: files, editor, terminal, language, persistence, isolation, and stopped restore passed") {
+            throw "M2 integration smoke failed"
+          }
+          if (Test-Path (Join-Path $fixture ".strukt")) {
+            throw "M2 smoke created workspace metadata"
           }
       - name: Smoke launch native Windows application
         if: runner.os == 'Windows'

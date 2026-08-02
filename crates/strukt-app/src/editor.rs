@@ -7,6 +7,9 @@ use strukt_editor::{
     CharRange, DocumentId, EditKind, EditTransaction, EditorWorkspace, EditorWorkspaceError,
     Replacement,
 };
+use strukt_language::{
+    LspPosition, PositionEncoding, ScalarPosition, from_lsp_position, to_lsp_position,
+};
 
 #[derive(Default)]
 pub(crate) struct EditorSurfaces {
@@ -83,6 +86,104 @@ impl EditorSurfaces {
         Ok(())
     }
 
+    pub(crate) fn move_to_lsp(
+        &mut self,
+        id: DocumentId,
+        position: LspPosition,
+        encoding: PositionEncoding,
+    ) -> Result<(), EditorSurfaceError> {
+        let content = self.content_mut(id)?;
+        let text = content.text();
+        let scalar = from_lsp_position(&text, position, encoding)
+            .map_err(|_| EditorSurfaceError::InvalidCursor)?;
+        let line_index =
+            usize::try_from(scalar.line).map_err(|_| EditorSurfaceError::InvalidCursor)?;
+        let scalar_column =
+            usize::try_from(scalar.character).map_err(|_| EditorSurfaceError::InvalidCursor)?;
+        let line = content
+            .line(line_index)
+            .ok_or(EditorSurfaceError::InvalidCursor)?;
+        let column = if scalar_column == line.text.chars().count() {
+            line.text.len()
+        } else {
+            line.text
+                .char_indices()
+                .nth(scalar_column)
+                .map(|(index, _)| index)
+                .ok_or(EditorSurfaceError::InvalidCursor)?
+        };
+        content.move_to(Cursor {
+            position: Position {
+                line: line_index,
+                column,
+            },
+            selection: None,
+        });
+        Ok(())
+    }
+
+    pub(crate) fn current_lsp_position(
+        &self,
+        id: DocumentId,
+        encoding: PositionEncoding,
+    ) -> Result<LspPosition, EditorSurfaceError> {
+        let content = self
+            .content(id)
+            .ok_or(EditorSurfaceError::MissingSurface(id))?;
+        let position = content.cursor().position;
+        let line = content
+            .line(position.line)
+            .ok_or(EditorSurfaceError::InvalidCursor)?;
+        if position.column > line.text.len() || !line.text.is_char_boundary(position.column) {
+            return Err(EditorSurfaceError::InvalidCursor);
+        }
+        let scalar_column = line.text[..position.column].chars().count();
+        let scalar = ScalarPosition::new(
+            u32::try_from(position.line).map_err(|_| EditorSurfaceError::InvalidCursor)?,
+            u32::try_from(scalar_column).map_err(|_| EditorSurfaceError::InvalidCursor)?,
+        );
+        to_lsp_position(&content.text(), scalar, encoding)
+            .map_err(|_| EditorSurfaceError::InvalidCursor)
+    }
+
+    pub(crate) fn insert_completion(
+        &mut self,
+        workspace: &mut EditorWorkspace,
+        id: DocumentId,
+        expected_revision: strukt_editor::Revision,
+        insertion: &str,
+        language_range: Option<strukt_language::LanguageRange>,
+        encoding: PositionEncoding,
+    ) -> Result<(), EditorSurfaceError> {
+        let (caret, anchor) = self.cursor_offsets(id)?;
+        let range = if let Some(range) = language_range {
+            let text = self
+                .content(id)
+                .ok_or(EditorSurfaceError::MissingSurface(id))?
+                .text();
+            CharRange::new(
+                scalar_offset_for_lsp(&text, range.start, encoding)?,
+                scalar_offset_for_lsp(&text, range.end, encoding)?,
+            )?
+        } else {
+            CharRange::new(caret.min(anchor), caret.max(anchor))?
+        };
+        workspace.edit(
+            id,
+            EditTransaction::new(
+                expected_revision,
+                vec![Replacement::new(range, insertion.to_owned())],
+            )?,
+            EditKind::Other,
+            caret,
+            range.start + insertion.chars().count(),
+        )?;
+        self.rebuild(workspace, id)?;
+        let cursor = range.start + insertion.chars().count();
+        self.restore_view(id, cursor, cursor, 0.0)?;
+        Ok(())
+    }
+
     pub(crate) fn perform(
         &mut self,
         workspace: &mut EditorWorkspace,
@@ -120,6 +221,30 @@ impl EditorSurfaces {
             .get_mut(&id)
             .ok_or(EditorSurfaceError::MissingSurface(id))
     }
+}
+
+fn scalar_offset_for_lsp(
+    text: &str,
+    position: LspPosition,
+    encoding: PositionEncoding,
+) -> Result<usize, EditorSurfaceError> {
+    let scalar = from_lsp_position(text, position, encoding)
+        .map_err(|_| EditorSurfaceError::InvalidCursor)?;
+    let target_line =
+        usize::try_from(scalar.line).map_err(|_| EditorSurfaceError::InvalidCursor)?;
+    let mut offset = 0;
+    for (line_index, line) in text.split_inclusive('\n').enumerate() {
+        if line_index == target_line {
+            return Ok(offset
+                + usize::try_from(scalar.character)
+                    .map_err(|_| EditorSurfaceError::InvalidCursor)?);
+        }
+        offset += line.chars().count();
+    }
+    if target_line == text.lines().count() && text.ends_with('\n') {
+        return Ok(offset);
+    }
+    Err(EditorSurfaceError::InvalidCursor)
 }
 
 fn transaction_for_action(
@@ -313,6 +438,7 @@ pub(crate) enum EditorSurfaceError {
 mod tests {
     use super::*;
     use strukt_editor::{DiskRevision, OpenDisposition, RelativeDocumentPath};
+    use strukt_language::{LspPosition, PositionEncoding};
     use strukt_workspace::WorkspaceRoot;
 
     #[test]
@@ -398,6 +524,63 @@ mod tests {
 
         assert_eq!(workspace.document(id).unwrap().text(), "é!x");
         assert_eq!(surfaces.cursor_offsets(id).unwrap(), (2, 2));
+    }
+
+    #[test]
+    fn diagnostic_navigation_converts_utf16_positions_for_the_native_editor() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = WorkspaceRoot::open(directory.path()).unwrap();
+        let mut workspace = EditorWorkspace::new(root.id().clone());
+        let id = workspace
+            .open(
+                RelativeDocumentPath::new("file.txt").unwrap(),
+                "one\n😀value",
+                DiskRevision::new("disk"),
+                false,
+                OpenDisposition::Pinned,
+            )
+            .unwrap();
+        let mut surfaces = EditorSurfaces::default();
+        surfaces.insert(id, "one\n😀value");
+
+        surfaces
+            .move_to_lsp(id, LspPosition::new(1, 2), PositionEncoding::Utf16)
+            .unwrap();
+
+        assert_eq!(surfaces.cursor_offsets(id).unwrap(), (5, 5));
+    }
+
+    #[test]
+    fn completion_insertion_is_one_editor_transaction_and_one_undo_boundary() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = WorkspaceRoot::open(directory.path()).unwrap();
+        let mut workspace = EditorWorkspace::new(root.id().clone());
+        let id = workspace
+            .open(
+                RelativeDocumentPath::new("file.rs").unwrap(),
+                "pri",
+                DiskRevision::new("disk"),
+                false,
+                OpenDisposition::Pinned,
+            )
+            .unwrap();
+        let mut surfaces = EditorSurfaces::default();
+        surfaces.insert(id, "pri");
+        surfaces.restore_view(id, 3, 0, 0.0).unwrap();
+
+        surfaces
+            .insert_completion(
+                &mut workspace,
+                id,
+                strukt_editor::Revision::INITIAL,
+                "println!",
+                None,
+                PositionEncoding::Utf16,
+            )
+            .unwrap();
+        assert_eq!(workspace.document(id).unwrap().text(), "println!");
+        workspace.undo(id).unwrap();
+        assert_eq!(workspace.document(id).unwrap().text(), "pri");
     }
 
     #[test]

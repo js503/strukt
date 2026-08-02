@@ -124,7 +124,25 @@ The macOS inspection bridge still exposes only the top-level Iced window rather
 than individually addressable controls or terminal cells, and it cannot certify a
 real IME composition sequence. M2.3 records those limitations rather than treating
 them as passes. Iced remains accepted for continued implementation, while human
-accessibility, IME, and Windows visual certification remain mandatory M9 gates.
+accessibility, IME, and Windows visual certification remain mandatory release gates.
+
+### M2.4 language and workspace revalidation
+
+The final M2 slice revalidated the same native shell with real workspace files,
+editor overlays, a grouped Problems surface, language status controls, and the
+repository-owned LSP fixture. The runtime keeps descriptors, protocol, process,
+diagnostic, completion, hover, definition, and persistence state outside Iced; the
+view consumes immutable projections and schedules blocking work through tasks.
+
+The native macOS walkthrough opened both an isolated fixture and a linked Git
+worktree. It exposed a filesystem defect rather than a framework defect: worktree
+`.git` pointer files were being treated as directories. The capability-safe fix
+and regression are recorded in
+[`docs/evidence/m2-language-intelligence-validation.md`](../evidence/m2-language-intelligence-validation.md).
+Theme contrast and the persistent file/context layout remained usable, while the
+inspection bridge still exposed only the top-level window. Control-level
+accessibility, IME composition, and human Windows visual certification therefore
+remain explicit public-alpha release gates. Iced remains accepted through M2.
 
 ## Validation gates
 
@@ -139,7 +157,7 @@ This M1 acceptance is supported by the following completed gates:
 6. startup and idle resource measurements are recorded;
 7. IME and accessibility risks are documented with a concrete mitigation path.
 
-Human Windows visual QA remains mandatory for M9 public-alpha readiness. Before M2
+Human Windows visual QA remains mandatory for public-alpha readiness. Before M2
 accepts an editor or terminal widget, the framework decision must be revisited
 against custom-widget, accessibility, focus-order, keyboard-navigation, and IME
 prototypes. M1 acceptance is not an unconditional permanent framework commitment.
@@ -153,4 +171,4 @@ If Iced fails a later gate, keep the domain crates and evaluate Floem or a focus
 - UI framework churn is contained within one crate.
 - The terminal renderer will require a custom widget in a later milestone.
 - The team accepts Iced's experimental status for the M1 foundation while retaining
-  explicit M2 and M9 revalidation gates.
+  explicit M2 and public-alpha revalidation gates.

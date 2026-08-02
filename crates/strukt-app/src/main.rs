@@ -2,6 +2,7 @@
 
 mod app;
 mod editor;
+mod language;
 mod recovery_key;
 mod terminal;
 mod terminal_widget;
@@ -43,6 +44,22 @@ fn main() -> iced::Result {
             panic!("strukt workspace files smoke failed: {error}");
         }
         println!("{}", app::WORKSPACE_FILES_SMOKE_SUCCESS);
+        return Ok(());
+    }
+
+    if let LaunchMode::LanguageSmoke { root } = &launch_mode {
+        if let Err(error) = app::run_language_smoke(root) {
+            panic!("strukt language smoke failed: {error}");
+        }
+        println!("{}", app::LANGUAGE_SMOKE_SUCCESS);
+        return Ok(());
+    }
+
+    if let LaunchMode::M2IntegrationSmoke { root } = &launch_mode {
+        if let Err(error) = app::run_m2_integration_smoke(root) {
+            panic!("strukt M2 integration smoke failed: {error}");
+        }
+        println!("{}", app::M2_INTEGRATION_SMOKE_SUCCESS);
         return Ok(());
     }
 
@@ -680,6 +697,28 @@ mod tests {
         });
         assert_eq!(app.editor.as_ref().unwrap().document_count(), 1);
         assert!(app.editor.as_ref().unwrap().view_state().tabs[0].pinned);
+    }
+
+    #[test]
+    fn language_restore_is_stopped_and_rust_open_schedules_discovery() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&project))));
+        let root = app.workspace.as_ref().unwrap().root.path().to_path_buf();
+
+        assert_eq!(app.language.running_servers(), 0);
+        let task = app.update(Message::DocumentOpened {
+            workspace_root: root,
+            path: "src/main.rs".into(),
+            disposition: OpenDisposition::Pinned,
+            result: Ok(text_document("fn main() {}", "disk", false)),
+        });
+
+        assert!(task.units() > 0);
+        assert_eq!(
+            app.language.state("rust"),
+            crate::language::LanguageState::Discovering
+        );
     }
 
     #[test]
@@ -1410,6 +1449,36 @@ mod tests {
             vec![
                 "--terminal-smoke".to_owned(),
                 root.path().join("missing").display().to_string(),
+            ],
+        ] {
+            assert_eq!(LaunchMode::from_args(args), LaunchMode::Interactive);
+        }
+    }
+
+    #[test]
+    fn language_and_m2_smokes_require_exact_flags_and_existing_roots() {
+        let root = tempdir().unwrap();
+        let path = root.path().display().to_string();
+        assert_eq!(
+            LaunchMode::from_args(["--language-smoke".to_owned(), path.clone()]),
+            LaunchMode::LanguageSmoke {
+                root: root.path().to_path_buf(),
+            }
+        );
+        assert_eq!(
+            LaunchMode::from_args(["--m2-integration-smoke".to_owned(), path.clone()]),
+            LaunchMode::M2IntegrationSmoke {
+                root: root.path().to_path_buf(),
+            }
+        );
+        for args in [
+            vec!["--language-smoke".to_owned()],
+            vec!["--language-smokes".to_owned(), path.clone()],
+            vec!["--m2-integration-smoke".to_owned(), "missing".to_owned()],
+            vec![
+                "--m2-integration-smoke".to_owned(),
+                path,
+                "extra".to_owned(),
             ],
         ] {
             assert_eq!(LaunchMode::from_args(args), LaunchMode::Interactive);

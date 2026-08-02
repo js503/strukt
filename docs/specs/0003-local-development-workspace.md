@@ -63,7 +63,8 @@ persistent; M3 adds durable process ownership and detach/reattach behavior.
 - Automatically executing project tasks, shell hooks, or workspace-provided
   commands.
 - Full language-specific IDE parity with established specialist editors.
-- Human Windows packaging and visual certification, which remains an M9 gate.
+- Human Windows packaging and visual certification, which remains a public-alpha
+  release gate.
 
 ## Decisions
 
@@ -491,7 +492,7 @@ Manual macOS evidence covers workspace opening, file editing, IME, accessibility
 keyboard traversal, editor interaction, terminal interaction, theming, and resizing.
 Hosted Windows automation covers native file, language, ConPTY, and application
 smoke paths. Human Windows packaging, visual, installation, and complete keyboard
-workflow validation remains required for M9.
+workflow validation remains required for the public-alpha release.
 
 ### Stress validation
 
@@ -564,4 +565,5 @@ M2 is complete when:
 - M4 implements remote workspaces using the workspace, filesystem, language, and
   terminal boundaries proven here.
 - M5 combines the persistent-session and remote-workspace models.
-- M9 supplies human Windows packaging and public-alpha readiness gates.
+- The release gate after M5 supplies human Windows packaging and public-alpha
+  readiness checks.
