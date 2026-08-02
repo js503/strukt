@@ -284,7 +284,7 @@ git commit -m "feat: add bounded LSP protocol core"
 - Modify: `crates/strukt-language/src/lib.rs`
 - Create: `crates/strukt-language/tests/discovery.rs`
 
-- [ ] **Step 1: Write failing deterministic discovery tests**
+- [x] **Step 1: Write failing deterministic discovery tests**
 
 Use temporary executable fixtures to require PATH-order resolution, absolute-path
 canonicalization, platform executable suffix behavior, marker ranking, no execution,
@@ -301,13 +301,13 @@ fn discovery_resolves_but_never_executes_path_candidates() {
 }
 ```
 
-- [ ] **Step 2: Run the focused test and confirm failure**
+- [x] **Step 2: Run the focused test and confirm failure**
 
 Run: `cargo test -p strukt-language --test discovery --locked --offline`
 
 Expected: compile failure for the discovery interface.
 
-- [ ] **Step 3: Implement discovery without shell execution**
+- [x] **Step 3: Implement discovery without shell execution**
 
 Split the inherited PATH using `std::env::split_paths`, test regular executable
 files in deterministic order, canonicalize the selected path, and return:
@@ -324,13 +324,13 @@ pub enum DiscoveryOutcome {
 Use platform metadata checks and never run `which`, a shell, an installer, or the
 candidate during discovery.
 
-- [ ] **Step 4: Add trust and configuration failure coverage**
+- [x] **Step 4: Add trust and configuration failure coverage**
 
 Test symlinked workspace config rejection, changed executable identity, changed
 arguments, changed workspace ID, denied approval, disabled descriptors, invalid
 JSON, and 256 KiB bounds.
 
-- [ ] **Step 5: Verify and commit discovery**
+- [x] **Step 5: Verify and commit discovery**
 
 Run: `cargo test -p strukt-language --test discovery --locked --offline`
 

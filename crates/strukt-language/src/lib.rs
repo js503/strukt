@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod descriptor;
+mod discovery;
 mod feature;
 mod framing;
 mod position;
@@ -9,6 +10,10 @@ mod protocol;
 pub use descriptor::{
     CommandApproval, DescriptorError, DescriptorRegistry, DescriptorSource, ExecutableCandidate,
     LanguageServerDescriptor, ResolvedCommand, built_in_descriptors, registry_from_json,
+};
+pub use discovery::{
+    ApprovalStatus, DiscoveredServer, DiscoveryError, DiscoveryOutcome, discover,
+    load_workspace_registry, select_descriptor,
 };
 pub use feature::{
     CompletionInsertion, CompletionItem, DefinitionAccess, DefinitionTarget, Diagnostic,

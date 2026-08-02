@@ -4093,6 +4093,8 @@ name = "strukt-language"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "cap-fs-ext",
+ "cap-std",
  "serde",
  "serde_json",
  "strukt-workspace",

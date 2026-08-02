@@ -61,6 +61,9 @@ pub struct LanguageServerDescriptor {
     candidates: Vec<ExecutableCandidate>,
     arguments: Vec<OsString>,
     source: DescriptorSource,
+    enabled: bool,
+    installation_guidance: Option<String>,
+    workspace_markers: Vec<PathBuf>,
     unknown_fields: BTreeMap<String, Value>,
 }
 
@@ -112,6 +115,9 @@ impl LanguageServerDescriptor {
             candidates,
             arguments,
             source,
+            enabled: true,
+            installation_guidance: None,
+            workspace_markers: Vec::new(),
             unknown_fields: BTreeMap::new(),
         })
     }
@@ -144,6 +150,69 @@ impl LanguageServerDescriptor {
     #[must_use]
     pub const fn source(&self) -> DescriptorSource {
         self.source
+    }
+
+    #[must_use]
+    pub const fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    #[must_use]
+    pub const fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    /// Adds bounded human-readable installation guidance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DescriptorError::InvalidDescriptor`] when the guidance is
+    /// empty or longer than 4 KiB.
+    pub fn with_installation_guidance(
+        mut self,
+        guidance: Option<String>,
+    ) -> Result<Self, DescriptorError> {
+        if guidance
+            .as_ref()
+            .is_some_and(|text| text.trim().is_empty() || text.len() > 4 * 1024)
+        {
+            return Err(DescriptorError::InvalidDescriptor);
+        }
+        self.installation_guidance = guidance;
+        Ok(self)
+    }
+
+    #[must_use]
+    pub fn installation_guidance(&self) -> Option<&str> {
+        self.installation_guidance.as_deref()
+    }
+
+    /// Adds bounded, relative workspace marker paths used only for ranking.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DescriptorError::InvalidDescriptor`] for absolute, escaping,
+    /// empty, duplicated, or excessively numerous marker paths.
+    pub fn with_workspace_markers(
+        mut self,
+        markers: impl IntoIterator<Item = PathBuf>,
+    ) -> Result<Self, DescriptorError> {
+        let markers = markers.into_iter().collect::<Vec<_>>();
+        let unique = markers.iter().collect::<HashSet<_>>();
+        if markers.len() > 64
+            || markers.len() != unique.len()
+            || markers.iter().any(|marker| !valid_marker(marker))
+        {
+            return Err(DescriptorError::InvalidDescriptor);
+        }
+        self.workspace_markers = markers;
+        Ok(self)
+    }
+
+    #[must_use]
+    pub fn workspace_markers(&self) -> &[PathBuf] {
+        &self.workspace_markers
     }
 
     #[must_use]
@@ -282,6 +351,12 @@ struct DescriptorConfiguration {
     executable: String,
     #[serde(default)]
     arguments: Vec<String>,
+    #[serde(default = "default_enabled")]
+    enabled: bool,
+    #[serde(default)]
+    installation_guidance: Option<String>,
+    #[serde(default)]
+    workspace_markers: Vec<PathBuf>,
     #[serde(flatten)]
     unknown_fields: BTreeMap<String, Value>,
 }
@@ -409,9 +484,16 @@ fn descriptor_from_configuration(
         [executable],
         raw.arguments.into_iter().map(OsString::from),
         source,
-    )?;
+    )?
+    .with_enabled(raw.enabled)
+    .with_installation_guidance(raw.installation_guidance)?
+    .with_workspace_markers(raw.workspace_markers)?;
     descriptor.unknown_fields = raw.unknown_fields;
     Ok(descriptor)
+}
+
+const fn default_enabled() -> bool {
+    true
 }
 
 fn built_in(
@@ -437,6 +519,14 @@ fn valid_identifier(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+fn valid_marker(path: &Path) -> bool {
+    !path.as_os_str().is_empty()
+        && path.as_os_str().to_string_lossy().len() <= 512
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
 }
 
 fn has_nul(value: &OsStr) -> bool {
