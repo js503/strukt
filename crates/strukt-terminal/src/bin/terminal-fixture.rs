@@ -54,9 +54,11 @@ fn write_stress_stream() {
     const CHUNK_BYTES: usize = 64 * 1024;
 
     let mut stdout = std::io::stdout().lock();
-    // Carriage returns exercise the full transport/parser path without making
-    // debug smoke runtime proportional to millions of scrollback row moves.
-    let chunk = vec![b'\r'; CHUNK_BYTES];
+    // The smoke consumes this process directly through the bounded transport,
+    // so visible bytes exercise real ConPTY throughput without parser or
+    // scrollback cost. Repeated cursor controls are coalesced by ConPTY and
+    // therefore cannot serve as a portable byte-counting payload.
+    let chunk = vec![b'x'; CHUNK_BYTES];
     for _ in 0..(TOTAL_BYTES / CHUNK_BYTES) {
         stdout.write_all(&chunk).unwrap();
     }
