@@ -4113,6 +4113,7 @@ dependencies = [
  "directories",
  "serde",
  "serde_json",
+ "strukt-language",
  "strukt-terminal",
  "strukt-workspace",
  "tempfile",

@@ -495,7 +495,7 @@ git commit -m "test: add native language server contract"
 - Create: `crates/strukt-persistence/tests/language_store.rs`
 - Modify: `crates/strukt-workspace/src/state.rs`
 
-- [ ] **Step 1: Write failing privacy and round-trip tests**
+- [x] **Step 1: Write failing privacy and round-trip tests**
 
 Require selection, enablement, approval fingerprint, and Problems visibility to
 round trip while server state and runtime results remain impossible to serialize:
@@ -517,25 +517,25 @@ fn language_snapshot_contains_only_configuration_and_presentation() {
 }
 ```
 
-- [ ] **Step 2: Run and confirm snapshot types are missing**
+- [x] **Step 2: Run and confirm snapshot types are missing**
 
 Run: `cargo test -p strukt-persistence --test language_store --locked --offline`
 
 Expected: compile failure.
 
-- [ ] **Step 3: Implement versioned language contribution snapshots**
+- [x] **Step 3: Implement versioned language contribution snapshots**
 
 Use the existing opaque workspace contribution pattern. Validate unique language
 IDs, descriptor IDs, 32-byte fingerprints, bounded entry counts, and schema version.
 Preserve unknown siblings and fall back from corrupt current snapshots.
 
-- [ ] **Step 4: Test stopped restoration and approval invalidation**
+- [x] **Step 4: Test stopped restoration and approval invalidation**
 
 Restoration returns selection and presentation only. The app must rediscover and
 revalidate canonical commands after a matching document opens; a saved fingerprint
 alone never authorizes a changed command.
 
-- [ ] **Step 5: Verify and commit persistence**
+- [x] **Step 5: Verify and commit persistence**
 
 Run: `cargo test -p strukt-persistence --locked --offline`
 
