@@ -40,7 +40,7 @@
 - Create: `crates/strukt-language/src/descriptor.rs`
 - Create: `crates/strukt-language/tests/descriptors.rs`
 
-- [ ] **Step 1: Write failing descriptor and approval tests**
+- [x] **Step 1: Write failing descriptor and approval tests**
 
 Define tests that require deterministic language matching, bare `PATH` names or
 absolute executables, no shell strings, stable exact approval fingerprints, and
@@ -81,13 +81,13 @@ fn workspace_approval_is_exact_and_invalidates_on_argument_change() {
 }
 ```
 
-- [ ] **Step 2: Run the descriptor tests and confirm the crate is missing**
+- [x] **Step 2: Run the descriptor tests and confirm the crate is missing**
 
 Run: `cargo test -p strukt-language --test descriptors --locked --offline`
 
 Expected: fail because `strukt-language` and its public types do not exist.
 
-- [ ] **Step 3: Add the crate and validated descriptor types**
+- [x] **Step 3: Add the crate and validated descriptor types**
 
 Add `strukt-language` to the workspace and expose this boundary:
 
@@ -121,13 +121,13 @@ Validate IDs, language sets, executable shapes, NUL-free arguments, 256 KiB
 serialized configuration, unique IDs, and source-specific trust. Hash canonical
 executable bytes plus length-framed argument bytes with `blake3`.
 
-- [ ] **Step 4: Add built-in and JSON registry coverage**
+- [x] **Step 4: Add built-in and JSON registry coverage**
 
 Test schema version 1, unknown-field preservation, duplicate rejection, deterministic
 selection, built-in public-alpha descriptors, user configuration, and confined
 `.strukt-language.json` parsing without symlink following.
 
-- [ ] **Step 5: Run strict domain verification**
+- [x] **Step 5: Run strict domain verification**
 
 Run: `cargo test -p strukt-language --test descriptors --locked --offline`
 
@@ -135,7 +135,7 @@ Run: `cargo clippy -p strukt-language --all-targets --locked --offline -- -D war
 
 Expected: pass.
 
-- [ ] **Step 6: Commit the descriptor foundation**
+- [x] **Step 6: Commit the descriptor foundation**
 
 ```bash
 git add Cargo.toml Cargo.lock crates/strukt-language
