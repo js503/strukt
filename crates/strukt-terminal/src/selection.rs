@@ -160,7 +160,21 @@ impl TerminalModel {
     /// Returns [`SelectionError::OutOfBounds`] when either endpoint is outside
     /// the current visible snapshot.
     pub fn copy_text(&self, selection: &Selection) -> Result<String, SelectionError> {
-        copy_text(&self.snapshot(0), selection)
+        self.copy_text_at(0, selection)
+    }
+
+    /// Copies a selection from a specific bounded scrollback viewport.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SelectionError::OutOfBounds`] when either endpoint is outside
+    /// the selected visible snapshot.
+    pub fn copy_text_at(
+        &self,
+        viewport_offset: usize,
+        selection: &Selection,
+    ) -> Result<String, SelectionError> {
+        copy_text(&self.snapshot(viewport_offset), selection)
     }
 
     #[must_use]

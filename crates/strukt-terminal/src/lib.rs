@@ -23,7 +23,8 @@ pub use layout::{
 pub use parser::{ParserDiagnostics, TerminalModel};
 pub use portable::PortableTransport;
 pub use runtime::{
-    DrainBudget, RuntimeBatch, RuntimeError, RuntimePaneHealth, RuntimePaneState, TerminalRuntime,
+    DrainBudget, RuntimeBatch, RuntimeError, RuntimePaneHealth, RuntimePaneState, RuntimeStartJob,
+    TerminalRuntime,
 };
 pub use selection::{
     FocusEvent, LinkId, MouseButton, MouseEvent, PasteDecision, Selection, SelectionError,

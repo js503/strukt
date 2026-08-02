@@ -153,6 +153,12 @@ pub trait TerminalProcess: Send {
     /// Returns [`TransportError::Io`] if the dedicated reader failed.
     fn try_read(&mut self) -> Result<Option<OutputChunk>, TransportError>;
 
+    /// Reports whether the adapter's bounded output reader is currently blocked.
+    #[must_use]
+    fn output_backpressured(&self) -> bool {
+        false
+    }
+
     /// Polls the child exit status without blocking.
     ///
     /// # Errors

@@ -95,6 +95,10 @@ impl TerminalProcess for PortableProcess {
         }
     }
 
+    fn output_backpressured(&self) -> bool {
+        self.queue.blocked.load(Ordering::Acquire)
+    }
+
     fn try_wait(&mut self) -> Result<Option<ExitStatus>, TransportError> {
         if let Some(status) = &self.cached_exit {
             return Ok(Some(status.clone()));
@@ -180,6 +184,7 @@ struct QueueBudget {
     bytes: Mutex<usize>,
     available: Condvar,
     closed: AtomicBool,
+    blocked: AtomicBool,
 }
 
 impl QueueBudget {
@@ -191,11 +196,13 @@ impl QueueBudget {
         while used.saturating_add(bytes) > OUTPUT_QUEUE_BYTES
             && !self.closed.load(Ordering::Acquire)
         {
+            self.blocked.store(true, Ordering::Release);
             used = self
                 .available
                 .wait(used)
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
+        self.blocked.store(false, Ordering::Release);
         if self.closed.load(Ordering::Acquire) {
             return false;
         }

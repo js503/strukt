@@ -442,26 +442,28 @@ impl TerminalWorkspace {
         Ok(())
     }
 
-    /// Moves a stopped or completed pane into its explicit starting state.
+    /// Moves a stopped, completed, or running pane into its explicit restarting state.
     ///
     /// # Errors
     ///
     /// Returns [`TerminalWorkspaceError::PaneNotFound`] for an unknown pane or
     /// [`TerminalWorkspaceError::InvalidPaneTransition`] when a process is
-    /// already starting, running, or backpressured.
+    /// already starting.
     pub fn restart_pane(&mut self, pane: TerminalPaneId) -> Result<(), TerminalWorkspaceError> {
         let pane = self
             .panes
             .get_mut(&pane)
             .ok_or(TerminalWorkspaceError::PaneNotFound)?;
         match pane.state {
-            PaneState::Stopped | PaneState::Exited { .. } | PaneState::Failed { .. } => {
+            PaneState::Stopped
+            | PaneState::Running
+            | PaneState::Backpressured
+            | PaneState::Exited { .. }
+            | PaneState::Failed { .. } => {
                 pane.state = PaneState::Starting;
                 Ok(())
             }
-            PaneState::Starting | PaneState::Running | PaneState::Backpressured => {
-                Err(TerminalWorkspaceError::InvalidPaneTransition)
-            }
+            PaneState::Starting => Err(TerminalWorkspaceError::InvalidPaneTransition),
         }
     }
 

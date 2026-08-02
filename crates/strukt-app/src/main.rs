@@ -98,6 +98,31 @@ mod tests {
         })
     }
 
+    fn named_key_pressed(key: key::Named, code: key::Code, modifiers: Modifiers) -> Message {
+        Message::Keyboard(keyboard::Event::KeyPressed {
+            modified_key: Key::Named(key),
+            key: Key::Named(key),
+            physical_key: key::Physical::Code(code),
+            location: Location::Standard,
+            modifiers,
+            text: None,
+            repeat: false,
+        })
+    }
+
+    fn text_key_pressed(character: &'static str, code: key::Code) -> Message {
+        let key = Key::Character(character.into());
+        Message::Keyboard(keyboard::Event::KeyPressed {
+            modified_key: key.clone(),
+            key,
+            physical_key: key::Physical::Code(code),
+            location: Location::Standard,
+            modifiers: Modifiers::empty(),
+            text: Some(character.into()),
+            repeat: false,
+        })
+    }
+
     fn file_entry(path: &str) -> FileEntry {
         FileEntry {
             relative_path: path.into(),
@@ -439,6 +464,63 @@ mod tests {
 
         assert_eq!(app.terminal.workspace().tabs().len(), 1);
         assert_eq!(app.terminal.running_processes(), 0);
+    }
+
+    #[test]
+    fn terminal_spawn_is_scheduled_outside_the_update_reducer() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        let _ = app.update(Message::NewTerminal);
+        let pane = app.terminal.workspace().focused_pane().unwrap();
+
+        let task = app.update(Message::StartTerminal(pane));
+
+        assert_eq!(task.units(), 1);
+        assert_eq!(app.terminal.running_processes(), 0);
+        assert!(matches!(
+            app.terminal.workspace().pane(pane).unwrap().state(),
+            PaneState::Starting
+        ));
+    }
+
+    #[test]
+    fn control_tab_navigation_precedes_platform_command_shortcuts() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        let _ = app.update(Message::NewTerminal);
+        let first = app.terminal.workspace().active_tab().unwrap().id();
+        let _ = app.update(Message::NewTerminal);
+        let pane = app.terminal.workspace().focused_pane().unwrap();
+        let _ = app.update(Message::TerminalWidget(
+            crate::terminal_widget::TerminalWidgetEvent::Focus(pane),
+        ));
+
+        let _ = app.update(named_key_pressed(
+            key::Named::Tab,
+            key::Code::Tab,
+            Modifiers::CTRL | Modifiers::COMMAND,
+        ));
+
+        assert_eq!(app.terminal.workspace().active_tab().unwrap().id(), first);
+    }
+
+    #[test]
+    fn editing_a_terminal_tab_name_releases_terminal_input_focus() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        let _ = app.update(Message::NewTerminal);
+        let pane = app.terminal.workspace().focused_pane().unwrap();
+        let _ = app.update(Message::TerminalWidget(
+            crate::terminal_widget::TerminalWidgetEvent::Focus(pane),
+        ));
+
+        let _ = app.update(Message::TerminalTabNameChanged("renamed".to_owned()));
+        let _ = app.update(text_key_pressed("x", key::Code::KeyX));
+
+        assert!(app.terminal_error.is_none());
     }
 
     #[test]

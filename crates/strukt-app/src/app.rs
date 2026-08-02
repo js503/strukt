@@ -35,7 +35,7 @@ use strukt_workspace::{WorkspaceRoot, WorkspaceState};
 
 use crate::editor::EditorSurfaces;
 use crate::recovery_key::NativeRecoveryKeyProvider;
-use crate::terminal::TerminalSurfaces;
+use crate::terminal::{TerminalSpawnCompletion, TerminalSurfaces};
 use crate::terminal_widget::TerminalWidgetEvent;
 use crate::workspace::{OpenedWorkspace, open_workspace_without_store};
 
@@ -143,6 +143,7 @@ pub struct StruktApp {
     pub(crate) terminal: TerminalSurfaces,
     pub terminal_error: Option<String>,
     pub terminal_tab_name: String,
+    pub terminal_expanded: bool,
     pub pending_terminal_close: Option<TerminalPaneId>,
     pub pending_terminal_paste: Option<(TerminalPaneId, String)>,
     pub pending_terminal_link: Option<String>,
@@ -222,13 +223,22 @@ pub enum Message {
     WorkspaceOpened(Result<OpenedWorkspace, String>),
     NewTerminal,
     StartTerminal(TerminalPaneId),
+    TerminalStarted {
+        pane: TerminalPaneId,
+        generation: u64,
+        completion: TerminalSpawnCompletion,
+    },
     SplitTerminal(SplitAxis),
     ActivateTerminalTab(TerminalTabId),
     TerminalTabNameChanged(String),
     RenameTerminalTab,
+    ActivateRelativeTerminalTab(bool),
+    FocusRelativeTerminalPane(bool),
+    ToggleTerminalExpanded,
     RestartTerminal(TerminalPaneId),
     RequestCloseTerminal(TerminalPaneId),
     ResolveCloseTerminal(bool),
+    TerminalStopped(Result<(), String>),
     TerminalWidget(TerminalWidgetEvent),
     TerminalInput {
         pane: TerminalPaneId,
@@ -463,6 +473,7 @@ impl StruktApp {
             terminal: TerminalSurfaces::default(),
             terminal_error: None,
             terminal_tab_name: String::new(),
+            terminal_expanded: false,
             pending_terminal_close: None,
             pending_terminal_paste: None,
             pending_terminal_link: None,
@@ -598,6 +609,7 @@ impl StruktApp {
                 return Task::none();
             }
             Message::TerminalTabNameChanged(name) => {
+                self.terminal_input_active = false;
                 self.terminal_tab_name = name;
                 return Task::none();
             }
@@ -614,20 +626,67 @@ impl StruktApp {
                 }
                 return Task::none();
             }
+            Message::ActivateRelativeTerminalTab(reverse) => {
+                match self.terminal.activate_relative_tab(reverse) {
+                    Ok(()) => {
+                        self.terminal_error = None;
+                        self.terminal_tab_name = self
+                            .terminal
+                            .workspace()
+                            .active_tab()
+                            .map_or_else(String::new, |tab| tab.name().to_owned());
+                        self.sync_terminal_contribution();
+                    }
+                    Err(error) => self.terminal_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::FocusRelativeTerminalPane(reverse) => {
+                match self.terminal.focus_relative_pane(reverse) {
+                    Ok(()) => {
+                        self.terminal_error = None;
+                        self.terminal_input_active = true;
+                        self.sync_terminal_contribution();
+                    }
+                    Err(error) => self.terminal_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::ToggleTerminalExpanded => {
+                self.terminal_expanded = !self.terminal_expanded;
+                self.shell.drawer_visible = true;
+                return Task::none();
+            }
             Message::StartTerminal(pane) => {
                 if self.workspace.is_none() || !self.capabilities.is_enabled(CapabilityId::TERMINAL)
                 {
                     return Task::none();
                 }
-                if let Err(error) = self.terminal.start(pane) {
-                    self.terminal_error = Some(error.to_string());
-                } else {
-                    self.terminal_error = None;
+                match self.terminal.begin_start(pane) {
+                    Ok(job) => {
+                        self.terminal_error = None;
+                        return start_terminal_task(job);
+                    }
+                    Err(error) => self.terminal_error = Some(error.to_string()),
                 }
                 return Task::none();
             }
             Message::RestartTerminal(pane) => {
-                if let Err(error) = self.terminal.start(pane) {
+                match self.terminal.begin_start(pane) {
+                    Ok(job) => {
+                        self.terminal_error = None;
+                        return start_terminal_task(job);
+                    }
+                    Err(error) => self.terminal_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::TerminalStarted {
+                pane,
+                generation,
+                completion,
+            } => {
+                if let Err(error) = self.terminal.finish_start(pane, generation, &completion) {
                     self.terminal_error = Some(error.to_string());
                 } else {
                     self.terminal_error = None;
@@ -637,22 +696,15 @@ impl StruktApp {
             Message::RequestCloseTerminal(pane) => {
                 if self.terminal.running(pane) {
                     self.pending_terminal_close = Some(pane);
-                } else if let Err(error) = self.terminal.close(pane) {
-                    self.terminal_error = Some(error.to_string());
                 } else {
-                    self.sync_terminal_contribution();
+                    return self.close_terminal_task(pane);
                 }
                 return Task::none();
             }
             Message::ResolveCloseTerminal(close) => {
                 let pane = self.pending_terminal_close.take();
                 if close && let Some(pane) = pane {
-                    if let Err(error) = self.terminal.close(pane) {
-                        self.terminal_error = Some(error.to_string());
-                    } else {
-                        self.terminal_error = None;
-                        self.sync_terminal_contribution();
-                    }
+                    return self.close_terminal_task(pane);
                 }
                 return Task::none();
             }
@@ -668,6 +720,12 @@ impl StruktApp {
                     }
                     TerminalWidgetEvent::Scroll { pane, lines } => {
                         self.terminal.scroll(pane, lines)
+                    }
+                    TerminalWidgetEvent::Mouse { pane, event } => {
+                        self.terminal_input_active = true;
+                        self.terminal
+                            .focus_pane(pane)
+                            .and_then(|()| self.terminal.write_mouse(pane, event))
                     }
                 };
                 if let Err(error) = result {
@@ -760,7 +818,7 @@ impl StruktApp {
                     Message::TerminalLinkOpened,
                 );
             }
-            Message::TerminalLinkOpened(result) => {
+            Message::TerminalStopped(result) | Message::TerminalLinkOpened(result) => {
                 self.terminal_error = result.err();
                 return Task::none();
             }
@@ -2034,13 +2092,18 @@ impl StruktApp {
             | Message::WorkspaceOpened(_)
             | Message::NewTerminal
             | Message::StartTerminal(_)
+            | Message::TerminalStarted { .. }
             | Message::SplitTerminal(_)
             | Message::ActivateTerminalTab(_)
             | Message::TerminalTabNameChanged(_)
             | Message::RenameTerminalTab
+            | Message::ActivateRelativeTerminalTab(_)
+            | Message::FocusRelativeTerminalPane(_)
+            | Message::ToggleTerminalExpanded
             | Message::RestartTerminal(_)
             | Message::RequestCloseTerminal(_)
             | Message::ResolveCloseTerminal(_)
+            | Message::TerminalStopped(_)
             | Message::TerminalWidget(_)
             | Message::TerminalInput { .. }
             | Message::TerminalKey { .. }
@@ -2123,7 +2186,12 @@ impl StruktApp {
                     .then(|| self.terminal.workspace().focused_pane())
                     .flatten();
                 if let Some(pane) = terminal_pane {
-                    if modifiers.command() {
+                    if modifiers.control()
+                        && matches!(key.as_ref(), Key::Named(keyboard::key::Named::Tab))
+                    {
+                        return self
+                            .update(Message::ActivateRelativeTerminalTab(modifiers.shift()));
+                    } else if modifiers.command() {
                         match key.as_ref() {
                             Key::Character("t") => return self.update(Message::NewTerminal),
                             Key::Character("d") => {
@@ -2141,6 +2209,15 @@ impl StruktApp {
                             }
                             Key::Character("w") => {
                                 return self.update(Message::RequestCloseTerminal(pane));
+                            }
+                            Key::Character("[") => {
+                                return self.update(Message::FocusRelativeTerminalPane(true));
+                            }
+                            Key::Character("]") => {
+                                return self.update(Message::FocusRelativeTerminalPane(false));
+                            }
+                            Key::Character("j") if modifiers.shift() => {
+                                return self.update(Message::ToggleTerminalExpanded);
                             }
                             _ => {}
                         }
@@ -2651,6 +2728,33 @@ impl StruktApp {
         }
     }
 
+    fn close_terminal_task(&mut self, pane: TerminalPaneId) -> Task<Message> {
+        match self.terminal.close_and_take_process(pane) {
+            Ok(process) => {
+                self.terminal_error = None;
+                self.sync_terminal_contribution();
+                process.map_or_else(Task::none, |mut process| {
+                    Task::perform(
+                        async move {
+                            tokio::task::spawn_blocking(move || {
+                                process
+                                    .terminate(Duration::from_millis(500))
+                                    .map_err(|error| error.to_string())
+                            })
+                            .await
+                            .map_err(|error| error.to_string())?
+                        },
+                        Message::TerminalStopped,
+                    )
+                })
+            }
+            Err(error) => {
+                self.terminal_error = Some(error.to_string());
+                Task::none()
+            }
+        }
+    }
+
     fn start_persistence(&mut self, state: WorkspaceState) -> Task<Message> {
         let Some(store) = self.store.clone() else {
             return Task::none();
@@ -3036,6 +3140,23 @@ fn semantic_terminal_key(key: &Key<&str>) -> Option<TerminalKey> {
         Key::Named(Named::Escape) => Some(TerminalKey::Escape),
         _ => None,
     }
+}
+
+fn start_terminal_task(job: strukt_terminal::RuntimeStartJob) -> Task<Message> {
+    let pane = job.pane();
+    let generation = job.generation();
+    Task::perform(
+        async move {
+            tokio::task::spawn_blocking(move || job.run())
+                .await
+                .map_err(|error| error.to_string())?
+        },
+        move |result| Message::TerminalStarted {
+            pane,
+            generation,
+            completion: TerminalSpawnCompletion::new(result),
+        },
+    )
 }
 
 fn control_byte(character: &str) -> Option<u8> {

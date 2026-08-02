@@ -5,9 +5,9 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 
 use crate::{
-    GridSize, OutputChunk, PasteDecision, Selection, SelectionError, SpawnRequest, TerminalKey,
-    TerminalLink, TerminalModel, TerminalPaneId, TerminalProcess, TerminalSize, TerminalSnapshot,
-    TerminalTransport, TransportError,
+    FocusEvent, GridSize, MouseEvent, OutputChunk, PasteDecision, Selection, SelectionError,
+    SpawnRequest, TerminalKey, TerminalLink, TerminalModel, TerminalPaneId, TerminalProcess,
+    TerminalSize, TerminalSnapshot, TerminalTransport, TransportError,
 };
 
 const MAX_PENDING_BYTES: usize = 4 * 1024 * 1024;
@@ -86,6 +86,8 @@ struct PaneRuntime {
     last_sequence: Option<u64>,
     pending_since: Option<Instant>,
     output_since: Option<Instant>,
+    last_output_at: Option<Instant>,
+    transport_pressure_since: Option<Instant>,
     last_error: Option<String>,
 }
 
@@ -94,6 +96,42 @@ pub struct TerminalRuntime {
     panes: BTreeMap<TerminalPaneId, PaneRuntime>,
     scrollback_limit: usize,
     round_robin_cursor: usize,
+}
+
+pub struct RuntimeStartJob {
+    pane: TerminalPaneId,
+    generation: u64,
+    transport: Arc<dyn TerminalTransport>,
+    request: SpawnRequest,
+    prior_process: Option<Box<dyn TerminalProcess>>,
+}
+
+impl RuntimeStartJob {
+    #[must_use]
+    pub const fn pane(&self) -> TerminalPaneId {
+        self.pane
+    }
+
+    #[must_use]
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Terminates the prior generation and spawns the requested process.
+    ///
+    /// # Errors
+    ///
+    /// Returns the platform termination or spawn failure as a pane-local message.
+    pub fn run(mut self) -> Result<Box<dyn TerminalProcess>, String> {
+        if let Some(process) = &mut self.prior_process {
+            process
+                .terminate(Duration::from_millis(500))
+                .map_err(|error| error.to_string())?;
+        }
+        self.transport
+            .spawn(self.request)
+            .map_err(|error| error.to_string())
+    }
 }
 
 impl TerminalRuntime {
@@ -130,35 +168,81 @@ impl TerminalRuntime {
         pane: TerminalPaneId,
         request: SpawnRequest,
     ) -> Result<u64, RuntimeError> {
+        let job = self.begin_restart(pane, request)?;
+        let generation = job.generation();
+        let result = job.run();
+        self.finish_restart(pane, generation, result)?;
+        Ok(generation)
+    }
+
+    /// Moves all potentially blocking process work into an executable start job.
+    ///
+    /// # Errors
+    ///
+    /// Returns a size error before mutating the pane runtime.
+    pub fn begin_restart(
+        &mut self,
+        pane: TerminalPaneId,
+        request: SpawnRequest,
+    ) -> Result<RuntimeStartJob, RuntimeError> {
         let size = grid_size(request.size)?;
         let generation = self
             .panes
             .get(&pane)
             .map_or(1, |runtime| runtime.generation.saturating_add(1));
-        if let Some(runtime) = self.panes.get_mut(&pane)
-            && let Some(process) = &mut runtime.process
-        {
-            let _ = process.terminate(Duration::from_millis(500));
-        }
+        let prior_process = self
+            .panes
+            .get_mut(&pane)
+            .and_then(|runtime| runtime.process.take());
+        let mut runtime =
+            PaneRuntime::new(generation, TerminalModel::new(size, self.scrollback_limit));
+        runtime.state = RuntimePaneState::Starting;
+        self.panes.insert(pane, runtime);
+        Ok(RuntimeStartJob {
+            pane,
+            generation,
+            transport: Arc::clone(&self.transport),
+            request,
+            prior_process,
+        })
+    }
 
-        let model = TerminalModel::new(size, self.scrollback_limit);
-        match self.transport.spawn(request) {
+    /// Installs a completed start only when its pane generation is still current.
+    ///
+    /// # Errors
+    ///
+    /// Returns a pane-local start error. Stale completions are discarded safely.
+    pub fn finish_restart(
+        &mut self,
+        pane: TerminalPaneId,
+        generation: u64,
+        result: Result<Box<dyn TerminalProcess>, String>,
+    ) -> Result<(), RuntimeError> {
+        let current = self
+            .panes
+            .get(&pane)
+            .is_some_and(|runtime| runtime.generation == generation);
+        if !current {
+            drop(result);
+            return Ok(());
+        }
+        let runtime = self
+            .panes
+            .get_mut(&pane)
+            .ok_or(RuntimeError::PaneNotFound)?;
+        match result {
             Ok(process) => {
-                let mut runtime = PaneRuntime::new(generation, model);
                 runtime.process = Some(process);
                 runtime.state = RuntimePaneState::Running;
-                self.panes.insert(pane, runtime);
-                Ok(generation)
+                runtime.last_error = None;
+                Ok(())
             }
-            Err(error) => {
-                let message = error.to_string();
-                let mut runtime = PaneRuntime::new(generation, model);
+            Err(message) => {
                 runtime.state = RuntimePaneState::Failed {
                     message: message.clone(),
                 };
-                runtime.last_error = Some(message);
-                self.panes.insert(pane, runtime);
-                Err(RuntimeError::Transport(error))
+                runtime.last_error = Some(message.clone());
+                Err(RuntimeError::StartFailed(message))
             }
         }
     }
@@ -205,6 +289,7 @@ impl TerminalRuntime {
             let Some(runtime) = self.panes.get_mut(&pane) else {
                 continue;
             };
+            let state_before = runtime.state.clone();
             runtime.poll_one_output();
             let consumed = runtime.drain_bytes(budget.per_pane_bytes.min(aggregate_remaining));
             aggregate_remaining = aggregate_remaining.saturating_sub(consumed);
@@ -216,6 +301,9 @@ impl TerminalRuntime {
                 batch.changed.insert(pane);
             }
             runtime.update_pressure_state();
+            if runtime.state != state_before {
+                batch.changed.insert(pane);
+            }
         }
         self.round_robin_cursor = (start + 1) % pane_ids.len();
         batch
@@ -260,11 +348,25 @@ impl TerminalRuntime {
         pane: TerminalPaneId,
         selection: &Selection,
     ) -> Result<String, RuntimeError> {
+        self.copy_text_at(pane, 0, selection)
+    }
+
+    /// Copies selected text from a specific bounded pane viewport.
+    ///
+    /// # Errors
+    ///
+    /// Returns a missing-pane or selection-bounds error.
+    pub fn copy_text_at(
+        &self,
+        pane: TerminalPaneId,
+        viewport_offset: usize,
+        selection: &Selection,
+    ) -> Result<String, RuntimeError> {
         self.panes
             .get(&pane)
             .ok_or(RuntimeError::PaneNotFound)?
             .model
-            .copy_text(selection)
+            .copy_text_at(viewport_offset, selection)
             .map_err(RuntimeError::Selection)
     }
 
@@ -284,6 +386,42 @@ impl TerminalRuntime {
             .ok_or(RuntimeError::PaneNotFound)?
             .model
             .encode_key(key))
+    }
+
+    /// Encodes a focus transition using the pane's current reporting mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::PaneNotFound`] for an unknown pane.
+    pub fn encode_focus(
+        &self,
+        pane: TerminalPaneId,
+        event: FocusEvent,
+    ) -> Result<Option<Vec<u8>>, RuntimeError> {
+        Ok(self
+            .panes
+            .get(&pane)
+            .ok_or(RuntimeError::PaneNotFound)?
+            .model
+            .encode_focus(event))
+    }
+
+    /// Encodes a pointer transition using the pane's current reporting mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::PaneNotFound`] for an unknown pane.
+    pub fn encode_mouse(
+        &self,
+        pane: TerminalPaneId,
+        event: MouseEvent,
+    ) -> Result<Option<Vec<u8>>, RuntimeError> {
+        Ok(self
+            .panes
+            .get(&pane)
+            .ok_or(RuntimeError::PaneNotFound)?
+            .model
+            .encode_mouse(event))
     }
 
     /// Applies paste sanitization, size confirmation, and bracketed-paste policy.
@@ -378,6 +516,14 @@ impl TerminalRuntime {
         self.panes.remove(&pane);
     }
 
+    /// Removes a pane runtime and returns its live process for background cleanup.
+    pub fn take_process_and_discard(
+        &mut self,
+        pane: TerminalPaneId,
+    ) -> Option<Box<dyn TerminalProcess>> {
+        self.panes.remove(&pane).and_then(|runtime| runtime.process)
+    }
+
     fn process_mut(
         &mut self,
         pane: TerminalPaneId,
@@ -407,16 +553,6 @@ impl TerminalRuntime {
     }
 }
 
-impl Drop for TerminalRuntime {
-    fn drop(&mut self) {
-        for runtime in self.panes.values_mut() {
-            if let Some(process) = &mut runtime.process {
-                let _ = process.terminate(Duration::from_millis(500));
-            }
-        }
-    }
-}
-
 impl PaneRuntime {
     fn new(generation: u64, model: TerminalModel) -> Self {
         Self {
@@ -429,6 +565,8 @@ impl PaneRuntime {
             last_sequence: None,
             pending_since: None,
             output_since: None,
+            last_output_at: None,
+            transport_pressure_since: None,
             last_error: None,
         }
     }
@@ -453,7 +591,13 @@ impl PaneRuntime {
         });
         let now = Instant::now();
         self.pending_since.get_or_insert(now);
-        self.output_since.get_or_insert(now);
+        if self
+            .last_output_at
+            .is_none_or(|last| now.duration_since(last) > Duration::from_millis(100))
+        {
+            self.output_since = Some(now);
+        }
+        self.last_output_at = Some(now);
         Ok(())
     }
 
@@ -495,7 +639,6 @@ impl PaneRuntime {
         }
         if self.pending.is_empty() {
             self.pending_since = None;
-            self.output_since = None;
             if self.state == RuntimePaneState::Backpressured {
                 self.state = RuntimePaneState::Running;
             }
@@ -526,10 +669,32 @@ impl PaneRuntime {
 
     fn update_pressure_state(&mut self) {
         if self
+            .last_output_at
+            .is_some_and(|last| last.elapsed() > Duration::from_millis(100))
+        {
+            self.output_since = None;
+            self.last_output_at = None;
+        }
+        let transport_blocked = self
+            .process
+            .as_ref()
+            .is_some_and(|process| process.output_backpressured());
+        if transport_blocked {
+            self.transport_pressure_since
+                .get_or_insert_with(Instant::now);
+        } else {
+            self.transport_pressure_since = None;
+        }
+        if self
             .pending_since
             .is_some_and(|since| since.elapsed() >= Duration::from_millis(250))
+            || self
+                .transport_pressure_since
+                .is_some_and(|since| since.elapsed() >= Duration::from_millis(250))
         {
             self.state = RuntimePaneState::Backpressured;
+        } else if self.state == RuntimePaneState::Backpressured {
+            self.state = RuntimePaneState::Running;
         }
     }
 
@@ -559,6 +724,8 @@ pub enum RuntimeError {
     OutOfOrder,
     #[error("terminal pane output queue is full")]
     QueueFull,
+    #[error("terminal process failed to start: {0}")]
+    StartFailed(String),
     #[error(transparent)]
     Selection(#[from] SelectionError),
     #[error(transparent)]

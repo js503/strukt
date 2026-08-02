@@ -2,8 +2,8 @@ use iced::mouse;
 use iced::widget::canvas;
 use iced::{Color, Font, Length, Pixels, Point, Rectangle, Renderer, Size, Theme};
 use strukt_terminal::{
-    CellAttributes, CellWidth, Color as TerminalColor, Selection, TerminalCoordinate,
-    TerminalPaneId, TerminalSize, TerminalSnapshot,
+    CellAttributes, CellWidth, Color as TerminalColor, MouseButton as TerminalMouseButton,
+    MouseEvent, Selection, TerminalCoordinate, TerminalPaneId, TerminalSize, TerminalSnapshot,
 };
 use strukt_theme::{Rgb, ThemeTokens};
 
@@ -26,6 +26,10 @@ pub(crate) enum TerminalWidgetEvent {
     Scroll {
         pane: TerminalPaneId,
         lines: i32,
+    },
+    Mouse {
+        pane: TerminalPaneId,
+        event: MouseEvent,
     },
 }
 
@@ -92,6 +96,19 @@ impl canvas::Program<TerminalWidgetEvent> for TerminalWidget {
         match event {
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let coordinate = coordinate_at(bounds, cursor)?;
+                if self.snapshot.modes().mouse_reporting {
+                    return Some(
+                        canvas::Action::publish(TerminalWidgetEvent::Mouse {
+                            pane: self.pane,
+                            event: MouseEvent::press(
+                                coordinate.column,
+                                coordinate.row,
+                                TerminalMouseButton::Left,
+                            ),
+                        })
+                        .and_capture(),
+                    );
+                }
                 state.drag_anchor = Some(coordinate);
                 Some(canvas::Action::publish(TerminalWidgetEvent::Focus(self.pane)).and_capture())
             }
@@ -108,6 +125,20 @@ impl canvas::Program<TerminalWidgetEvent> for TerminalWidget {
                 )
             }
             canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                if self.snapshot.modes().mouse_reporting {
+                    let coordinate = coordinate_at(bounds, cursor)?;
+                    return Some(
+                        canvas::Action::publish(TerminalWidgetEvent::Mouse {
+                            pane: self.pane,
+                            event: MouseEvent::release(
+                                coordinate.column,
+                                coordinate.row,
+                                TerminalMouseButton::Left,
+                            ),
+                        })
+                        .and_capture(),
+                    );
+                }
                 state.drag_anchor = None;
                 Some(canvas::Action::capture())
             }

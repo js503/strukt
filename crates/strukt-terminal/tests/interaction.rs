@@ -61,3 +61,13 @@ fn unsupported_links_and_out_of_bounds_selections_are_rejected() {
             .is_err()
     );
 }
+
+#[test]
+fn copy_uses_the_selected_scrollback_viewport() {
+    let mut terminal = TerminalModel::new(GridSize::new(2, 8).unwrap(), 10);
+    terminal.advance(b"one\r\ntwo\r\nthree");
+    let selection = Selection::linear((0, 0), (0, 2));
+
+    assert_eq!(terminal.copy_text(&selection).unwrap(), "two");
+    assert_eq!(terminal.copy_text_at(1, &selection).unwrap(), "one");
+}

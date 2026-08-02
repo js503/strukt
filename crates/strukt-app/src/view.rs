@@ -301,6 +301,18 @@ fn explorer_dialog(app: &StruktApp) -> Element<'_, Message> {
 fn primary_canvas(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> {
     let content: Element<'_, Message> = if app.workspace.is_none() {
         welcome_canvas(app).into()
+    } else if app.terminal_expanded {
+        app.terminal.workspace().active_tab().map_or_else(
+            || text("Create a terminal to use the expanded terminal canvas").into(),
+            |tab| {
+                column![
+                    text(format!("{} · local terminal workspace", tab.name())).size(14),
+                    terminal_layout(app, tab.root(), tab.focused_pane(), tokens),
+                ]
+                .spacing(6)
+                .into()
+            },
+        )
     } else if app.quick_open_visible {
         quick_open_canvas(app).into()
     } else if app.shell.active_activity == Activity::Search {
@@ -720,6 +732,12 @@ fn drawer(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Message> {
             (enabled && app.terminal.workspace().active_tab().is_some())
                 .then_some(Message::SplitTerminal(SplitAxis::Horizontal)),
         ),
+        button(if app.terminal_expanded {
+            "Collapse"
+        } else {
+            "Expand"
+        })
+        .on_press(Message::ToggleTerminalExpanded),
         button("Hide").on_press(Message::ToggleDrawer),
     ]
     .align_y(iced::Alignment::Center)
@@ -738,7 +756,9 @@ fn drawer(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Message> {
             ]
             .spacing(6),
         );
-        content = content.push(terminal_layout(app, tab.root(), tab.focused_pane(), tokens));
+        if !app.terminal_expanded {
+            content = content.push(terminal_layout(app, tab.root(), tab.focused_pane(), tokens));
+        }
     } else {
         content = content.push(
             container(
@@ -806,7 +826,11 @@ fn drawer(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Message> {
 
     container(content)
         .padding(8)
-        .height(Length::Fixed(330.0))
+        .height(Length::Fixed(if app.terminal_expanded {
+            150.0
+        } else {
+            330.0
+        }))
         .style(panel_style(tokens, tokens.terminal_background))
         .into()
 }
@@ -866,11 +890,12 @@ fn terminal_pane(
         PaneState::Failed { message } => (format!("failed: {message}"), tokens.editor_conflict),
         PaneState::Backpressured => ("backpressure".to_owned(), tokens.terminal_backpressure),
     };
-    let can_start = matches!(
-        pane.state(),
-        PaneState::Stopped | PaneState::Exited { .. } | PaneState::Failed { .. }
-    );
+    let can_start = !matches!(pane.state(), PaneState::Starting);
     let cwd = pane.working_directory().display().to_string();
+    let sustained_output = app
+        .terminal
+        .health(pane_id)
+        .is_some_and(|health| health.sustained_output);
     let pane_title = app
         .terminal
         .snapshot(pane_id)
@@ -883,6 +908,9 @@ fn terminal_pane(
         text(pane_title).size(11),
         text(format!("local · {cwd}")).size(11),
         text(state_label).size(11).color(color(state_color)),
+        text(if sustained_output { "high output" } else { "" })
+            .size(11)
+            .color(color(tokens.terminal_backpressure)),
         Space::new().width(Fill),
         button("Copy").on_press(Message::CopyTerminal(pane_id)),
         button("Paste").on_press(Message::RequestTerminalPaste(pane_id)),

@@ -1,14 +1,15 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use strukt_persistence::TerminalSessionSnapshot;
 use strukt_terminal::{
-    DrainBudget, GridSize, PaneState, PasteDecision, PortableTransport, RuntimeBatch,
-    RuntimePaneState, Selection, SpawnRequest, SplitAxis, TerminalKey, TerminalLink,
-    TerminalPaneId, TerminalRuntime, TerminalSize, TerminalSnapshot, TerminalTabId,
-    TerminalWorkspace, TerminalWorkspaceError, TransportError,
+    DrainBudget, FocusEvent, GridSize, MouseEvent, PaneState, PasteDecision, PortableTransport,
+    RuntimeBatch, RuntimePaneHealth, RuntimePaneState, RuntimeStartJob, Selection, SpawnRequest,
+    SplitAxis, TerminalKey, TerminalLink, TerminalPaneId, TerminalProcess, TerminalRuntime,
+    TerminalSize, TerminalSnapshot, TerminalTabId, TerminalWorkspace, TerminalWorkspaceError,
+    TransportError,
 };
 use thiserror::Error;
 
@@ -21,6 +22,30 @@ pub(crate) struct TerminalSurfaces {
     runtime: TerminalRuntime,
     selections: BTreeMap<TerminalPaneId, Selection>,
     viewport_offsets: BTreeMap<TerminalPaneId, usize>,
+}
+
+type TerminalSpawnResult = Result<Box<dyn TerminalProcess>, String>;
+
+#[derive(Clone)]
+pub(crate) struct TerminalSpawnCompletion(Arc<Mutex<Option<TerminalSpawnResult>>>);
+
+impl std::fmt::Debug for TerminalSpawnCompletion {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_tuple("TerminalSpawnCompletion").finish()
+    }
+}
+
+impl TerminalSpawnCompletion {
+    pub(crate) fn new(result: TerminalSpawnResult) -> Self {
+        Self(Arc::new(Mutex::new(Some(result))))
+    }
+
+    fn take(&self) -> Option<TerminalSpawnResult> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+    }
 }
 
 impl Default for TerminalSurfaces {
@@ -75,13 +100,67 @@ impl TerminalSurfaces {
     }
 
     pub(crate) fn activate_tab(&mut self, tab: TerminalTabId) -> Result<(), TerminalSurfaceError> {
+        let previous = self.workspace.focused_pane();
         self.workspace.activate_tab(tab)?;
+        let current = self.workspace.focused_pane();
+        self.report_focus_change(previous, current)?;
         Ok(())
     }
 
     pub(crate) fn focus_pane(&mut self, pane: TerminalPaneId) -> Result<(), TerminalSurfaceError> {
+        let previous = self.workspace.focused_pane();
         self.workspace.focus_pane(pane)?;
+        self.report_focus_change(previous, Some(pane))?;
         Ok(())
+    }
+
+    pub(crate) fn activate_relative_tab(
+        &mut self,
+        reverse: bool,
+    ) -> Result<(), TerminalSurfaceError> {
+        let tabs = self.workspace.tabs();
+        let active = self
+            .workspace
+            .active_tab()
+            .ok_or(TerminalWorkspaceError::NoActiveTab)?
+            .id();
+        let index = tabs
+            .iter()
+            .position(|tab| tab.id() == active)
+            .ok_or(TerminalWorkspaceError::TabNotFound)?;
+        let next = if reverse {
+            index.checked_sub(1).unwrap_or(tabs.len() - 1)
+        } else {
+            (index + 1) % tabs.len()
+        };
+        self.activate_tab(tabs[next].id())
+    }
+
+    pub(crate) fn focus_relative_pane(
+        &mut self,
+        reverse: bool,
+    ) -> Result<(), TerminalSurfaceError> {
+        let active = self
+            .workspace
+            .active_tab()
+            .ok_or(TerminalWorkspaceError::NoActiveTab)?;
+        let snapshot = self.workspace.snapshot();
+        let tab = snapshot
+            .tabs
+            .iter()
+            .find(|tab| tab.id == active.id())
+            .ok_or(TerminalWorkspaceError::TabNotFound)?;
+        let index = tab
+            .panes
+            .iter()
+            .position(|pane| pane.id == active.focused_pane())
+            .ok_or(TerminalWorkspaceError::PaneNotFound)?;
+        let next = if reverse {
+            index.checked_sub(1).unwrap_or(tab.panes.len() - 1)
+        } else {
+            (index + 1) % tab.panes.len()
+        };
+        self.focus_pane(tab.panes[next].id)
     }
 
     pub(crate) fn rename_active_tab(&mut self, name: String) -> Result<(), TerminalSurfaceError> {
@@ -89,29 +168,49 @@ impl TerminalSurfaces {
         Ok(())
     }
 
-    pub(crate) fn start(&mut self, pane: TerminalPaneId) -> Result<u64, TerminalSurfaceError> {
+    pub(crate) fn begin_start(
+        &mut self,
+        pane: TerminalPaneId,
+    ) -> Result<RuntimeStartJob, TerminalSurfaceError> {
         let working_directory = self
             .workspace
             .pane(pane)
             .ok_or(TerminalWorkspaceError::PaneNotFound)?
             .working_directory()
             .clone();
+        let request = shell_request(working_directory)?;
         self.workspace.restart_pane(pane)?;
-        match self
-            .runtime
-            .restart(pane, shell_request(working_directory)?)
-        {
-            Ok(generation) => {
+        match self.runtime.begin_restart(pane, request) {
+            Ok(job) => Ok(job),
+            Err(error) => {
+                let message = error.to_string();
+                self.workspace
+                    .set_pane_state(pane, PaneState::Failed { message })?;
+                Err(error.into())
+            }
+        }
+    }
+
+    pub(crate) fn finish_start(
+        &mut self,
+        pane: TerminalPaneId,
+        generation: u64,
+        completion: &TerminalSpawnCompletion,
+    ) -> Result<(), TerminalSurfaceError> {
+        let Some(result) = completion.take() else {
+            return Ok(());
+        };
+        let current = self.runtime.generation(pane) == Some(generation);
+        match self.runtime.finish_restart(pane, generation, result) {
+            Ok(()) if !current => Ok(()),
+            Ok(()) => {
                 self.workspace.set_pane_state(pane, PaneState::Running)?;
-                Ok(generation)
+                Ok(())
             }
             Err(error) => {
-                self.workspace.set_pane_state(
-                    pane,
-                    PaneState::Failed {
-                        message: error.to_string(),
-                    },
-                )?;
+                let message = error.to_string();
+                self.workspace
+                    .set_pane_state(pane, PaneState::Failed { message })?;
                 Err(error.into())
             }
         }
@@ -209,6 +308,17 @@ impl TerminalSurfaces {
         self.write(pane, &bytes)
     }
 
+    pub(crate) fn write_mouse(
+        &mut self,
+        pane: TerminalPaneId,
+        event: MouseEvent,
+    ) -> Result<(), TerminalSurfaceError> {
+        if let Some(bytes) = self.runtime.encode_mouse(pane, event)? {
+            self.write(pane, &bytes)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn prepare_paste(
         &self,
         pane: TerminalPaneId,
@@ -224,7 +334,13 @@ impl TerminalSurfaces {
     ) -> Result<Option<String>, TerminalSurfaceError> {
         self.selections
             .get(&pane)
-            .map(|selection| self.runtime.copy_text(pane, selection))
+            .map(|selection| {
+                self.runtime.copy_text_at(
+                    pane,
+                    self.viewport_offsets.get(&pane).copied().unwrap_or(0),
+                    selection,
+                )
+            })
             .transpose()
             .map_err(Into::into)
     }
@@ -241,16 +357,23 @@ impl TerminalSurfaces {
         Ok(self.runtime.links(pane)?)
     }
 
-    pub(crate) fn close(&mut self, pane: TerminalPaneId) -> Result<(), TerminalSurfaceError> {
-        if self.running(pane) {
-            self.runtime
-                .terminate(pane, std::time::Duration::from_millis(500))?;
+    #[must_use]
+    pub(crate) fn health(&self, pane: TerminalPaneId) -> Option<RuntimePaneHealth> {
+        self.runtime.health(pane)
+    }
+
+    pub(crate) fn close_and_take_process(
+        &mut self,
+        pane: TerminalPaneId,
+    ) -> Result<Option<Box<dyn TerminalProcess>>, TerminalSurfaceError> {
+        if self.workspace.pane(pane).is_none() {
+            return Err(TerminalWorkspaceError::PaneNotFound.into());
         }
-        self.runtime.discard(pane);
+        let process = self.runtime.take_process_and_discard(pane);
         self.selections.remove(&pane);
         self.viewport_offsets.remove(&pane);
         self.workspace.close_pane(pane)?;
-        Ok(())
+        Ok(process)
     }
 
     #[must_use]
@@ -266,6 +389,29 @@ impl TerminalSurfaces {
     #[must_use]
     pub(crate) fn running_processes(&self) -> usize {
         self.runtime.running_processes()
+    }
+
+    fn report_focus_change(
+        &mut self,
+        previous: Option<TerminalPaneId>,
+        current: Option<TerminalPaneId>,
+    ) -> Result<(), TerminalSurfaceError> {
+        if previous == current {
+            return Ok(());
+        }
+        if let Some(previous) = previous
+            && self.running(previous)
+            && let Some(bytes) = self.runtime.encode_focus(previous, FocusEvent::Out)?
+        {
+            self.runtime.write(previous, &bytes)?;
+        }
+        if let Some(current) = current
+            && self.running(current)
+            && let Some(bytes) = self.runtime.encode_focus(current, FocusEvent::In)?
+        {
+            self.runtime.write(current, &bytes)?;
+        }
+        Ok(())
     }
 
     #[must_use]
@@ -294,6 +440,19 @@ fn shell_request(working_directory: PathBuf) -> Result<SpawnRequest, TerminalSur
 
 #[cfg(windows)]
 fn default_shell() -> Result<PathBuf, TerminalSurfaceError> {
+    if let Some(program_files) = std::env::var_os("ProgramFiles") {
+        let powershell = PathBuf::from(program_files).join("PowerShell/7/pwsh.exe");
+        if powershell.is_file() {
+            return Ok(powershell);
+        }
+    }
+    if let Some(system_root) = std::env::var_os("SystemRoot") {
+        let powershell =
+            PathBuf::from(system_root).join("System32/WindowsPowerShell/v1.0/powershell.exe");
+        if powershell.is_file() {
+            return Ok(powershell);
+        }
+    }
     std::env::var_os("COMSPEC")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)

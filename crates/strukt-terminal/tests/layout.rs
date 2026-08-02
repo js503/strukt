@@ -152,6 +152,7 @@ fn focus_ratio_and_restart_transitions_are_validated() {
     workspace
         .set_pane_state(second, PaneState::Running)
         .unwrap();
+    workspace.restart_pane(second).unwrap();
     assert_eq!(
         workspace.restart_pane(second).unwrap_err(),
         TerminalWorkspaceError::InvalidPaneTransition

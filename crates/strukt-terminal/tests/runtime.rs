@@ -167,6 +167,83 @@ fn runtime_exposes_model_interactions_without_leaking_mutable_model_access() {
     assert_eq!(runtime.snapshot_at(pane, 1).unwrap().viewport_offset(), 0);
 }
 
+#[test]
+fn start_jobs_keep_blocking_spawn_outside_runtime_mutation() {
+    let transport = Arc::new(FakeTransport::default());
+    let mut runtime = TerminalRuntime::new(transport.clone(), 100);
+    let pane = TerminalPaneId::new();
+
+    let job = runtime.begin_restart(pane, spawn_request()).unwrap();
+    assert_eq!(transport.process_count(), 0);
+    assert!(matches!(
+        runtime.state(pane),
+        Some(RuntimePaneState::Starting)
+    ));
+    let generation = job.generation();
+    let result = job.run();
+    assert_eq!(transport.process_count(), 1);
+    runtime.finish_restart(pane, generation, result).unwrap();
+    assert!(matches!(
+        runtime.state(pane),
+        Some(RuntimePaneState::Running)
+    ));
+}
+
+#[test]
+fn native_transport_pressure_becomes_a_visible_pane_state() {
+    let transport = Arc::new(FakeTransport::default());
+    let mut runtime = TerminalRuntime::new(transport.clone(), 100);
+    let pane = TerminalPaneId::new();
+    runtime.restart(pane, spawn_request()).unwrap();
+    transport.set_backpressured(true);
+    let _ = runtime.drain(DrainBudget::default());
+    std::thread::sleep(Duration::from_millis(260));
+
+    let batch = runtime.drain(DrainBudget::default());
+    assert!(batch.changed_panes().contains(&pane));
+    assert!(matches!(
+        runtime.state(pane),
+        Some(RuntimePaneState::Backpressured)
+    ));
+
+    transport.set_backpressured(false);
+    let batch = runtime.drain(DrainBudget::default());
+    assert!(batch.changed_panes().contains(&pane));
+    assert!(matches!(
+        runtime.state(pane),
+        Some(RuntimePaneState::Running)
+    ));
+}
+
+#[test]
+fn stale_spawn_completion_cannot_replace_a_newer_start_generation() {
+    let transport = Arc::new(FakeTransport::default());
+    let mut runtime = TerminalRuntime::new(transport, 100);
+    let pane = TerminalPaneId::new();
+    let old = runtime.begin_restart(pane, spawn_request()).unwrap();
+    let old_generation = old.generation();
+    let current = runtime.begin_restart(pane, spawn_request()).unwrap();
+    let current_generation = current.generation();
+
+    runtime
+        .finish_restart(pane, old_generation, old.run())
+        .unwrap();
+    assert!(matches!(
+        runtime.state(pane),
+        Some(RuntimePaneState::Starting)
+    ));
+    assert_eq!(runtime.running_processes(), 0);
+
+    runtime
+        .finish_restart(pane, current_generation, current.run())
+        .unwrap();
+    assert!(matches!(
+        runtime.state(pane),
+        Some(RuntimePaneState::Running)
+    ));
+    assert_eq!(runtime.running_processes(), 1);
+}
+
 fn spawn_request() -> SpawnRequest {
     SpawnRequest {
         executable: PathBuf::from("fixture"),
@@ -189,6 +266,10 @@ struct FakeTransportState {
 }
 
 impl FakeTransport {
+    fn process_count(&self) -> usize {
+        self.inner.lock().unwrap().processes.len()
+    }
+
     fn fail_next_spawn(&self) {
         self.inner.lock().unwrap().fail_next_spawn = true;
     }
@@ -203,6 +284,10 @@ impl FakeTransport {
 
     fn fail_resize(&self, _pane: TerminalPaneId) {
         self.process(0).lock().unwrap().fail_resize = true;
+    }
+
+    fn set_backpressured(&self, backpressured: bool) {
+        self.process(0).lock().unwrap().backpressured = backpressured;
     }
 
     fn exit(&self, _pane: TerminalPaneId, code: i32) {
@@ -227,6 +312,7 @@ struct FakeProcessState {
     output: VecDeque<OutputChunk>,
     exit: Option<ExitStatus>,
     fail_resize: bool,
+    backpressured: bool,
 }
 
 struct FakeProcess {
@@ -252,6 +338,10 @@ impl TerminalProcess for FakeProcess {
 
     fn try_wait(&mut self) -> Result<Option<ExitStatus>, TransportError> {
         Ok(self.state.lock().unwrap().exit.clone())
+    }
+
+    fn output_backpressured(&self) -> bool {
+        self.state.lock().unwrap().backpressured
     }
 
     fn wait(&mut self, _timeout: Duration) -> Result<ExitStatus, TransportError> {
