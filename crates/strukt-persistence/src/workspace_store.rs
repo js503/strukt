@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use strukt_workspace::{WorkspaceId, WorkspaceState};
 use thiserror::Error;
 
+use crate::terminal_store::contribution_is_valid;
+
 const CURRENT_SCHEMA: u32 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -68,7 +70,9 @@ impl WorkspaceStore {
             state: state.clone(),
         };
         write_recoverable(&current, &self.backup_path(id), &snapshot, |previous| {
-            previous.schema_version == CURRENT_SCHEMA && previous.state.root.id() == id
+            previous.schema_version == CURRENT_SCHEMA
+                && previous.state.root.id() == id
+                && contribution_is_valid(&previous.state)
         })
     }
 
@@ -193,7 +197,9 @@ impl WorkspaceStore {
             Ok(bytes) => Ok(serde_json::from_slice::<WorkspaceSnapshot>(&bytes)
                 .ok()
                 .filter(|snapshot| {
-                    snapshot.schema_version == CURRENT_SCHEMA && snapshot.state.root.id() == id
+                    snapshot.schema_version == CURRENT_SCHEMA
+                        && snapshot.state.root.id() == id
+                        && contribution_is_valid(&snapshot.state)
                 })),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(StoreError::Io(error)),

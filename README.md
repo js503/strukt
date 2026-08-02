@@ -26,7 +26,8 @@ software engineering: one context, every tool, and any model.
 ## Status
 
 - Stage: local development workspace implementation
-- Current foundation: native shell plus real local workspace, file, and editor workflows
+- Current foundation: native shell plus real local workspace, file, editor, and
+  ephemeral PTY/ConPTY terminal workflows
 - Milestones: M1 complete; M2 in progress
 
 ## Key Docs
@@ -65,9 +66,15 @@ The native editor adds preview and pinned tabs, Unicode-safe transactional editi
 bounded undo/redo, find and replace, syntax themes, safe revision-checked saves,
 external-change reconciliation, encrypted crash recovery, and persisted editor
 layout. Binary and invalid UTF-8 files use metadata views, while oversized text
-opens as an explicit read-only preview before a full-file override. Language
-intelligence and local PTY/ConPTY terminal execution remain later M2 workstreams.
-SSH and persistent local or remote sessions belong to later milestones.
+opens as an explicit read-only preview before a full-file override. The local
+terminal adds explicit default-shell startup, bounded scrollback,
+GPU-rendered Unicode and ANSI cells, tabs, recursive splits, selection, clipboard
+consent, explicit link opening, restart/close lifecycle controls, fair output
+draining, and stopped-only presentation restoration. Terminal output, commands,
+environment data, selections, and clipboard contents are never persisted.
+Language intelligence and final restoration integration remain later M2
+workstreams. SSH and persistent local or remote sessions belong to M4, M3, and M5
+respectively.
 
 The deterministic workspace-files smoke mode expects a folder containing
 `strukt-smoke.txt`:
@@ -81,6 +88,16 @@ cargo run -p strukt-app -- --workspace-files-smoke "$fixture"
 It opens and discovers the fixture, persists and reloads a workspace snapshot in an
 isolated temporary store, prints a stable success marker, and exits.
 
+The deterministic local-terminal smoke accepts any existing folder, launches only
+the repository's terminal fixture, exercises native PTY/ConPTY behavior and bounded
+load, rejects workspace metadata, and exits with an exact marker:
+
+```bash
+fixture="$(mktemp -d)"
+cargo build -p strukt-terminal --bin terminal-fixture
+cargo run -p strukt-app -- --terminal-smoke "$fixture"
+```
+
 ## Verification
 
 - Run `forj check .` to verify the governed repository manifest.
@@ -90,6 +107,8 @@ isolated temporary store, prints a stable success marker, and exits.
   validation and current platform limitations.
 - See `docs/evidence/m2-editor-validation.md` for editor validation and current
   platform limitations.
+- See `docs/evidence/m2-local-terminal-validation.md` for PTY/ConPTY, renderer,
+  stress, native walkthrough, and current framework limitations.
 
 ## Pull Request Expectations
 

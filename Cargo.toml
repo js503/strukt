@@ -8,6 +8,7 @@ members = [
   "crates/strukt-workspace",
   "crates/strukt-fs",
   "crates/strukt-editor",
+  "crates/strukt-terminal",
   "crates/strukt-platform",
 ]
 resolver = "3"
@@ -27,11 +28,13 @@ cap-std = "4.0.2"
 chacha20poly1305 = { version = "0.11", features = ["getrandom"] }
 directories = "6.0.0"
 getrandom = "0.4"
-iced = { version = "0.14.0", features = ["advanced", "highlighter", "tokio", "wgpu"] }
+iced = { version = "0.14.0", features = ["advanced", "canvas", "highlighter", "tokio", "wgpu"] }
 ignore = "0.4.31"
 keyring = "4.1.5"
 notify = "8.2.0"
+open = "5"
 rfd = "0.17.2"
+portable-pty = "0.9.0"
 regex = "1"
 ropey = "1.6.1"
 rustix = { version = "1.1.4", features = ["fs"] }
@@ -44,10 +47,13 @@ strukt-persistence = { path = "crates/strukt-persistence" }
 strukt-platform = { path = "crates/strukt-platform" }
 strukt-shell = { path = "crates/strukt-shell" }
 strukt-theme = { path = "crates/strukt-theme" }
+strukt-terminal = { path = "crates/strukt-terminal" }
 strukt-workspace = { path = "crates/strukt-workspace" }
 tempfile = "3.27.0"
 thiserror = "2.0"
 tokio = { version = "1", features = ["rt", "sync"] }
+unicode-width = "0.2"
+vte = { version = "0.15.0", default-features = false }
 zeroize = "1"
 
 [workspace.lints.rust]

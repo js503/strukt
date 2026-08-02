@@ -6,9 +6,11 @@ use strukt_core::CapabilityId;
 use strukt_editor::{CloseDecision, DocumentStatus, FindQuery, GrammarRegistry, OpenDisposition};
 use strukt_fs::{FileEntry, FileKind};
 use strukt_shell::Activity;
+use strukt_terminal::{LayoutNode, PaneState, SplitAxis, TerminalPaneId};
 use strukt_theme::{Rgb, ThemeTokens};
 
 use crate::app::{DocumentNotice, ExplorerDialog, Message, StruktApp};
+use crate::terminal_widget::TerminalWidget;
 
 fn color(rgb: Rgb) -> Color {
     Color::from_rgb8(rgb.red, rgb.green, rgb.blue)
@@ -299,6 +301,18 @@ fn explorer_dialog(app: &StruktApp) -> Element<'_, Message> {
 fn primary_canvas(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> {
     let content: Element<'_, Message> = if app.workspace.is_none() {
         welcome_canvas(app).into()
+    } else if app.terminal_expanded {
+        app.terminal.workspace().active_tab().map_or_else(
+            || text("Create a terminal to use the expanded terminal canvas").into(),
+            |tab| {
+                column![
+                    text(format!("{} · local terminal workspace", tab.name())).size(14),
+                    terminal_layout(app, tab.root(), tab.focused_pane(), tokens),
+                ]
+                .spacing(6)
+                .into()
+            },
+        )
     } else if app.quick_open_visible {
         quick_open_canvas(app).into()
     } else if app.shell.active_activity == Activity::Search {
@@ -683,6 +697,10 @@ fn context_panel(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Messa
     .into()
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "terminal drawer chrome keeps its empty, active, and confirmation states together"
+)]
 fn drawer(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Message> {
     if !app.shell.drawer_visible {
         return button("Open terminal drawer")
@@ -691,16 +709,271 @@ fn drawer(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Message> {
             .into();
     }
 
-    container(
-        row![
-            text("TERMINAL  ·  local shell foundation"),
-            Space::new().width(Fill),
-            button("Close").on_press(Message::ToggleDrawer),
-        ]
-        .spacing(8),
-    )
-    .padding(10)
-    .height(Length::Fixed(130.0))
-    .style(panel_style(tokens, tokens.terminal_background))
-    .into()
+    let enabled = app.capabilities.is_enabled(CapabilityId::TERMINAL);
+    let has_workspace = app.workspace.is_some();
+    let mut tabs = row![].spacing(4);
+    for tab in app.terminal.workspace().tabs() {
+        tabs = tabs.push(
+            button(text(tab.name().to_owned()).size(12))
+                .on_press(Message::ActivateTerminalTab(tab.id())),
+        );
+    }
+
+    let controls = row![
+        text("TERMINAL  ·  LOCAL").size(12),
+        tabs,
+        Space::new().width(Fill),
+        button("New").on_press_maybe((enabled && has_workspace).then_some(Message::NewTerminal)),
+        button("Split →").on_press_maybe(
+            (enabled && app.terminal.workspace().active_tab().is_some())
+                .then_some(Message::SplitTerminal(SplitAxis::Vertical)),
+        ),
+        button("Split ↓").on_press_maybe(
+            (enabled && app.terminal.workspace().active_tab().is_some())
+                .then_some(Message::SplitTerminal(SplitAxis::Horizontal)),
+        ),
+        button(if app.terminal_expanded {
+            "Collapse"
+        } else {
+            "Expand"
+        })
+        .on_press(Message::ToggleTerminalExpanded),
+        button("Hide").on_press(Message::ToggleDrawer),
+    ]
+    .align_y(iced::Alignment::Center)
+    .spacing(6);
+
+    let mut content = column![controls].spacing(6);
+    if let Some(tab) = app.terminal.workspace().active_tab() {
+        content = content.push(
+            row![
+                text_input("Terminal name", &app.terminal_tab_name)
+                    .on_input(Message::TerminalTabNameChanged)
+                    .on_submit(Message::RenameTerminalTab)
+                    .width(Length::Fixed(180.0)),
+                button("Rename").on_press(Message::RenameTerminalTab),
+                text(format!("{} pane workspace", count_layout_panes(tab.root()))).size(12),
+            ]
+            .spacing(6),
+        );
+        if !app.terminal_expanded {
+            content = content.push(terminal_layout(app, tab.root(), tab.focused_pane(), tokens));
+        }
+    } else {
+        content = content.push(
+            container(
+                column![
+                    text(if has_workspace {
+                        "No local terminal yet"
+                    } else {
+                        "Open a workspace before starting a terminal"
+                    }),
+                    text("Processes start only after an explicit New command").size(12),
+                ]
+                .spacing(4),
+            )
+            .padding(12)
+            .width(Fill)
+            .height(Fill),
+        );
+    }
+
+    if let Some(pane) = app.pending_terminal_close {
+        content = content.push(
+            row![
+                text(format!(
+                    "Terminal {} is still running. Stop and close it?",
+                    pane.value()
+                )),
+                button("Stop & close").on_press(Message::ResolveCloseTerminal(true)),
+                button("Keep open").on_press(Message::ResolveCloseTerminal(false)),
+            ]
+            .spacing(6),
+        );
+    }
+    if let Some((_, pasted_text)) = &app.pending_terminal_paste {
+        content = content.push(
+            row![
+                text(format!(
+                    "Paste {} bytes into this terminal?",
+                    pasted_text.len()
+                )),
+                button("Paste").on_press(Message::ResolveTerminalPaste(true)),
+                button("Cancel").on_press(Message::ResolveTerminalPaste(false)),
+            ]
+            .spacing(6),
+        );
+    }
+    if let Some(target) = &app.pending_terminal_link {
+        content = content.push(
+            column![
+                text("Open this exact terminal link?").size(12),
+                text(target.clone())
+                    .size(12)
+                    .color(color(tokens.terminal_link)),
+                row![
+                    button("Open link").on_press(Message::ResolveTerminalLink(true)),
+                    button("Cancel").on_press(Message::ResolveTerminalLink(false)),
+                ]
+                .spacing(6),
+            ]
+            .spacing(4),
+        );
+    }
+    if let Some(error) = &app.terminal_error {
+        content = content.push(text(format!("Terminal: {error}")).size(12));
+    }
+
+    container(content)
+        .padding(8)
+        .height(Length::Fixed(if app.terminal_expanded {
+            150.0
+        } else {
+            330.0
+        }))
+        .style(panel_style(tokens, tokens.terminal_background))
+        .into()
+}
+
+fn terminal_layout(
+    app: &StruktApp,
+    node: &LayoutNode,
+    focused: TerminalPaneId,
+    tokens: ThemeTokens,
+) -> Element<'static, Message> {
+    match node {
+        LayoutNode::Pane(pane) => terminal_pane(app, *pane, *pane == focused, tokens),
+        LayoutNode::Split {
+            axis,
+            ratio_basis_points,
+            first,
+            second,
+        } => {
+            let first_portion = (*ratio_basis_points).max(1);
+            let second_portion = 10_000_u16.saturating_sub(*ratio_basis_points).max(1);
+            let first = terminal_layout(app, first, focused, tokens);
+            let second = terminal_layout(app, second, focused, tokens);
+            match axis {
+                SplitAxis::Vertical => row![
+                    container(first).width(Length::FillPortion(first_portion)),
+                    container(second).width(Length::FillPortion(second_portion)),
+                ]
+                .spacing(4)
+                .height(Fill)
+                .into(),
+                SplitAxis::Horizontal => column![
+                    container(first).height(Length::FillPortion(first_portion)),
+                    container(second).height(Length::FillPortion(second_portion)),
+                ]
+                .spacing(4)
+                .width(Fill)
+                .into(),
+            }
+        }
+    }
+}
+
+fn terminal_pane(
+    app: &StruktApp,
+    pane_id: TerminalPaneId,
+    focused: bool,
+    tokens: ThemeTokens,
+) -> Element<'static, Message> {
+    let Some(pane) = app.terminal.workspace().pane(pane_id) else {
+        return container(text("Terminal pane unavailable")).into();
+    };
+    let (state_label, state_color) = match pane.state() {
+        PaneState::Stopped => ("stopped".to_owned(), tokens.terminal_exited),
+        PaneState::Starting => ("starting".to_owned(), tokens.status_warning),
+        PaneState::Running => ("running".to_owned(), tokens.status_success),
+        PaneState::Exited { code } => (format!("exited {code:?}"), tokens.terminal_exited),
+        PaneState::Failed { message } => (format!("failed: {message}"), tokens.editor_conflict),
+        PaneState::Backpressured => ("backpressure".to_owned(), tokens.terminal_backpressure),
+    };
+    let can_start = !matches!(pane.state(), PaneState::Starting);
+    let cwd = pane.working_directory().display().to_string();
+    let sustained_output = app
+        .terminal
+        .health(pane_id)
+        .is_some_and(|health| health.sustained_output);
+    let pane_title = app
+        .terminal
+        .snapshot(pane_id)
+        .and_then(|snapshot| snapshot.title().map(str::to_owned))
+        .unwrap_or_else(|| "shell".to_owned());
+    let header = row![
+        button(if focused { "●" } else { "○" }).on_press(Message::TerminalWidget(
+            crate::terminal_widget::TerminalWidgetEvent::Focus(pane_id),
+        )),
+        text(pane_title).size(11),
+        text(format!("local · {cwd}")).size(11),
+        text(state_label).size(11).color(color(state_color)),
+        text(if sustained_output { "high output" } else { "" })
+            .size(11)
+            .color(color(tokens.terminal_backpressure)),
+        Space::new().width(Fill),
+        button("Copy").on_press(Message::CopyTerminal(pane_id)),
+        button("Paste").on_press(Message::RequestTerminalPaste(pane_id)),
+        button("Start / restart")
+            .on_press_maybe(can_start.then_some(Message::RestartTerminal(pane_id))),
+        button("Close").on_press(Message::RequestCloseTerminal(pane_id)),
+    ]
+    .align_y(iced::Alignment::Center)
+    .spacing(5);
+
+    let mut link_actions = row![].spacing(4);
+    if let Ok(links) = app.terminal.links(pane_id) {
+        for link in links.into_iter().take(4) {
+            let target = link.target().to_owned();
+            let label = if target.chars().count() > 40 {
+                format!("{}…", target.chars().take(39).collect::<String>())
+            } else {
+                target.clone()
+            };
+            link_actions = link_actions
+                .push(button(text(label).size(11)).on_press(Message::InspectTerminalLink(target)));
+        }
+    }
+
+    let surface: Element<'static, Message> = app.terminal.snapshot(pane_id).map_or_else(
+        || {
+            container(text("Terminal surface unavailable"))
+                .height(Fill)
+                .into()
+        },
+        |snapshot| {
+            TerminalWidget::new(
+                pane_id,
+                snapshot,
+                tokens,
+                focused,
+                app.terminal.selection(pane_id),
+            )
+            .view()
+            .map(Message::TerminalWidget)
+        },
+    );
+
+    container(column![header, link_actions, surface].spacing(3))
+        .padding(4)
+        .width(Fill)
+        .height(Fill)
+        .style(panel_style(
+            tokens,
+            if focused {
+                tokens.panel_active
+            } else {
+                tokens.terminal_background
+            },
+        ))
+        .into()
+}
+
+fn count_layout_panes(node: &LayoutNode) -> usize {
+    match node {
+        LayoutNode::Pane(_) => 1,
+        LayoutNode::Split { first, second, .. } => {
+            count_layout_panes(first) + count_layout_panes(second)
+        }
+    }
 }

@@ -21,14 +21,22 @@ use strukt_fs::{
 };
 use strukt_persistence::{
     EditorRecoveryStore, EditorSessionSnapshot, EditorTabSnapshot, RecentWorkspaces, RecoveryKey,
-    RecoveryKeyError, RecoveryKeyProvider, RecoveryMetadata, RecoveryPayload, WorkspaceStore,
+    RecoveryKeyError, RecoveryKeyProvider, RecoveryMetadata, RecoveryPayload,
+    TerminalSessionSnapshot, WorkspaceStore, set_terminal_contribution, terminal_contribution,
 };
 use strukt_shell::{Activity, ShellAction, ShellState};
+use strukt_terminal::{
+    Color as TerminalColor, DrainBudget, PaneState, PasteDecision, PortableTransport,
+    RuntimePaneState, Selection, SpawnRequest, SplitAxis, TerminalKey, TerminalPaneId,
+    TerminalRuntime, TerminalSize, TerminalTabId, TerminalTransport, TerminalWorkspace,
+};
 use strukt_theme::ThemeMode;
 use strukt_workspace::{WorkspaceRoot, WorkspaceState};
 
 use crate::editor::EditorSurfaces;
 use crate::recovery_key::NativeRecoveryKeyProvider;
+use crate::terminal::{TerminalSpawnCompletion, TerminalSurfaces};
+use crate::terminal_widget::TerminalWidgetEvent;
 use crate::workspace::{OpenedWorkspace, open_workspace_without_store};
 
 const SMOKE_TEST_DURATION: Duration = Duration::from_secs(3);
@@ -37,6 +45,8 @@ pub(crate) const WORKSPACE_FILES_SMOKE_SUCCESS: &str =
     "strukt workspace files smoke: open, discovery, and persistence passed";
 pub(crate) const EDITOR_SMOKE_SUCCESS: &str =
     "strukt editor smoke: open, edit, save, and restore passed";
+pub(crate) const TERMINAL_SMOKE_SUCCESS: &str =
+    "strukt terminal smoke: pty, unicode, ansi, resize, isolation, bounds, and restore passed";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DocumentNotice {
@@ -55,6 +65,9 @@ pub enum LaunchMode {
     EditorSmoke {
         root: PathBuf,
     },
+    TerminalSmoke {
+        root: PathBuf,
+    },
 }
 
 impl LaunchMode {
@@ -70,6 +83,13 @@ impl LaunchMode {
             [flag, root] if flag == "--editor-smoke" && !root.is_empty() => Self::EditorSmoke {
                 root: PathBuf::from(root),
             },
+            [flag, root]
+                if flag == "--terminal-smoke" && !root.is_empty() && Path::new(root).is_dir() =>
+            {
+                Self::TerminalSmoke {
+                    root: PathBuf::from(root),
+                }
+            }
             _ if args.iter().any(|argument| argument == "--smoke-test") => Self::SmokeTest,
             _ => Self::Interactive,
         }
@@ -78,7 +98,10 @@ impl LaunchMode {
     #[must_use]
     pub const fn smoke_timeout(&self) -> Option<Duration> {
         match self {
-            Self::Interactive | Self::WorkspaceFilesSmoke { .. } | Self::EditorSmoke { .. } => None,
+            Self::Interactive
+            | Self::WorkspaceFilesSmoke { .. }
+            | Self::EditorSmoke { .. }
+            | Self::TerminalSmoke { .. } => None,
             Self::SmokeTest => Some(SMOKE_TEST_DURATION),
         }
     }
@@ -117,6 +140,14 @@ pub struct StruktApp {
     pub editor_replace_text: String,
     pub editor_find_options: FindOptions,
     pub editor_language_overrides: HashMap<DocumentId, String>,
+    pub(crate) terminal: TerminalSurfaces,
+    pub terminal_error: Option<String>,
+    pub terminal_tab_name: String,
+    pub terminal_expanded: bool,
+    pub pending_terminal_close: Option<TerminalPaneId>,
+    pub pending_terminal_paste: Option<(TerminalPaneId, String)>,
+    pub pending_terminal_link: Option<String>,
+    terminal_input_active: bool,
     editor_scroll_lines: HashMap<DocumentId, f32>,
     editor_restore_active: Option<String>,
     editor_restore_tabs: HashMap<String, EditorTabSnapshot>,
@@ -190,6 +221,44 @@ pub enum Message {
     OpenFolder,
     FolderPicked(Option<PathBuf>),
     WorkspaceOpened(Result<OpenedWorkspace, String>),
+    NewTerminal,
+    StartTerminal(TerminalPaneId),
+    TerminalStarted {
+        pane: TerminalPaneId,
+        generation: u64,
+        completion: TerminalSpawnCompletion,
+    },
+    SplitTerminal(SplitAxis),
+    ActivateTerminalTab(TerminalTabId),
+    TerminalTabNameChanged(String),
+    RenameTerminalTab,
+    ActivateRelativeTerminalTab(bool),
+    FocusRelativeTerminalPane(bool),
+    ToggleTerminalExpanded,
+    RestartTerminal(TerminalPaneId),
+    RequestCloseTerminal(TerminalPaneId),
+    ResolveCloseTerminal(bool),
+    TerminalStopped(Result<(), String>),
+    TerminalWidget(TerminalWidgetEvent),
+    TerminalInput {
+        pane: TerminalPaneId,
+        bytes: Vec<u8>,
+    },
+    TerminalKey {
+        pane: TerminalPaneId,
+        key: TerminalKey,
+    },
+    CopyTerminal(TerminalPaneId),
+    RequestTerminalPaste(TerminalPaneId),
+    TerminalClipboardRead {
+        pane: TerminalPaneId,
+        text: Option<String>,
+    },
+    ResolveTerminalPaste(bool),
+    InspectTerminalLink(String),
+    ResolveTerminalLink(bool),
+    TerminalLinkOpened(Result<(), String>),
+    PollTerminal,
     ToggleHiddenFiles,
     ToggleIgnoredFiles,
     FilesRefreshed {
@@ -401,6 +470,14 @@ impl StruktApp {
             editor_replace_text: String::new(),
             editor_find_options: FindOptions::default(),
             editor_language_overrides: HashMap::new(),
+            terminal: TerminalSurfaces::default(),
+            terminal_error: None,
+            terminal_tab_name: String::new(),
+            terminal_expanded: false,
+            pending_terminal_close: None,
+            pending_terminal_paste: None,
+            pending_terminal_link: None,
+            terminal_input_active: false,
             editor_scroll_lines: HashMap::new(),
             editor_restore_active: None,
             editor_restore_tabs: HashMap::new(),
@@ -479,6 +556,277 @@ impl StruktApp {
     )]
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::NewTerminal => {
+                if !self.capabilities.is_enabled(CapabilityId::TERMINAL) {
+                    return Task::none();
+                }
+                let Some(root) = self
+                    .workspace
+                    .as_ref()
+                    .map(|workspace| workspace.root.path().to_path_buf())
+                else {
+                    return Task::none();
+                };
+                match self.terminal.new_tab(&root) {
+                    Ok(pane) => {
+                        self.terminal_error = None;
+                        self.shell.drawer_visible = true;
+                        self.sync_terminal_contribution();
+                        return Task::done(Message::StartTerminal(pane));
+                    }
+                    Err(error) => self.terminal_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::SplitTerminal(axis) => {
+                if self.workspace.is_none() || !self.capabilities.is_enabled(CapabilityId::TERMINAL)
+                {
+                    return Task::none();
+                }
+                match self.terminal.split_focused(axis) {
+                    Ok(pane) => {
+                        self.terminal_error = None;
+                        self.sync_terminal_contribution();
+                        return Task::done(Message::StartTerminal(pane));
+                    }
+                    Err(error) => self.terminal_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::ActivateTerminalTab(tab) => {
+                match self.terminal.activate_tab(tab) {
+                    Ok(()) => {
+                        self.terminal_error = None;
+                        self.terminal_tab_name = self
+                            .terminal
+                            .workspace()
+                            .active_tab()
+                            .map_or_else(String::new, |tab| tab.name().to_owned());
+                        self.sync_terminal_contribution();
+                    }
+                    Err(error) => self.terminal_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::TerminalTabNameChanged(name) => {
+                self.terminal_input_active = false;
+                self.terminal_tab_name = name;
+                return Task::none();
+            }
+            Message::RenameTerminalTab => {
+                match self
+                    .terminal
+                    .rename_active_tab(self.terminal_tab_name.clone())
+                {
+                    Ok(()) => {
+                        self.terminal_error = None;
+                        self.sync_terminal_contribution();
+                    }
+                    Err(error) => self.terminal_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::ActivateRelativeTerminalTab(reverse) => {
+                match self.terminal.activate_relative_tab(reverse) {
+                    Ok(()) => {
+                        self.terminal_error = None;
+                        self.terminal_tab_name = self
+                            .terminal
+                            .workspace()
+                            .active_tab()
+                            .map_or_else(String::new, |tab| tab.name().to_owned());
+                        self.sync_terminal_contribution();
+                    }
+                    Err(error) => self.terminal_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::FocusRelativeTerminalPane(reverse) => {
+                match self.terminal.focus_relative_pane(reverse) {
+                    Ok(()) => {
+                        self.terminal_error = None;
+                        self.terminal_input_active = true;
+                        self.sync_terminal_contribution();
+                    }
+                    Err(error) => self.terminal_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::ToggleTerminalExpanded => {
+                self.terminal_expanded = !self.terminal_expanded;
+                self.shell.drawer_visible = true;
+                return Task::none();
+            }
+            Message::StartTerminal(pane) => {
+                if self.workspace.is_none() || !self.capabilities.is_enabled(CapabilityId::TERMINAL)
+                {
+                    return Task::none();
+                }
+                match self.terminal.begin_start(pane) {
+                    Ok(job) => {
+                        self.terminal_error = None;
+                        return start_terminal_task(job);
+                    }
+                    Err(error) => self.terminal_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::RestartTerminal(pane) => {
+                match self.terminal.begin_start(pane) {
+                    Ok(job) => {
+                        self.terminal_error = None;
+                        return start_terminal_task(job);
+                    }
+                    Err(error) => self.terminal_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::TerminalStarted {
+                pane,
+                generation,
+                completion,
+            } => {
+                if let Err(error) = self.terminal.finish_start(pane, generation, &completion) {
+                    self.terminal_error = Some(error.to_string());
+                } else {
+                    self.terminal_error = None;
+                }
+                return Task::none();
+            }
+            Message::RequestCloseTerminal(pane) => {
+                if self.terminal.running(pane) {
+                    self.pending_terminal_close = Some(pane);
+                } else {
+                    return self.close_terminal_task(pane);
+                }
+                return Task::none();
+            }
+            Message::ResolveCloseTerminal(close) => {
+                let pane = self.pending_terminal_close.take();
+                if close && let Some(pane) = pane {
+                    return self.close_terminal_task(pane);
+                }
+                return Task::none();
+            }
+            Message::TerminalWidget(event) => {
+                let result = match event {
+                    TerminalWidgetEvent::Focus(pane) => {
+                        self.terminal_input_active = true;
+                        self.terminal.focus_pane(pane)
+                    }
+                    TerminalWidgetEvent::Resize { pane, size } => self.terminal.resize(pane, size),
+                    TerminalWidgetEvent::Select { pane, start, end } => {
+                        self.terminal.select(pane, Selection::linear(start, end))
+                    }
+                    TerminalWidgetEvent::Scroll { pane, lines } => {
+                        self.terminal.scroll(pane, lines)
+                    }
+                    TerminalWidgetEvent::Mouse { pane, event } => {
+                        self.terminal_input_active = true;
+                        self.terminal
+                            .focus_pane(pane)
+                            .and_then(|()| self.terminal.write_mouse(pane, event))
+                    }
+                };
+                if let Err(error) = result {
+                    self.terminal_error = Some(error.to_string());
+                }
+                return Task::none();
+            }
+            Message::TerminalInput { pane, bytes } => {
+                if let Err(error) = self.terminal.write(pane, &bytes) {
+                    self.terminal_error = Some(error.to_string());
+                }
+                return Task::none();
+            }
+            Message::TerminalKey { pane, key } => {
+                if let Err(error) = self.terminal.write_key(pane, key) {
+                    self.terminal_error = Some(error.to_string());
+                }
+                return Task::none();
+            }
+            Message::CopyTerminal(pane) => {
+                return match self.terminal.copy_selection(pane) {
+                    Ok(Some(text)) => iced::clipboard::write(text),
+                    Ok(None) => Task::none(),
+                    Err(error) => {
+                        self.terminal_error = Some(error.to_string());
+                        Task::none()
+                    }
+                };
+            }
+            Message::RequestTerminalPaste(pane) => {
+                return iced::clipboard::read()
+                    .map(move |text| Message::TerminalClipboardRead { pane, text });
+            }
+            Message::TerminalClipboardRead { pane, text } => {
+                let Some(text) = text else {
+                    return Task::none();
+                };
+                match self.terminal.prepare_paste(pane, &text, false) {
+                    Ok(PasteDecision::Send(bytes)) => {
+                        return self.update(Message::TerminalInput { pane, bytes });
+                    }
+                    Ok(PasteDecision::Confirm { .. }) => {
+                        self.pending_terminal_paste = Some((pane, text));
+                    }
+                    Err(error) => self.terminal_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::ResolveTerminalPaste(send) => {
+                let pending = self.pending_terminal_paste.take();
+                if send && let Some((pane, text)) = pending {
+                    match self.terminal.prepare_paste(pane, &text, true) {
+                        Ok(PasteDecision::Send(bytes)) => {
+                            return self.update(Message::TerminalInput { pane, bytes });
+                        }
+                        Ok(PasteDecision::Confirm { .. }) => {
+                            self.terminal_error = Some(
+                                "terminal paste remained unconfirmed after approval".to_owned(),
+                            );
+                        }
+                        Err(error) => self.terminal_error = Some(error.to_string()),
+                    }
+                }
+                return Task::none();
+            }
+            Message::InspectTerminalLink(target) => {
+                if supported_terminal_link_target(&target) {
+                    self.pending_terminal_link = Some(target);
+                    self.terminal_error = None;
+                } else {
+                    self.terminal_error = Some("unsupported terminal link scheme".to_owned());
+                }
+                return Task::none();
+            }
+            Message::ResolveTerminalLink(open_link) => {
+                let target = self.pending_terminal_link.take();
+                if !open_link {
+                    return Task::none();
+                }
+                let Some(target) = target else {
+                    return Task::none();
+                };
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || open::that(target))
+                            .await
+                            .map_err(|error| error.to_string())?
+                            .map_err(|error| error.to_string())
+                    },
+                    Message::TerminalLinkOpened,
+                );
+            }
+            Message::TerminalStopped(result) | Message::TerminalLinkOpened(result) => {
+                self.terminal_error = result.err();
+                return Task::none();
+            }
+            Message::PollTerminal => {
+                let batch = self.terminal.poll();
+                let _ = batch;
+                return Task::none();
+            }
             Message::OpenFolder => {
                 if self.open_folder_in_flight || self.recent_mutation_in_flight {
                     return Task::none();
@@ -506,6 +854,25 @@ impl StruktApp {
                 return Task::none();
             }
             Message::WorkspaceOpened(Ok(mut opened)) => {
+                let terminal_restore = terminal_contribution(&opened.state).ok().flatten();
+                match TerminalSurfaces::restore(terminal_restore.as_ref()) {
+                    Ok(terminal) => {
+                        self.terminal = terminal;
+                        self.terminal_error = None;
+                        self.terminal_tab_name = self
+                            .terminal
+                            .workspace()
+                            .active_tab()
+                            .map_or_else(String::new, |tab| tab.name().to_owned());
+                        self.terminal_input_active = false;
+                    }
+                    Err(error) => {
+                        self.terminal = TerminalSurfaces::default();
+                        self.terminal_error = Some(error.to_string());
+                        self.terminal_tab_name.clear();
+                        self.terminal_input_active = false;
+                    }
+                }
                 let editor_restore = opened
                     .state
                     .contribution::<EditorSessionSnapshot>("editor")
@@ -693,6 +1060,7 @@ impl StruktApp {
                         .any(|entry| entry.relative_path == path && entry.kind == FileKind::File);
                     self.selected_entry = Some(path.clone());
                     if is_file {
+                        self.terminal_input_active = false;
                         self.editor_restore_active = None;
                         return self.open_document_task(path, OpenDisposition::Preview, false);
                     }
@@ -704,6 +1072,7 @@ impl StruktApp {
                 disposition,
                 force_full,
             } => {
+                self.terminal_input_active = false;
                 self.editor_restore_active = None;
                 return self.open_document_task(path, disposition, force_full);
             }
@@ -885,6 +1254,7 @@ impl StruktApp {
                 return Task::none();
             }
             Message::EditorAction { id, action } => {
+                self.terminal_input_active = false;
                 let is_edit = action.is_edit();
                 let scroll_delta = match &action {
                     text_editor::Action::Scroll { lines } => Some(scroll_lines_as_f32(*lines)),
@@ -909,6 +1279,7 @@ impl StruktApp {
                 return Task::none();
             }
             Message::SelectDocument(id) => {
+                self.terminal_input_active = false;
                 if let Some(editor) = &mut self.editor
                     && let Err(error) = editor.select(id)
                 {
@@ -1719,6 +2090,31 @@ impl StruktApp {
             Message::OpenFolder
             | Message::FolderPicked(_)
             | Message::WorkspaceOpened(_)
+            | Message::NewTerminal
+            | Message::StartTerminal(_)
+            | Message::TerminalStarted { .. }
+            | Message::SplitTerminal(_)
+            | Message::ActivateTerminalTab(_)
+            | Message::TerminalTabNameChanged(_)
+            | Message::RenameTerminalTab
+            | Message::ActivateRelativeTerminalTab(_)
+            | Message::FocusRelativeTerminalPane(_)
+            | Message::ToggleTerminalExpanded
+            | Message::RestartTerminal(_)
+            | Message::RequestCloseTerminal(_)
+            | Message::ResolveCloseTerminal(_)
+            | Message::TerminalStopped(_)
+            | Message::TerminalWidget(_)
+            | Message::TerminalInput { .. }
+            | Message::TerminalKey { .. }
+            | Message::CopyTerminal(_)
+            | Message::RequestTerminalPaste(_)
+            | Message::TerminalClipboardRead { .. }
+            | Message::ResolveTerminalPaste(_)
+            | Message::InspectTerminalLink(_)
+            | Message::ResolveTerminalLink(_)
+            | Message::TerminalLinkOpened(_)
+            | Message::PollTerminal
             | Message::ToggleHiddenFiles
             | Message::ToggleIgnoredFiles
             | Message::FilesRefreshed { .. }
@@ -1779,9 +2175,73 @@ impl StruktApp {
             | Message::ToggleSearchIgnored => {
                 unreachable!("handled before shell actions")
             }
-            Message::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
-                if modifiers.command() =>
-            {
+            Message::Keyboard(keyboard::Event::KeyPressed {
+                key,
+                modifiers,
+                text,
+                ..
+            }) => {
+                let terminal_pane = self
+                    .terminal_input_active
+                    .then(|| self.terminal.workspace().focused_pane())
+                    .flatten();
+                if let Some(pane) = terminal_pane {
+                    if modifiers.control()
+                        && matches!(key.as_ref(), Key::Named(keyboard::key::Named::Tab))
+                    {
+                        return self
+                            .update(Message::ActivateRelativeTerminalTab(modifiers.shift()));
+                    } else if modifiers.command() {
+                        match key.as_ref() {
+                            Key::Character("t") => return self.update(Message::NewTerminal),
+                            Key::Character("d") => {
+                                return self.update(Message::SplitTerminal(if modifiers.shift() {
+                                    SplitAxis::Horizontal
+                                } else {
+                                    SplitAxis::Vertical
+                                }));
+                            }
+                            Key::Character("c") => {
+                                return self.update(Message::CopyTerminal(pane));
+                            }
+                            Key::Character("v") => {
+                                return self.update(Message::RequestTerminalPaste(pane));
+                            }
+                            Key::Character("w") => {
+                                return self.update(Message::RequestCloseTerminal(pane));
+                            }
+                            Key::Character("[") => {
+                                return self.update(Message::FocusRelativeTerminalPane(true));
+                            }
+                            Key::Character("]") => {
+                                return self.update(Message::FocusRelativeTerminalPane(false));
+                            }
+                            Key::Character("j") if modifiers.shift() => {
+                                return self.update(Message::ToggleTerminalExpanded);
+                            }
+                            _ => {}
+                        }
+                    } else if modifiers.control()
+                        && let Key::Character(character) = key.as_ref()
+                        && let Some(byte) = control_byte(character)
+                    {
+                        return self.update(Message::TerminalInput {
+                            pane,
+                            bytes: vec![byte],
+                        });
+                    } else if let Some(key) = semantic_terminal_key(&key.as_ref()) {
+                        return self.update(Message::TerminalKey { pane, key });
+                    } else if let Some(text) = text.filter(|text| !text.is_empty()) {
+                        return self.update(Message::TerminalInput {
+                            pane,
+                            bytes: text.as_bytes().to_vec(),
+                        });
+                    }
+                }
+
+                if !modifiers.command() {
+                    return Task::none();
+                }
                 match key.as_ref() {
                     Key::Character("b") => Some(ShellAction::ToggleExplorer),
                     Key::Character("j") => Some(ShellAction::ToggleDrawer),
@@ -1836,8 +2296,12 @@ impl StruktApp {
             }
         };
         let explorer_was_visible = self.shell.explorer_visible;
+        let drawer_was_visible = self.shell.drawer_visible;
         if let Some(action) = action {
             self.shell.apply(action);
+        }
+        if drawer_was_visible && !self.shell.drawer_visible {
+            self.terminal_input_active = false;
         }
 
         if self.shell.explorer_visible != explorer_was_visible
@@ -2233,6 +2697,11 @@ impl StruktApp {
         let Some(mut state) = self.workspace.clone() else {
             return Task::none();
         };
+        let terminal_snapshot = self.terminal.session_snapshot();
+        let _ = set_terminal_contribution(&mut state, &terminal_snapshot);
+        if let Some(workspace) = &mut self.workspace {
+            let _ = set_terminal_contribution(workspace, &terminal_snapshot);
+        }
         if let Some(snapshot) = self.editor_session_snapshot() {
             let _ = state.set_contribution("editor", &snapshot);
             if let Some(workspace) = &mut self.workspace {
@@ -2247,6 +2716,42 @@ impl StruktApp {
             Task::none()
         } else {
             self.start_persistence(state)
+        }
+    }
+
+    fn sync_terminal_contribution(&mut self) {
+        let snapshot = self.terminal.session_snapshot();
+        if let Some(workspace) = &mut self.workspace
+            && let Err(error) = set_terminal_contribution(workspace, &snapshot)
+        {
+            self.terminal_error = Some(error.to_string());
+        }
+    }
+
+    fn close_terminal_task(&mut self, pane: TerminalPaneId) -> Task<Message> {
+        match self.terminal.close_and_take_process(pane) {
+            Ok(process) => {
+                self.terminal_error = None;
+                self.sync_terminal_contribution();
+                process.map_or_else(Task::none, |mut process| {
+                    Task::perform(
+                        async move {
+                            tokio::task::spawn_blocking(move || {
+                                process
+                                    .terminate(Duration::from_millis(500))
+                                    .map_err(|error| error.to_string())
+                            })
+                            .await
+                            .map_err(|error| error.to_string())?
+                        },
+                        Message::TerminalStopped,
+                    )
+                })
+            }
+            Err(error) => {
+                self.terminal_error = Some(error.to_string());
+                Task::none()
+            }
         }
     }
 
@@ -2608,11 +3113,61 @@ impl StruktApp {
             subscriptions
                 .push(time::every(Duration::from_millis(250)).map(|_| Message::PollWatcher));
         }
+        if self.terminal.running_processes() > 0 {
+            subscriptions
+                .push(time::every(Duration::from_millis(16)).map(|_| Message::PollTerminal));
+        }
         if let Some(timeout) = self.launch_mode.smoke_timeout() {
             subscriptions.push(time::every(timeout).map(|_| Message::SmokeTimeout));
         }
         Subscription::batch(subscriptions)
     }
+}
+
+fn semantic_terminal_key(key: &Key<&str>) -> Option<TerminalKey> {
+    use keyboard::key::Named;
+
+    match key {
+        Key::Named(Named::ArrowUp) => Some(TerminalKey::ArrowUp),
+        Key::Named(Named::ArrowDown) => Some(TerminalKey::ArrowDown),
+        Key::Named(Named::ArrowRight) => Some(TerminalKey::ArrowRight),
+        Key::Named(Named::ArrowLeft) => Some(TerminalKey::ArrowLeft),
+        Key::Named(Named::Home) => Some(TerminalKey::Home),
+        Key::Named(Named::End) => Some(TerminalKey::End),
+        Key::Named(Named::Enter) => Some(TerminalKey::Enter),
+        Key::Named(Named::Backspace) => Some(TerminalKey::Backspace),
+        Key::Named(Named::Tab) => Some(TerminalKey::Tab),
+        Key::Named(Named::Escape) => Some(TerminalKey::Escape),
+        _ => None,
+    }
+}
+
+fn start_terminal_task(job: strukt_terminal::RuntimeStartJob) -> Task<Message> {
+    let pane = job.pane();
+    let generation = job.generation();
+    Task::perform(
+        async move {
+            tokio::task::spawn_blocking(move || job.run())
+                .await
+                .map_err(|error| error.to_string())?
+        },
+        move |result| Message::TerminalStarted {
+            pane,
+            generation,
+            completion: TerminalSpawnCompletion::new(result),
+        },
+    )
+}
+
+fn control_byte(character: &str) -> Option<u8> {
+    let byte = character.as_bytes().first()?.to_ascii_lowercase();
+    byte.is_ascii_lowercase().then(|| byte - b'a' + 1)
+}
+
+pub(crate) fn supported_terminal_link_target(target: &str) -> bool {
+    ["https://", "http://", "mailto:", "file://"]
+        .iter()
+        .any(|scheme| target.starts_with(scheme))
 }
 
 #[derive(Debug, Default, Eq, PartialEq)]
@@ -2824,6 +3379,231 @@ pub(crate) async fn editor_smoke_task(root: PathBuf) -> Result<(), String> {
     tokio::task::spawn_blocking(move || run_editor_smoke(&root))
         .await
         .map_err(|error| error.to_string())?
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "the terminal smoke keeps its bounded native end-to-end contract explicit"
+)]
+pub(crate) fn run_terminal_smoke(root: &Path) -> Result<(), String> {
+    const STRESS_BYTES: usize = native_terminal_stress_bytes();
+    const DEADLINE: Duration = Duration::from_secs(30);
+
+    let workspace_root = WorkspaceRoot::open(root).map_err(|error| error.to_string())?;
+    let fixture = terminal_fixture_path()?;
+    let transport = Arc::new(PortableTransport::new());
+    let mut runtime = TerminalRuntime::new(transport, 10_000);
+    let interactive = TerminalPaneId::new();
+    let quiet = TerminalPaneId::new();
+    let initial = TerminalSize::new(4, 40).map_err(|error| error.to_string())?;
+
+    runtime
+        .restart(
+            interactive,
+            terminal_fixture_request(&fixture, root, "echo-resize", initial),
+        )
+        .map_err(|error| error.to_string())?;
+    runtime
+        .restart(
+            quiet,
+            terminal_fixture_request(&fixture, root, "wait", initial),
+        )
+        .map_err(|error| error.to_string())?;
+    runtime
+        .write(interactive, &terminal_smoke_line("héllø界"))
+        .map_err(|error| error.to_string())?;
+    let resized = TerminalSize::new(6, 60).map_err(|error| error.to_string())?;
+    let mut stress_process = PortableTransport::new()
+        .spawn(terminal_fixture_request(&fixture, root, "stress", initial))
+        .map_err(|error| error.to_string())?;
+
+    let started = std::time::Instant::now();
+    let mut stress_progress = 0_usize;
+    let mut observed_quiet = false;
+    let mut observed_echo = false;
+    let mut observed_ansi = false;
+    let mut resized_applied = false;
+    let mut completion_sent = false;
+    let mut stress_exited = false;
+    while started.elapsed() < DEADLINE {
+        let batch = runtime.drain(DrainBudget::default());
+        let aggregate = batch
+            .changed_panes()
+            .iter()
+            .map(|pane| batch.bytes_for(*pane))
+            .sum::<usize>();
+        if aggregate > 1024 * 1024
+            || batch
+                .changed_panes()
+                .iter()
+                .any(|pane| batch.bytes_for(*pane) > 256 * 1024)
+        {
+            return Err("terminal runtime exceeded its documented drain budget".to_owned());
+        }
+        let mut progressed = aggregate > 0;
+        if let Some(chunk) = stress_process
+            .try_read()
+            .map_err(|error| error.to_string())?
+        {
+            if chunk.bytes().len() > 64 * 1024 {
+                return Err("terminal transport emitted an oversized output chunk".to_owned());
+            }
+            stress_progress = stress_progress.saturating_add(chunk.bytes().len());
+            progressed = true;
+        }
+        stress_exited |= stress_process
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_some_and(|status| status.code() == Some(0));
+        if let Some(snapshot) = runtime.snapshot(interactive) {
+            observed_echo |= snapshot.plain_text().contains("héllø界");
+            observed_ansi |= snapshot
+                .rows()
+                .iter()
+                .flatten()
+                .any(|cell| cell.foreground == TerminalColor::Indexed(1));
+            if resized_applied
+                && (snapshot.rows().len() != usize::from(resized.rows())
+                    || snapshot
+                        .rows()
+                        .iter()
+                        .any(|row| row.len() != usize::from(resized.columns())))
+            {
+                return Err("terminal resize did not reach the renderer snapshot".to_owned());
+            }
+        }
+        if terminal_smoke_should_resize(observed_echo, observed_ansi, resized_applied) {
+            runtime
+                .resize(interactive, resized)
+                .map_err(|error| error.to_string())?;
+            resized_applied = true;
+        }
+        if resized_applied && !completion_sent {
+            runtime
+                .write(interactive, &terminal_smoke_line("complete"))
+                .map_err(|error| error.to_string())?;
+            completion_sent = true;
+        }
+        observed_quiet |= runtime
+            .snapshot(quiet)
+            .is_some_and(|snapshot| snapshot.plain_text().contains("fixture-ready"));
+        let interactive_exited = matches!(
+            runtime.state(interactive),
+            Some(RuntimePaneState::Exited { code: Some(0) })
+        );
+        if observed_echo
+            && observed_ansi
+            && resized_applied
+            && observed_quiet
+            && interactive_exited
+            && stress_exited
+            && stress_progress >= STRESS_BYTES
+        {
+            break;
+        }
+        if !progressed {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    if !observed_echo || !observed_ansi {
+        return Err("terminal smoke did not observe Unicode and ANSI output".to_owned());
+    }
+    if !observed_quiet || !matches!(runtime.state(quiet), Some(RuntimePaneState::Running)) {
+        return Err("noisy terminal work starved or stopped the quiet pane".to_owned());
+    }
+    if stress_progress < STRESS_BYTES {
+        return Err(format!(
+            "terminal stress stream stopped at {stress_progress} of {STRESS_BYTES} bytes"
+        ));
+    }
+    if !matches!(
+        runtime.state(interactive),
+        Some(RuntimePaneState::Exited { code: Some(0) })
+    ) || !stress_exited
+    {
+        return Err("terminal processes did not exit independently".to_owned());
+    }
+    runtime
+        .terminate(quiet, Duration::from_secs(1))
+        .map_err(|error| error.to_string())?;
+    let _ = runtime.drain(DrainBudget::default());
+
+    let mut layout = TerminalWorkspace::default();
+    let first = layout
+        .create_tab("build", workspace_root.path())
+        .map_err(|error| error.to_string())?;
+    layout
+        .set_pane_state(first, PaneState::Exited { code: Some(0) })
+        .map_err(|error| error.to_string())?;
+    layout
+        .split_focused(SplitAxis::Vertical)
+        .map_err(|error| error.to_string())?;
+    layout
+        .split_focused(SplitAxis::Horizontal)
+        .map_err(|error| error.to_string())?;
+    let snapshot = TerminalSessionSnapshot::from_workspace(&layout);
+    let restored = snapshot.restore().map_err(|error| error.to_string())?;
+    if restored.tabs().len() != 1
+        || restored.panes().count() != 3
+        || restored.panes().any(|pane| !pane.state().is_stopped())
+    {
+        return Err("terminal layout did not restore as stopped placeholders".to_owned());
+    }
+    if root.join(".strukt").exists() {
+        return Err("terminal smoke created forbidden workspace metadata".to_owned());
+    }
+    Ok(())
+}
+
+pub(crate) fn terminal_smoke_line(text: &str) -> Vec<u8> {
+    format!("{text}\r\n").into_bytes()
+}
+
+pub(crate) const fn terminal_smoke_should_resize(
+    observed_echo: bool,
+    observed_ansi: bool,
+    resized_applied: bool,
+) -> bool {
+    observed_echo && observed_ansi && !resized_applied
+}
+
+pub(crate) const fn native_terminal_stress_bytes() -> usize {
+    if cfg!(windows) {
+        1024 * 1024
+    } else {
+        64 * 1024 * 1024
+    }
+}
+
+pub(crate) async fn terminal_smoke_task(root: PathBuf) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || run_terminal_smoke(&root))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn terminal_fixture_path() -> Result<PathBuf, String> {
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let fixture =
+        executable.with_file_name(format!("terminal-fixture{}", std::env::consts::EXE_SUFFIX));
+    fixture.is_file().then_some(fixture).ok_or_else(|| {
+        "terminal fixture binary is missing; build strukt-terminal --bin terminal-fixture first"
+            .to_owned()
+    })
+}
+
+fn terminal_fixture_request(
+    fixture: &Path,
+    root: &Path,
+    mode: &str,
+    size: TerminalSize,
+) -> SpawnRequest {
+    SpawnRequest {
+        executable: fixture.to_path_buf(),
+        arguments: vec![mode.into()],
+        working_directory: root.to_path_buf(),
+        environment: Vec::new(),
+        size,
+    }
 }
 
 pub(crate) fn persist_workspace_batch(

@@ -31,6 +31,8 @@ jobs:
         run: cargo test --workspace
       - name: Build native application
         run: cargo build -p strukt-app
+      - name: Build terminal fixture
+        run: cargo build -p strukt-terminal --bin terminal-fixture
       - name: Smoke local workspace files
         if: runner.os != 'Windows'
         shell: bash
@@ -90,6 +92,37 @@ jobs:
           }
           if (Test-Path (Join-Path $fixture ".strukt")) {
             throw "editor smoke created workspace metadata"
+          }
+      - name: Smoke local terminal workflow
+        if: runner.os != 'Windows'
+        shell: bash
+        timeout-minutes: 2
+        run: |
+          fixture="$(mktemp -d)"
+          cargo run -p strukt-app -- --terminal-smoke "$fixture" |
+            tee terminal-smoke.log
+          grep -Fx \
+            "strukt terminal smoke: pty, unicode, ansi, resize, isolation, bounds, and restore passed" \
+            terminal-smoke.log
+          test ! -e "$fixture/.strukt"
+      - name: Smoke local terminal workflow
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 2
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP ("strukt-terminal-smoke-" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Force -Path $fixture | Out-Null
+          $output = & cargo run -p strukt-app -- --terminal-smoke $fixture 2>&1
+          $output | Write-Output
+          if ($LASTEXITCODE -ne 0) {
+            throw "terminal smoke exited with code $LASTEXITCODE"
+          }
+          if (($output -join "`n") -notmatch
+              "strukt terminal smoke: pty, unicode, ansi, resize, isolation, bounds, and restore passed") {
+            throw "terminal smoke marker missing"
+          }
+          if (Test-Path (Join-Path $fixture ".strukt")) {
+            throw "terminal smoke created workspace metadata"
           }
       - name: Smoke launch native Windows application
         if: runner.os == 'Windows'

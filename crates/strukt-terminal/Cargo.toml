@@ -1,0 +1,18 @@
+[package]
+name = "strukt-terminal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+portable-pty.workspace = true
+regex.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+unicode-width.workspace = true
+vte.workspace = true
+
+[lints]
+workspace = true
