@@ -1,12 +1,21 @@
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use strukt_terminal::{
     PortableTransport, SpawnRequest, TerminalSize, TerminalTransport, TransportError,
 };
 
+// ConPTY cursor inheritance is coordinated through the hosting console. Keep the
+// independent contract cases serial while each case still proves multiple live
+// processes; the end-to-end smoke separately exercises concurrent panes.
+static NATIVE_CONTRACT: Mutex<()> = Mutex::new(());
+
 #[test]
 fn native_transport_spawns_writes_resizes_exits_and_isolates() {
+    let _contract = NATIVE_CONTRACT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let fixture = PathBuf::from(env!("CARGO_BIN_EXE_terminal-fixture"));
     let transport = PortableTransport::new();
     let mut first = transport.spawn(request(&fixture, "echo", 24, 80)).unwrap();
@@ -32,6 +41,9 @@ fn native_transport_spawns_writes_resizes_exits_and_isolates() {
 
 #[test]
 fn native_transport_terminates_a_long_running_fixture() {
+    let _contract = NATIVE_CONTRACT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let fixture = PathBuf::from(env!("CARGO_BIN_EXE_terminal-fixture"));
     let mut child = PortableTransport::new()
         .spawn(request(&fixture, "wait", 24, 80))
@@ -62,6 +74,9 @@ fn transport_validates_requests_before_spawn() {
 
 #[test]
 fn output_chunks_are_bounded_and_strictly_sequenced() {
+    let _contract = NATIVE_CONTRACT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let fixture = PathBuf::from(env!("CARGO_BIN_EXE_terminal-fixture"));
     let mut child = PortableTransport::new()
         .spawn(request(&fixture, "burst", 24, 80))
