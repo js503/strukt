@@ -2,6 +2,7 @@
 
 mod app;
 mod editor;
+mod language;
 mod recovery_key;
 mod terminal;
 mod terminal_widget;
@@ -680,6 +681,28 @@ mod tests {
         });
         assert_eq!(app.editor.as_ref().unwrap().document_count(), 1);
         assert!(app.editor.as_ref().unwrap().view_state().tabs[0].pinned);
+    }
+
+    #[test]
+    fn language_restore_is_stopped_and_rust_open_schedules_discovery() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&project))));
+        let root = app.workspace.as_ref().unwrap().root.path().to_path_buf();
+
+        assert_eq!(app.language.running_servers(), 0);
+        let task = app.update(Message::DocumentOpened {
+            workspace_root: root,
+            path: "src/main.rs".into(),
+            disposition: OpenDisposition::Pinned,
+            result: Ok(text_document("fn main() {}", "disk", false)),
+        });
+
+        assert!(task.units() > 0);
+        assert_eq!(
+            app.language.state("rust"),
+            crate::language::LanguageState::Discovering
+        );
     }
 
     #[test]

@@ -90,6 +90,19 @@ impl OutboundMessage {
     pub const fn params(&self) -> &Value {
         &self.params
     }
+
+    #[must_use]
+    pub fn json_rpc(&self) -> Value {
+        let mut message = serde_json::Map::from_iter([
+            ("jsonrpc".to_owned(), Value::String("2.0".to_owned())),
+            ("method".to_owned(), Value::String(self.method.clone())),
+            ("params".to_owned(), self.params.clone()),
+        ]);
+        if let Some(id) = self.id {
+            message.insert("id".to_owned(), Value::from(id.get()));
+        }
+        Value::Object(message)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -335,6 +348,24 @@ impl LanguageClient {
                     "text": text
                 }
             }),
+        })
+    }
+
+    /// Queues a save notification for a synchronized document.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the client is not ready, the document is unknown,
+    /// or the outbound queue is full.
+    pub fn did_save(&mut self, document: &str) -> Result<(), ClientError> {
+        self.ensure_ready()?;
+        if !self.documents.contains_key(document) {
+            return Err(ClientError::UnknownDocument);
+        }
+        self.push_outbound(OutboundMessage {
+            id: None,
+            method: "textDocument/didSave".to_owned(),
+            params: json!({"textDocument": {"uri": document}}),
         })
     }
 

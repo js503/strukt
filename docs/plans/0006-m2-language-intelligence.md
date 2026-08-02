@@ -558,7 +558,7 @@ git commit -m "feat: persist language preferences safely"
 - Modify: `crates/strukt-app/src/app.rs`
 - Modify: `crates/strukt-app/src/editor.rs`
 
-- [ ] **Step 1: Write failing reducer scheduling tests**
+- [x] **Step 1: Write failing reducer scheduling tests**
 
 Require workspace restore to remain stopped, matching document open to schedule
 discovery, blocking process work to occur outside the reducer, document changes to
@@ -576,31 +576,31 @@ fn opening_matching_document_schedules_language_start_but_restore_does_not() {
 }
 ```
 
-- [ ] **Step 2: Run focused app tests and confirm integration is absent**
+- [x] **Step 2: Run focused app tests and confirm integration is absent**
 
 Run: `cargo test -p strukt-app --locked --offline language_`
 
 Expected: compile failure for app language state/messages.
 
-- [ ] **Step 3: Implement the app coordinator**
+- [x] **Step 3: Implement the app coordinator**
 
 Track workspace identity, per-language generation, synchronized documents,
 request guards, normalized snapshots, and persistence dirty state. Convert blocking
 jobs into Iced tasks and reduce only their typed completions.
 
-- [ ] **Step 4: Wire open/edit/save/close and override changes**
+- [x] **Step 4: Wire open/edit/save/close and override changes**
 
 Document open schedules discovery only for eligible full text. Revision changes
 coalesce `didChange`; save and close follow server capabilities. A language override
 closes the old pairing and opens the new pairing without mutating document content.
 
-- [ ] **Step 5: Add capability and failure isolation coverage**
+- [x] **Step 5: Add capability and failure isolation coverage**
 
 Test unavailable, disabled, denied, spawn failure, crash loop, stale response,
 workspace replacement, capability disablement, and persistence failure while files,
 editor saves, and terminals continue.
 
-- [ ] **Step 6: Verify and commit lifecycle integration**
+- [x] **Step 6: Verify and commit lifecycle integration**
 
 Run: `cargo test -p strukt-app --locked --offline language_`
 

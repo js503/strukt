@@ -4041,6 +4041,7 @@ dependencies = [
  "strukt-core",
  "strukt-editor",
  "strukt-fs",
+ "strukt-language",
  "strukt-persistence",
  "strukt-shell",
  "strukt-terminal",
@@ -4049,6 +4050,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
+ "url",
 ]
 
 [[package]]

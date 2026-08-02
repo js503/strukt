@@ -16,6 +16,8 @@ fn initialization_is_first_and_captures_only_supported_capabilities() {
 
     let initialize = client.start(Duration::ZERO).unwrap();
     assert_eq!(initialize.method(), "initialize");
+    assert_eq!(initialize.json_rpc()["jsonrpc"], "2.0");
+    assert_eq!(initialize.json_rpc()["id"], initialize.id().unwrap().get());
     assert_eq!(client.state(), LanguageServerState::Starting);
     let capabilities = all_capabilities(PositionEncoding::Utf8);
     client
@@ -123,6 +125,28 @@ fn graceful_shutdown_orders_shutdown_before_exit() {
     assert_eq!(client.take_outbound().unwrap().method(), "exit");
     client.finish_shutdown();
     assert_eq!(client.state(), LanguageServerState::Stopped);
+}
+
+#[test]
+fn save_and_close_emit_document_lifecycle_notifications() {
+    let mut client = ready_client();
+    client
+        .did_open("file:///workspace/main.rs", 1, "text")
+        .unwrap();
+    while client.take_outbound().is_some() {}
+    client.did_save("file:///workspace/main.rs").unwrap();
+    client
+        .did_close("file:///workspace/main.rs", Duration::from_secs(1))
+        .unwrap();
+
+    assert_eq!(
+        client.take_outbound().unwrap().method(),
+        "textDocument/didSave"
+    );
+    assert_eq!(
+        client.take_outbound().unwrap().method(),
+        "textDocument/didClose"
+    );
 }
 
 #[test]

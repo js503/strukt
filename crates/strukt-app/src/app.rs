@@ -22,7 +22,8 @@ use strukt_fs::{
 use strukt_persistence::{
     EditorRecoveryStore, EditorSessionSnapshot, EditorTabSnapshot, RecentWorkspaces, RecoveryKey,
     RecoveryKeyError, RecoveryKeyProvider, RecoveryMetadata, RecoveryPayload,
-    TerminalSessionSnapshot, WorkspaceStore, set_terminal_contribution, terminal_contribution,
+    TerminalSessionSnapshot, WorkspaceStore, language_contribution, set_language_contribution,
+    set_terminal_contribution, terminal_contribution,
 };
 use strukt_shell::{Activity, ShellAction, ShellState};
 use strukt_terminal::{
@@ -34,6 +35,11 @@ use strukt_theme::ThemeMode;
 use strukt_workspace::{WorkspaceRoot, WorkspaceState};
 
 use crate::editor::EditorSurfaces;
+use crate::language::{
+    LanguageCoordinator, LanguageDiscoveryCompletion, LanguageEffect, LanguageRuntime,
+    LanguageRuntimeEvent, LanguageSpawnCompletion, LanguageState, discover_workspace_language,
+    spawn_discovered_server,
+};
 use crate::recovery_key::NativeRecoveryKeyProvider;
 use crate::terminal::{TerminalSpawnCompletion, TerminalSurfaces};
 use crate::terminal_widget::TerminalWidgetEvent;
@@ -140,6 +146,8 @@ pub struct StruktApp {
     pub editor_replace_text: String,
     pub editor_find_options: FindOptions,
     pub editor_language_overrides: HashMap<DocumentId, String>,
+    pub(crate) language: LanguageCoordinator,
+    pub(crate) language_runtime: LanguageRuntime,
     pub(crate) terminal: TerminalSurfaces,
     pub terminal_error: Option<String>,
     pub terminal_tab_name: String,
@@ -340,6 +348,20 @@ pub enum Message {
         id: DocumentId,
         language: Option<String>,
     },
+    LanguageDiscovered {
+        workspace_id: String,
+        language_id: String,
+        generation: u64,
+        result: Result<LanguageDiscoveryCompletion, String>,
+    },
+    LanguageStarted {
+        workspace_id: String,
+        workspace_root: PathBuf,
+        language_id: String,
+        generation: u64,
+        completion: LanguageSpawnCompletion,
+    },
+    PollLanguage,
     ReplaceAll(DocumentId),
     SelectExplorerEntry(PathBuf),
     BeginCreateFile,
@@ -470,6 +492,8 @@ impl StruktApp {
             editor_replace_text: String::new(),
             editor_find_options: FindOptions::default(),
             editor_language_overrides: HashMap::new(),
+            language: LanguageCoordinator::default(),
+            language_runtime: LanguageRuntime::default(),
             terminal: TerminalSurfaces::default(),
             terminal_error: None,
             terminal_tab_name: String::new(),
@@ -878,6 +902,17 @@ impl StruktApp {
                     .contribution::<EditorSessionSnapshot>("editor")
                     .ok()
                     .flatten();
+                let restored_language = language_contribution(&opened.state)
+                    .ok()
+                    .flatten()
+                    .and_then(|snapshot| snapshot.restore().ok());
+                let workspace_id = opened.state.root.id().as_str().to_owned();
+                self.language = if let Some(restored) = restored_language {
+                    LanguageCoordinator::restore(workspace_id, &restored)
+                } else {
+                    LanguageCoordinator::new(workspace_id)
+                };
+                self.language_runtime = LanguageRuntime::default();
                 let root = opened.state.root.path().to_path_buf();
                 match WorkspaceWatcher::start(&root) {
                     Ok(watcher) => {
@@ -1089,7 +1124,10 @@ impl StruktApp {
                 let was_restore = self.editor_restore_pending.remove(&path_string);
                 match result {
                     Ok(opened) => match opened.kind {
-                        DocumentKind::Text { read_only, .. } => {
+                        DocumentKind::Text {
+                            read_only,
+                            truncated,
+                        } => {
                             let Some(text) = opened.text else {
                                 self.editor_error =
                                     Some("text document had no text payload".into());
@@ -1116,6 +1154,11 @@ impl StruktApp {
                                     let surface_text = editor
                                         .document(id)
                                         .map_or_else(String::new, strukt_editor::Document::text);
+                                    let revision = editor
+                                        .document(id)
+                                        .map(strukt_editor::Document::revision)
+                                        .unwrap_or_default()
+                                        .as_u64();
                                     self.editor_surfaces.insert(id, &surface_text);
                                     if let Some(snapshot) =
                                         self.editor_restore_tabs.get(&path_string).cloned()
@@ -1161,7 +1204,17 @@ impl StruktApp {
                                     }
                                     let recovery = self.load_recovery_task(id);
                                     let persistence = self.request_persistence(false);
-                                    return Task::batch([recovery, persistence]);
+                                    let language_override =
+                                        self.editor_language_overrides.get(&id).map(String::as_str);
+                                    let effects = self.language.open_document(
+                                        id,
+                                        &path,
+                                        language_override,
+                                        revision,
+                                        (!truncated).then_some(surface_text.as_str()),
+                                    );
+                                    let language = self.language_effects_task(effects);
+                                    return Task::batch([recovery, persistence, language]);
                                 }
                                 Err(error) => self.editor_error = Some(error),
                             }
@@ -1271,9 +1324,11 @@ impl StruktApp {
                         *self.editor_scroll_lines.entry(id).or_default() += delta;
                     }
                     if is_edit {
+                        let language_effects = self.language_document_changed(id);
                         let recovery = self.schedule_recovery(id);
                         let persistence = self.request_persistence(false);
-                        return Task::batch([recovery, persistence]);
+                        let language = self.language_effects_task(language_effects);
+                        return Task::batch([recovery, persistence, language]);
                     }
                 }
                 return Task::none();
@@ -1305,9 +1360,11 @@ impl StruktApp {
                 {
                     Ok(()) => {
                         self.editor_error = None;
+                        let language_effects = self.language_document_changed(id);
                         let recovery = self.schedule_recovery(id);
                         let persistence = self.request_persistence(false);
-                        return Task::batch([recovery, persistence]);
+                        let language = self.language_effects_task(language_effects);
+                        return Task::batch([recovery, persistence, language]);
                     }
                     Err(error) => self.editor_error = Some(error.to_string()),
                 }
@@ -1323,9 +1380,11 @@ impl StruktApp {
                 {
                     Ok(()) => {
                         self.editor_error = None;
+                        let language_effects = self.language_document_changed(id);
                         let recovery = self.schedule_recovery(id);
                         let persistence = self.request_persistence(false);
-                        return Task::batch([recovery, persistence]);
+                        let language = self.language_effects_task(language_effects);
+                        return Task::batch([recovery, persistence, language]);
                     }
                     Err(error) => self.editor_error = Some(error.to_string()),
                 }
@@ -1356,6 +1415,7 @@ impl StruktApp {
                 return self.request_persistence(false);
             }
             Message::SetLanguageOverride { id, language } => {
+                let effects = self.language.set_override(id, language.as_deref());
                 if self
                     .editor
                     .as_ref()
@@ -1370,7 +1430,134 @@ impl StruktApp {
                         }
                     }
                 }
-                return self.request_persistence(false);
+                let persistence = self.request_persistence(false);
+                let language = self.language_effects_task(effects);
+                return Task::batch([persistence, language]);
+            }
+            Message::LanguageDiscovered {
+                workspace_id,
+                language_id,
+                generation,
+                result,
+            } => {
+                match result {
+                    Ok(LanguageDiscoveryCompletion::Available(server)) => {
+                        if self.language.discovery_available(
+                            &workspace_id,
+                            &language_id,
+                            generation,
+                        ) && let Some(root) =
+                            self.workspace.as_ref().map(|state| state.root.clone())
+                        {
+                            let workspace_root = root.path().to_path_buf();
+                            let completion_root = workspace_root.clone();
+                            let completion_workspace = workspace_id.clone();
+                            let completion_language = language_id.clone();
+                            return Task::perform(
+                                async move {
+                                    tokio::task::spawn_blocking(move || {
+                                        spawn_discovered_server(&server, root.path())
+                                    })
+                                    .await
+                                    .unwrap_or_else(|error| {
+                                        crate::language::LanguageSpawnCompletion::new(Err(
+                                            error.to_string()
+                                        ))
+                                    })
+                                },
+                                move |completion| Message::LanguageStarted {
+                                    workspace_id: completion_workspace,
+                                    workspace_root: completion_root,
+                                    language_id: completion_language,
+                                    generation,
+                                    completion,
+                                },
+                            );
+                        }
+                    }
+                    Ok(LanguageDiscoveryCompletion::ApprovalRequired(_)) => {
+                        self.language.discovery_finished(
+                            &workspace_id,
+                            &language_id,
+                            generation,
+                            LanguageState::ApprovalRequired,
+                        );
+                    }
+                    Ok(LanguageDiscoveryCompletion::Unavailable) => {
+                        self.language.discovery_finished(
+                            &workspace_id,
+                            &language_id,
+                            generation,
+                            LanguageState::Unavailable,
+                        );
+                    }
+                    Ok(LanguageDiscoveryCompletion::Disabled) => {
+                        self.language.discovery_finished(
+                            &workspace_id,
+                            &language_id,
+                            generation,
+                            LanguageState::Disabled,
+                        );
+                    }
+                    Err(_) => {
+                        self.language.discovery_finished(
+                            &workspace_id,
+                            &language_id,
+                            generation,
+                            LanguageState::Failed,
+                        );
+                    }
+                }
+                return Task::none();
+            }
+            Message::LanguageStarted {
+                workspace_id,
+                workspace_root,
+                language_id,
+                generation,
+                completion,
+            } => {
+                if self
+                    .workspace
+                    .as_ref()
+                    .is_none_or(|state| state.root.id().as_str() != workspace_id)
+                {
+                    return Task::none();
+                }
+                if let Err(_error) = self.language_runtime.finish_start(
+                    &workspace_id,
+                    &language_id,
+                    generation,
+                    workspace_root,
+                    &completion,
+                ) {
+                    self.language.fail(&language_id, generation);
+                }
+                return Task::none();
+            }
+            Message::PollLanguage => {
+                for event in self.language_runtime.poll() {
+                    match event {
+                        LanguageRuntimeEvent::Ready {
+                            language_id,
+                            generation,
+                        } => {
+                            let effects = self.language.mark_ready(&language_id, generation);
+                            if self.language_runtime.apply_effects(effects).is_err() {
+                                self.language.fail(&language_id, generation);
+                            }
+                        }
+                        LanguageRuntimeEvent::Failed {
+                            language_id,
+                            generation,
+                            ..
+                        } => {
+                            self.language.fail(&language_id, generation);
+                        }
+                        LanguageRuntimeEvent::Notification { .. } => {}
+                    }
+                }
+                return Task::none();
             }
             Message::ReplaceAll(id) => {
                 let Some(editor) = &mut self.editor else {
@@ -1397,9 +1584,11 @@ impl StruktApp {
                 match result {
                     Ok(()) => {
                         self.editor_error = None;
+                        let language_effects = self.language_document_changed(id);
                         let recovery = self.schedule_recovery(id);
                         let persistence = self.request_persistence(false);
-                        return Task::batch([recovery, persistence]);
+                        let language = self.language_effects_task(language_effects);
+                        return Task::batch([recovery, persistence, language]);
                     }
                     Err(error) => self.editor_error = Some(error),
                 }
@@ -1414,15 +1603,20 @@ impl StruktApp {
                         Err(error) => self.editor_error = Some(error.to_string()),
                     }
                 }
-                if self
+                let closed = self
                     .editor
                     .as_ref()
-                    .is_some_and(|editor| editor.document(id).is_none())
-                {
+                    .is_some_and(|editor| editor.document(id).is_none());
+                let effects = if closed {
                     self.editor_scroll_lines.remove(&id);
                     self.editor_language_overrides.remove(&id);
-                }
-                return self.request_persistence(false);
+                    self.language.close_document(id)
+                } else {
+                    Vec::new()
+                };
+                let persistence = self.request_persistence(false);
+                let language = self.language_effects_task(effects);
+                return Task::batch([persistence, language]);
             }
             Message::ResolveDocumentClose { id, decision } => {
                 if decision == CloseDecision::Save {
@@ -1436,17 +1630,21 @@ impl StruktApp {
                         Err(error) => self.editor_error = Some(error.to_string()),
                     }
                 }
-                if self
+                let closed = self
                     .editor
                     .as_ref()
-                    .is_some_and(|editor| editor.document(id).is_none())
-                {
+                    .is_some_and(|editor| editor.document(id).is_none());
+                let effects = if closed {
                     self.editor_scroll_lines.remove(&id);
                     self.editor_language_overrides.remove(&id);
-                }
+                    self.language.close_document(id)
+                } else {
+                    Vec::new()
+                };
                 self.pending_close = None;
                 let persistence = self.request_persistence(false);
-                return Task::batch([cleanup, persistence]);
+                let language = self.language_effects_task(effects);
+                return Task::batch([cleanup, persistence, language]);
             }
             Message::SaveDocument { id, mode } => return self.save_document_task(id, mode),
             Message::DocumentSaved {
@@ -1492,8 +1690,25 @@ impl StruktApp {
                 } else {
                     Task::none()
                 };
+                let effects = if saved_applied
+                    && self
+                        .editor
+                        .as_ref()
+                        .is_some_and(|editor| editor.document(id).is_some())
+                {
+                    self.language.save_document(id)
+                } else if self
+                    .editor
+                    .as_ref()
+                    .is_some_and(|editor| editor.document(id).is_none())
+                {
+                    self.language.close_document(id)
+                } else {
+                    Vec::new()
+                };
                 let persistence = self.request_persistence(false);
-                return Task::batch([cleanup, persistence]);
+                let language = self.language_effects_task(effects);
+                return Task::batch([cleanup, persistence, language]);
             }
             Message::DocumentDiskObserved {
                 workspace_root,
@@ -2144,6 +2359,9 @@ impl StruktApp {
             | Message::ToggleFindWholeWord
             | Message::ToggleFindRegex
             | Message::SetLanguageOverride { .. }
+            | Message::LanguageDiscovered { .. }
+            | Message::LanguageStarted { .. }
+            | Message::PollLanguage
             | Message::ReplaceAll(_)
             | Message::BeginCreateFile
             | Message::BeginCreateDirectory
@@ -2693,6 +2911,103 @@ impl StruktApp {
         Some(EditorSessionSnapshot::new(tabs, active_path, preview_path))
     }
 
+    fn language_document_changed(&mut self, id: DocumentId) -> Vec<LanguageEffect> {
+        let Some((revision, text)) = self.editor.as_ref().and_then(|editor| {
+            editor
+                .document(id)
+                .map(|document| (document.revision().as_u64(), document.text()))
+        }) else {
+            return Vec::new();
+        };
+        self.language.edit_document(id, revision, &text)
+    }
+
+    fn language_effects_task(&mut self, effects: Vec<LanguageEffect>) -> Task<Message> {
+        let mut discovery_effects = Vec::new();
+        let mut runtime_effects = Vec::new();
+        for effect in effects {
+            if matches!(effect, LanguageEffect::Discover { .. }) {
+                discovery_effects.push(effect);
+            } else {
+                runtime_effects.push(effect);
+            }
+        }
+        let failure_targets = runtime_effects
+            .iter()
+            .filter_map(|effect| match effect {
+                LanguageEffect::Open {
+                    language_id,
+                    generation,
+                    ..
+                }
+                | LanguageEffect::Change {
+                    language_id,
+                    generation,
+                    ..
+                }
+                | LanguageEffect::Save {
+                    language_id,
+                    generation,
+                    ..
+                }
+                | LanguageEffect::Close {
+                    language_id,
+                    generation,
+                    ..
+                } => Some((language_id.clone(), *generation)),
+                LanguageEffect::Discover { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        if self
+            .language_runtime
+            .apply_effects(runtime_effects)
+            .is_err()
+        {
+            for (language_id, generation) in failure_targets {
+                self.language.fail(&language_id, generation);
+            }
+        }
+        let Some(workspace) = self.workspace.as_ref().map(|state| state.root.clone()) else {
+            return Task::none();
+        };
+        let tasks = discovery_effects
+            .into_iter()
+            .filter_map(|effect| {
+                let LanguageEffect::Discover {
+                    workspace_id,
+                    language_id,
+                    descriptor_id,
+                    generation,
+                } = effect
+                else {
+                    return None;
+                };
+                let workspace = workspace.clone();
+                let completion_language = language_id.clone();
+                Some(Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            discover_workspace_language(
+                                &workspace,
+                                &language_id,
+                                descriptor_id.as_deref(),
+                            )
+                        })
+                        .await
+                        .map_err(|error| error.to_string())?
+                    },
+                    move |result| Message::LanguageDiscovered {
+                        workspace_id,
+                        language_id: completion_language,
+                        generation,
+                        result,
+                    },
+                ))
+            })
+            .collect::<Vec<_>>();
+        Task::batch(tasks)
+    }
+
     fn request_persistence(&mut self, record_recent: bool) -> Task<Message> {
         let Some(mut state) = self.workspace.clone() else {
             return Task::none();
@@ -2701,6 +3016,12 @@ impl StruktApp {
         let _ = set_terminal_contribution(&mut state, &terminal_snapshot);
         if let Some(workspace) = &mut self.workspace {
             let _ = set_terminal_contribution(workspace, &terminal_snapshot);
+        }
+        if let Some(snapshot) = self.language.snapshot() {
+            let _ = set_language_contribution(&mut state, &snapshot);
+            if let Some(workspace) = &mut self.workspace {
+                let _ = set_language_contribution(workspace, &snapshot);
+            }
         }
         if let Some(snapshot) = self.editor_session_snapshot() {
             let _ = state.set_contribution("editor", &snapshot);
@@ -3116,6 +3437,10 @@ impl StruktApp {
         if self.terminal.running_processes() > 0 {
             subscriptions
                 .push(time::every(Duration::from_millis(16)).map(|_| Message::PollTerminal));
+        }
+        if self.language.running_servers() > 0 {
+            subscriptions
+                .push(time::every(Duration::from_millis(16)).map(|_| Message::PollLanguage));
         }
         if let Some(timeout) = self.launch_mode.smoke_timeout() {
             subscriptions.push(time::every(timeout).map(|_| Message::SmokeTimeout));
