@@ -3410,7 +3410,7 @@ pub(crate) fn run_terminal_smoke(root: &Path) -> Result<(), String> {
         )
         .map_err(|error| error.to_string())?;
     runtime
-        .write(interactive, "héllø界\n".as_bytes())
+        .write(interactive, &terminal_smoke_line("héllø界"))
         .map_err(|error| error.to_string())?;
     let resized = TerminalSize::new(6, 60).map_err(|error| error.to_string())?;
     runtime
@@ -3540,6 +3540,10 @@ pub(crate) fn run_terminal_smoke(root: &Path) -> Result<(), String> {
         return Err("terminal smoke created forbidden workspace metadata".to_owned());
     }
     Ok(())
+}
+
+pub(crate) fn terminal_smoke_line(text: &str) -> Vec<u8> {
+    format!("{text}\r\n").into_bytes()
 }
 
 pub(crate) async fn terminal_smoke_task(root: PathBuf) -> Result<(), String> {

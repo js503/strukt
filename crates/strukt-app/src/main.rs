@@ -1417,6 +1417,14 @@ mod tests {
     }
 
     #[test]
+    fn terminal_smoke_submits_lines_with_portable_enter_framing() {
+        assert_eq!(
+            crate::app::terminal_smoke_line("héllø界"),
+            "héllø界\r\n".as_bytes()
+        );
+    }
+
+    #[test]
     fn workspace_files_smoke_opens_discovers_and_round_trips_without_repo_metadata() {
         let project = tempdir().unwrap();
         std::fs::write(project.path().join("strukt-smoke.txt"), "strukt\n").unwrap();
