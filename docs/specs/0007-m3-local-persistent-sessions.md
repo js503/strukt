@@ -106,6 +106,13 @@ The M2 `strukt-terminal` parser, grid, layout primitives, and native transport s
 the source of truth. M3 moves live runtime ownership behind the provider rather
 than creating a second terminal implementation.
 
+The wire implementation uses `ciborium 0.2.2` for named-field serde CBOR without
+packed encoding and with an explicit decoder recursion limit. Authentication uses
+the already lock-compatible RustCrypto `hmac 0.12.1` and `sha2 0.10.9` crates;
+their verifier performs constant-time tag comparison. These dependencies are
+MIT/Apache-2.0 compatible and keep protocol/authentication code free of workspace
+`unsafe` blocks.
+
 ## Identity and Hierarchy
 
 Identifiers are random 128-bit values serialized as lowercase hexadecimal. They

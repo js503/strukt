@@ -28,8 +28,10 @@ blake3 = { version = "1.8.5", features = ["pure"] }
 cap-fs-ext = "4.0.2"
 cap-std = "4.0.2"
 chacha20poly1305 = { version = "0.11", features = ["getrandom"] }
+ciborium = "0.2.2"
 directories = "6.0.0"
 getrandom = "0.4"
+hmac = "0.12.1"
 iced = { version = "0.14.0", features = ["advanced", "canvas", "highlighter", "tokio", "wgpu"] }
 ignore = "0.4.31"
 keyring = "4.1.5"
@@ -42,6 +44,7 @@ ropey = "1.6.1"
 rustix = { version = "1.1.4", features = ["fs"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10.9"
 strukt-core = { path = "crates/strukt-core" }
 strukt-editor = { path = "crates/strukt-editor" }
 strukt-fs = { path = "crates/strukt-fs" }

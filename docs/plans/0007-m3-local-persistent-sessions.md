@@ -153,32 +153,32 @@ git commit -m "feat: define session provider snapshots"
 - Create: `crates/strukt-session/tests/protocol.rs`
 - Modify: `crates/strukt-session/src/lib.rs`
 
-- [ ] **Step 1: Write failing framing and authentication tests**
+- [x] **Step 1: Write failing framing and authentication tests**
 
 Cover fragmented and combined frames, every size limit, unknown kinds, malformed
 CBOR, constant-time proof validation, wrong secret/instance/nonce, secret rotation,
 monotonic request IDs, revision/generation guards, and zeroized secret ownership.
 
-- [ ] **Step 2: Select the safe local-socket and CBOR dependencies**
+- [x] **Step 2: Select the CBOR and authentication dependencies**
 
 Verify current official crate documentation and licenses. Add only maintained,
-cross-platform, safe APIs compatible with Rust 1.97 and MIT/Apache licensing. Pin
-resolved versions in `Cargo.lock`; do not introduce async runtime coupling into the
-domain crate.
+safe APIs compatible with Rust 1.97 and MIT/Apache licensing. Pin resolved versions
+in `Cargo.lock`; do not introduce async runtime coupling into the domain crate. The
+cross-platform local-socket dependency remains Task 5's platform decision.
 
-- [ ] **Step 3: Implement versioned bounded framing**
+- [x] **Step 3: Implement versioned bounded framing**
 
 Use a 4-byte big-endian length and versioned CBOR payload. Separate ordinary and
 snapshot limits, bound decoder retained bytes, reject ambiguous messages, and keep
 raw frames out of error strings.
 
-- [ ] **Step 4: Implement the handshake**
+- [x] **Step 4: Implement the handshake**
 
 Generate 256-bit service secrets from the OS random source. Prove possession with
 HMAC-SHA256 over version, instance, endpoint identity, and client nonce. Compare
 proofs in constant time, redact diagnostics, and zeroize secrets on drop.
 
-- [ ] **Step 5: Verify protocol bounds and dependency policy**
+- [x] **Step 5: Verify protocol bounds and dependency policy**
 
 Run:
 
@@ -191,7 +191,7 @@ cargo clippy -p strukt-session --all-targets --locked --offline -- -D warnings
 Expected: pass; license and dependency rationale recorded in the spec or ADR if
 needed.
 
-- [ ] **Step 6: Commit the protocol**
+- [x] **Step 6: Commit the protocol**
 
 ```bash
 git add Cargo.toml Cargo.lock crates/strukt-session
