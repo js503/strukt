@@ -345,7 +345,7 @@ cargo build -p strukt-session --bin session-fixture --locked --offline
 
 Expected: pass without network or third-party shell multiplexer.
 
-- [ ] **Step 7: Commit the native service**
+- [x] **Step 7: Commit the native service**
 
 ```bash
 git add crates/strukt-session crates/strukt-terminal
@@ -389,7 +389,7 @@ cargo clippy -p strukt-session --all-targets --locked --offline -- -D warnings
 
 Expected: pass.
 
-- [ ] **Step 5: Commit the local client**
+- [x] **Step 5: Commit the local client**
 
 ```bash
 git add crates/strukt-session
@@ -442,7 +442,7 @@ cargo clippy -p strukt-app --all-targets --locked --offline -- -D warnings
 
 Expected: pass.
 
-- [ ] **Step 6: Commit app coordination**
+- [x] **Step 6: Commit app coordination**
 
 ```bash
 git add crates/strukt-app
@@ -491,7 +491,7 @@ cargo test -p strukt-theme --locked --offline
 
 Expected: pass in narrow and wide layout projections.
 
-- [ ] **Step 6: Commit the interface**
+- [x] **Step 6: Commit the interface**
 
 ```bash
 git add crates/strukt-app crates/strukt-theme
@@ -538,7 +538,7 @@ cargo test -p strukt-app --locked --offline session_migration_
 
 Expected: pass with no `.strukt` metadata and no runtime content in workspace state.
 
-- [ ] **Step 5: Commit migration**
+- [x] **Step 5: Commit migration**
 
 ```bash
 git add crates/strukt-persistence crates/strukt-app
@@ -554,14 +554,14 @@ git commit -m "feat: migrate terminal layouts to sessions"
 - Modify: `crates/strukt-session/src/bin/session-fixture.rs`
 - Modify: `.github/workflows/ci.yml`
 
-- [ ] **Step 1: Write failing smoke parser and orchestration tests**
+- [x] **Step 1: Write failing smoke parser and orchestration tests**
 
 Require exact `--session-smoke <existing-root>`, isolated application data,
 repository helper/fixture paths, outer timeout, two-session isolation, detach and
 reattach, output/layout verification, terminate isolation, stopped service restart,
 no `.strukt`, and exact success text.
 
-- [ ] **Step 2: Implement the smoke coordinator**
+- [x] **Step 2: Implement the smoke coordinator**
 
 Print only:
 
@@ -572,13 +572,13 @@ strukt M3 session smoke: hierarchy, isolation, detach, reattach, history, termin
 on complete success. Bound every child process and clean up the isolated helper on
 all error paths.
 
-- [ ] **Step 3: Extend CI on all three platforms**
+- [x] **Step 3: Extend CI on all three platforms**
 
 Build `strukt-sessiond` and `session-fixture`, run the smoke on macOS 14, Ubuntu
 24.04, and Windows Server 2022, and retain the existing M1/M2 checks. Add an outer
 timeout and exact marker/no-metadata assertions for both shell families.
 
-- [ ] **Step 4: Run the local release gate**
+- [x] **Step 4: Run the local release gate**
 
 Run:
 
@@ -597,7 +597,7 @@ cargo run -p strukt-app -- --session-smoke "$fixture"
 Expected: every command passes, the exact marker is printed, and the workspace
 contains no `.strukt` metadata.
 
-- [ ] **Step 5: Commit the smoke and CI gate**
+- [x] **Step 5: Commit the smoke and CI gate**
 
 ```bash
 git add crates/strukt-app crates/strukt-session .github/workflows/ci.yml

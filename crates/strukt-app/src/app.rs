@@ -58,6 +58,7 @@ pub(crate) const TERMINAL_SMOKE_SUCCESS: &str =
     "strukt terminal smoke: pty, unicode, ansi, resize, isolation, bounds, and restore passed";
 pub(crate) const LANGUAGE_SMOKE_SUCCESS: &str = "strukt language smoke: discovery, sync, diagnostics, completion, hover, definition, cancellation, shutdown, and restore passed";
 pub(crate) const M2_INTEGRATION_SMOKE_SUCCESS: &str = "strukt M2 integration smoke: files, editor, terminal, language, persistence, isolation, and stopped restore passed";
+pub(crate) const SESSION_SMOKE_SUCCESS: &str = "strukt M3 session smoke: hierarchy, isolation, detach, reattach, history, termination, and stopped restore passed";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DocumentNotice {
@@ -83,6 +84,9 @@ pub enum LaunchMode {
         root: PathBuf,
     },
     M2IntegrationSmoke {
+        root: PathBuf,
+    },
+    SessionSmoke {
         root: PathBuf,
     },
 }
@@ -123,6 +127,13 @@ impl LaunchMode {
                     root: PathBuf::from(root),
                 }
             }
+            [flag, root]
+                if flag == "--session-smoke" && !root.is_empty() && Path::new(root).is_dir() =>
+            {
+                Self::SessionSmoke {
+                    root: PathBuf::from(root),
+                }
+            }
             _ if args.iter().any(|argument| argument == "--smoke-test") => Self::SmokeTest,
             _ => Self::Interactive,
         }
@@ -136,7 +147,8 @@ impl LaunchMode {
             | Self::EditorSmoke { .. }
             | Self::TerminalSmoke { .. }
             | Self::LanguageSmoke { .. }
-            | Self::M2IntegrationSmoke { .. } => None,
+            | Self::M2IntegrationSmoke { .. }
+            | Self::SessionSmoke { .. } => None,
             Self::SmokeTest => Some(SMOKE_TEST_DURATION),
         }
     }

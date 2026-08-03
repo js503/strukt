@@ -35,6 +35,8 @@ jobs:
         run: cargo build -p strukt-terminal --bin terminal-fixture
       - name: Build language fixture
         run: cargo build -p strukt-language --bin language-fixture
+      - name: Build persistent session helpers
+        run: cargo build -p strukt-session --bin strukt-sessiond --bin session-fixture
       - name: Smoke local workspace files
         if: runner.os != 'Windows'
         shell: bash
@@ -160,6 +162,37 @@ jobs:
           }
           if (Test-Path (Join-Path $fixture ".strukt")) {
             throw "M2 smoke created workspace metadata"
+          }
+      - name: Smoke persistent local sessions
+        if: runner.os != 'Windows'
+        shell: bash
+        timeout-minutes: 3
+        run: |
+          fixture="$(mktemp -d)"
+          cargo run -p strukt-app -- --session-smoke "$fixture" |
+            tee session-smoke.log
+          grep -Fx \
+            "strukt M3 session smoke: hierarchy, isolation, detach, reattach, history, termination, and stopped restore passed" \
+            session-smoke.log
+          test ! -e "$fixture/.strukt"
+      - name: Smoke persistent local sessions
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP ("strukt-session-smoke-" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Force -Path $fixture | Out-Null
+          $output = & cargo run -p strukt-app -- --session-smoke $fixture 2>&1
+          $output | Write-Output
+          if ($LASTEXITCODE -ne 0) {
+            throw "persistent session smoke exited with code $LASTEXITCODE"
+          }
+          $marker = "strukt M3 session smoke: hierarchy, isolation, detach, reattach, history, termination, and stopped restore passed"
+          if (($output -join [Environment]::NewLine) -notmatch [regex]::Escape($marker)) {
+            throw "persistent session smoke marker missing"
+          }
+          if (Test-Path (Join-Path $fixture ".strukt")) {
+            throw "persistent session smoke created workspace metadata"
           }
       - name: Smoke launch native Windows application
         if: runner.os == 'Windows'

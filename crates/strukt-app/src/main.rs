@@ -5,6 +5,7 @@ mod editor;
 mod language;
 mod recovery_key;
 mod session;
+mod session_smoke;
 mod terminal;
 mod terminal_widget;
 mod view;
@@ -61,6 +62,14 @@ fn main() -> iced::Result {
             panic!("strukt M2 integration smoke failed: {error}");
         }
         println!("{}", app::M2_INTEGRATION_SMOKE_SUCCESS);
+        return Ok(());
+    }
+
+    if let LaunchMode::SessionSmoke { root } = &launch_mode {
+        if let Err(error) = session_smoke::run(root) {
+            panic!("strukt M3 session smoke failed: {error}");
+        }
+        println!("{}", app::SESSION_SMOKE_SUCCESS);
         return Ok(());
     }
 
@@ -186,6 +195,31 @@ mod tests {
         app.shell.explorer_visible = true;
         assert!(app.shell.explorer_visible);
         assert_eq!(app.shell.active_activity, Activity::Sessions);
+    }
+
+    #[test]
+    fn session_smoke_requires_exact_flag_and_existing_root() {
+        let root = tempdir().unwrap();
+        assert_eq!(
+            LaunchMode::from_args([
+                "--session-smoke".to_owned(),
+                root.path().display().to_string(),
+            ]),
+            LaunchMode::SessionSmoke {
+                root: root.path().to_path_buf(),
+            }
+        );
+        assert_eq!(
+            LaunchMode::from_args(["--session-smoke".to_owned()]),
+            LaunchMode::Interactive
+        );
+        assert_eq!(
+            LaunchMode::from_args([
+                "--session-smoke".to_owned(),
+                root.path().join("missing").display().to_string(),
+            ]),
+            LaunchMode::Interactive
+        );
     }
 
     #[test]
