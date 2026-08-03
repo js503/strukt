@@ -113,6 +113,14 @@ their verifier performs constant-time tag comparison. These dependencies are
 MIT/Apache-2.0 compatible and keep protocol/authentication code free of workspace
 `unsafe` blocks.
 
+Cross-platform local IPC uses `interprocess 2.4.3`, whose local-socket abstraction
+maps filesystem endpoints to Unix-domain sockets on macOS/Linux and generated pipe
+identities to Windows named pipes. It supports the three release platforms, has a
+Rust 1.75 MSRV, is 0BSD/Apache-2.0 licensed, and keeps platform FFI outside
+workspace crates. Exclusive service ownership uses the Rust standard library's
+cross-platform advisory file locks, which the workspace Rust 1.97 toolchain
+supports without another dependency.
+
 ## Identity and Hierarchy
 
 Identifiers are random 128-bit values serialized as lowercase hexadecimal. They

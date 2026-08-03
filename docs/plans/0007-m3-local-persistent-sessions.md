@@ -251,26 +251,26 @@ git commit -m "feat: persist stopped session definitions"
 - Create: `crates/strukt-session/tests/endpoint.rs`
 - Modify: `crates/strukt-session/src/lib.rs`
 
-- [ ] **Step 1: Write failing endpoint tests**
+- [x] **Step 1: Write failing endpoint tests**
 
 Require per-user endpoint identity, no TCP listener, owner-only rendezvous,
 exclusive service lock, stale-record recovery, authenticated round trip, client
 disconnect isolation, queue bounds, and cleanup that cannot remove another service
 instance's endpoint.
 
-- [ ] **Step 2: Implement platform-local sockets through safe APIs**
+- [x] **Step 2: Implement platform-local sockets through safe APIs**
 
 Use Unix-domain sockets on macOS/Linux and named pipes on Windows. Keep platform
 details private to the endpoint module. Reject paths/names outside the application
 data namespace and never place secrets in endpoint names or process arguments.
 
-- [ ] **Step 3: Implement rendezvous and service lock**
+- [x] **Step 3: Implement rendezvous and service lock**
 
 Atomically publish protocol version, service instance, endpoint identity, and a
 secret reference after the listener is ready. Validate the existing owner through
 an authenticated probe before treating a record as live.
 
-- [ ] **Step 4: Verify native and cross-target behavior**
+- [x] **Step 4: Verify native and cross-target behavior**
 
 Run:
 
@@ -282,7 +282,7 @@ cargo clippy -p strukt-session --all-targets --target x86_64-pc-windows-msvc --l
 
 Expected: native tests pass and Windows-specific code type-checks strictly.
 
-- [ ] **Step 5: Commit local IPC**
+- [x] **Step 5: Commit local IPC**
 
 ```bash
 git add crates/strukt-session Cargo.toml Cargo.lock
