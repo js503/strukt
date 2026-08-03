@@ -13,6 +13,7 @@ directories.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 strukt-language.workspace = true
+strukt-session.workspace = true
 strukt-terminal.workspace = true
 strukt-workspace.workspace = true
 thiserror.workspace = true

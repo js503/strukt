@@ -2,6 +2,7 @@
 
 mod editor_store;
 mod language_store;
+mod session_store;
 mod terminal_store;
 mod workspace_store;
 
@@ -13,6 +14,11 @@ pub use editor_store::{
 pub use language_store::{
     ApprovalSnapshot, LANGUAGE_CONTRIBUTION_ID, LanguageSelectionSnapshot, LanguageSessionSnapshot,
     LanguageStoreError, RestoredLanguageSession, language_contribution, set_language_contribution,
+};
+pub use session_store::{
+    SESSION_CONTRIBUTION_ID, SessionContribution, SessionMigrationError, SessionMigrationOutcome,
+    SessionMigrationPlan, apply_session_migration_metadata, plan_session_migration,
+    session_contribution, set_session_contribution,
 };
 pub use terminal_store::{
     TERMINAL_CONTRIBUTION_ID, TerminalSessionSnapshot, TerminalStoreError,
