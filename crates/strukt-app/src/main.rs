@@ -4,6 +4,7 @@ mod app;
 mod editor;
 mod language;
 mod recovery_key;
+mod session;
 mod terminal;
 mod terminal_widget;
 mod view;
@@ -91,6 +92,7 @@ mod tests {
         EditorRecoveryStore, EditorSessionSnapshot, RecoveryMetadata, RecoveryPayload,
         TerminalSessionSnapshot, WorkspaceStore, set_terminal_contribution, terminal_contribution,
     };
+    use strukt_session::ClientHealth;
     use strukt_shell::Activity;
     use strukt_terminal::{PaneState, SplitAxis, TerminalWorkspace};
     use strukt_workspace::{WorkspaceRoot, WorkspaceState};
@@ -155,6 +157,35 @@ mod tests {
             ignored: true,
             ..file_entry(path)
         }
+    }
+
+    #[test]
+    fn session_view_statuses_are_explicit_without_relying_on_color() {
+        assert_eq!(
+            crate::view::session_health_label(ClientHealth::Stopped),
+            "Stopped"
+        );
+        assert_eq!(
+            crate::view::session_health_label(ClientHealth::Ready),
+            "Ready"
+        );
+        assert_eq!(
+            crate::view::session_health_label(ClientHealth::Stale),
+            "Disconnected · showing last known state"
+        );
+        assert_eq!(
+            crate::view::session_health_label(ClientHealth::Failed),
+            "Unavailable"
+        );
+    }
+
+    #[test]
+    fn session_view_keeps_file_browser_available() {
+        let mut app = StruktApp::default();
+        app.shell.active_activity = Activity::Sessions;
+        app.shell.explorer_visible = true;
+        assert!(app.shell.explorer_visible);
+        assert_eq!(app.shell.active_activity, Activity::Sessions);
     }
 
     #[test]

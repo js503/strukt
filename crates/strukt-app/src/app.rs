@@ -22,9 +22,11 @@ use strukt_fs::{
 use strukt_persistence::{
     EditorRecoveryStore, EditorSessionSnapshot, EditorTabSnapshot, LanguageSessionSnapshot,
     RecentWorkspaces, RecoveryKey, RecoveryKeyError, RecoveryKeyProvider, RecoveryMetadata,
-    RecoveryPayload, TerminalSessionSnapshot, WorkspaceStore, language_contribution,
-    set_language_contribution, set_terminal_contribution, terminal_contribution,
+    RecoveryPayload, TerminalSessionSnapshot, WorkspaceStore, apply_session_migration_metadata,
+    language_contribution, session_contribution, set_language_contribution,
+    set_terminal_contribution, terminal_contribution,
 };
+use strukt_session::{ClientHealth, PaneId, RequestBody, ResponseBody, SessionId, WindowId};
 use strukt_shell::{Activity, ShellAction, ShellState};
 use strukt_terminal::{
     Color as TerminalColor, DrainBudget, PaneState, PasteDecision, PortableTransport,
@@ -41,6 +43,7 @@ use crate::language::{
     discover_workspace_language, parse_publish_diagnostics, spawn_discovered_server,
 };
 use crate::recovery_key::NativeRecoveryKeyProvider;
+use crate::session::{SessionConnectCompletion, SessionRequestCompletion, SessionSurfaces};
 use crate::terminal::{TerminalSpawnCompletion, TerminalSurfaces};
 use crate::terminal_widget::TerminalWidgetEvent;
 use crate::workspace::{OpenedWorkspace, open_workspace_without_store};
@@ -178,12 +181,19 @@ pub struct StruktApp {
     pub(crate) language_runtime: LanguageRuntime,
     pub(crate) terminal: TerminalSurfaces,
     pub terminal_error: Option<String>,
+    pub(crate) sessions: SessionSurfaces,
+    pub session_error: Option<String>,
+    pub session_name: String,
+    pub window_name: String,
+    pub session_confirmation: SessionConfirmation,
+    pub session_input: String,
     pub terminal_tab_name: String,
     pub terminal_expanded: bool,
     pub pending_terminal_close: Option<TerminalPaneId>,
     pub pending_terminal_paste: Option<(TerminalPaneId, String)>,
     pub pending_terminal_link: Option<String>,
     terminal_input_active: bool,
+    terminal_migrated_to_sessions: bool,
     editor_scroll_lines: HashMap<DocumentId, f32>,
     editor_restore_active: Option<String>,
     editor_restore_tabs: HashMap<String, EditorTabSnapshot>,
@@ -247,6 +257,30 @@ pub enum ExplorerDialog {
     ConfirmPermanentDelete(PathBuf),
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum SessionConfirmation {
+    #[default]
+    None,
+    RemoveSession {
+        session: SessionId,
+        name: String,
+    },
+    CloseWindow {
+        session: SessionId,
+        window: WindowId,
+        name: String,
+    },
+    ClosePane {
+        session: SessionId,
+        pane: PaneId,
+    },
+    TerminatePane {
+        session: SessionId,
+        pane: PaneId,
+        generation: u64,
+    },
+}
+
 #[derive(Clone, Debug)]
 pub enum Message {
     SelectActivity(Activity),
@@ -295,6 +329,37 @@ pub enum Message {
     ResolveTerminalLink(bool),
     TerminalLinkOpened(Result<(), String>),
     PollTerminal,
+    ConnectSessions,
+    ReconnectSessions,
+    SessionsConnected(SessionConnectCompletion),
+    CreateSession,
+    RefreshSessions,
+    StartSessionPane,
+    DetachSessions,
+    PollSessions,
+    SessionRequestFinished(SessionRequestCompletion),
+    SelectSession(SessionId),
+    SelectSessionWindow(WindowId),
+    SelectSessionPane(PaneId),
+    SessionNameChanged(String),
+    RenameSession,
+    DuplicateSession,
+    BeginRemoveSession,
+    WindowNameChanged(String),
+    CreateSessionWindow,
+    RenameSessionWindow,
+    DuplicateSessionWindow,
+    BeginCloseSessionWindow,
+    SplitSessionPane(SplitAxis),
+    BeginCloseSessionPane,
+    BeginTerminateSessionPane,
+    ResolveSessionConfirmation(bool),
+    SessionInputChanged(String),
+    SendSessionInput,
+    ResizeSessionPane {
+        rows: u16,
+        columns: u16,
+    },
     ToggleHiddenFiles,
     ToggleIgnoredFiles,
     FilesRefreshed {
@@ -493,6 +558,10 @@ impl StruktApp {
     }
 
     #[must_use]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "application construction initializes each independent coordinator explicitly"
+    )]
     pub(crate) fn new_with_store(launch_mode: LaunchMode, store: Option<WorkspaceStore>) -> Self {
         let mut capabilities = CapabilityRegistry::new();
         for descriptor in [
@@ -547,12 +616,19 @@ impl StruktApp {
             language_runtime: LanguageRuntime::default(),
             terminal: TerminalSurfaces::default(),
             terminal_error: None,
+            sessions: SessionSurfaces::default(),
+            session_error: None,
+            session_name: String::new(),
+            window_name: String::new(),
+            session_confirmation: SessionConfirmation::None,
+            session_input: String::new(),
             terminal_tab_name: String::new(),
             terminal_expanded: false,
             pending_terminal_close: None,
             pending_terminal_paste: None,
             pending_terminal_link: None,
             terminal_input_active: false,
+            terminal_migrated_to_sessions: false,
             editor_scroll_lines: HashMap::new(),
             editor_restore_active: None,
             editor_restore_tabs: HashMap::new(),
@@ -631,6 +707,422 @@ impl StruktApp {
     )]
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::ConnectSessions => {
+                return match self.sessions.begin_connect() {
+                    Ok(job) => {
+                        self.session_error = None;
+                        connect_sessions_task(job)
+                    }
+                    Err(error) => {
+                        self.session_error = Some(error.to_string());
+                        Task::none()
+                    }
+                };
+            }
+            Message::ReconnectSessions => {
+                if self.sessions.health() != ClientHealth::Stale {
+                    return Task::none();
+                }
+                return match self.sessions.begin_reconnect() {
+                    Ok(job) => connect_sessions_task(job),
+                    Err(error) => {
+                        self.session_error = Some(error.to_string());
+                        Task::none()
+                    }
+                };
+            }
+            Message::SessionsConnected(completion) => {
+                match self.sessions.finish_connect(&completion) {
+                    Ok(()) => {
+                        self.session_error = None;
+                        if let Some(workspace) = &self.workspace {
+                            match self.sessions.begin_migration(workspace) {
+                                Ok(Some(job)) => return session_request_task(job),
+                                Ok(None) => {}
+                                Err(error) => {
+                                    self.session_error = Some(error.to_string());
+                                    return Task::none();
+                                }
+                            }
+                        }
+                        return Task::done(Message::RefreshSessions);
+                    }
+                    Err(error) => self.session_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::CreateSession => {
+                let Some(root) = self
+                    .workspace
+                    .as_ref()
+                    .map(|workspace| workspace.root.path().to_path_buf())
+                else {
+                    self.session_error = Some("open a workspace before creating a session".into());
+                    return Task::none();
+                };
+                let number = self
+                    .sessions
+                    .catalog()
+                    .map_or(1, |snapshot| snapshot.catalog().sessions().count() + 1);
+                return self.start_session_request(RequestBody::CreateSession {
+                    name: format!("Session {number}"),
+                    working_directory: root,
+                });
+            }
+            Message::RefreshSessions => {
+                return self.start_session_request(RequestBody::Catalog);
+            }
+            Message::StartSessionPane => {
+                let (Some(session), Some(pane)) = (
+                    self.sessions.selected_session(),
+                    self.sessions.selected_pane(),
+                ) else {
+                    self.session_error = Some("select a persistent session pane first".into());
+                    return Task::none();
+                };
+                return self.start_session_request(RequestBody::StartPane {
+                    session,
+                    pane,
+                    rows: 24,
+                    columns: 80,
+                });
+            }
+            Message::DetachSessions => {
+                return match self.sessions.begin_detach() {
+                    Ok(job) => session_request_task(job),
+                    Err(error) => {
+                        self.session_error = Some(error.to_string());
+                        Task::none()
+                    }
+                };
+            }
+            Message::PollSessions => {
+                if self.sessions.health() != ClientHealth::Ready
+                    || self.sessions.request_in_flight()
+                    || self.sessions.selected_pane().is_none()
+                {
+                    return Task::none();
+                }
+                return match self.sessions.begin_snapshot() {
+                    Ok(job) => session_request_task(job),
+                    Err(error) => {
+                        self.session_error = Some(error.to_string());
+                        Task::none()
+                    }
+                };
+            }
+            Message::SessionRequestFinished(completion) => {
+                let result = self.sessions.finish_request(&completion);
+                if let Some(plan) = self.sessions.take_completed_migration()
+                    && let Some(workspace) = &mut self.workspace
+                {
+                    match apply_session_migration_metadata(workspace, &plan) {
+                        Ok(()) => {
+                            self.terminal_migrated_to_sessions = true;
+                            return self.request_persistence(false);
+                        }
+                        Err(error) => {
+                            self.session_error = Some(error.to_string());
+                            return Task::none();
+                        }
+                    }
+                }
+                match result {
+                    Ok(
+                        ResponseBody::SessionCreated(_)
+                        | ResponseBody::SessionDuplicated(_)
+                        | ResponseBody::WindowCreated(_)
+                        | ResponseBody::WindowDuplicated(_)
+                        | ResponseBody::PaneSplit(_),
+                    ) => {
+                        self.session_error = None;
+                        return Task::done(Message::RefreshSessions);
+                    }
+                    Ok(ResponseBody::PaneStarted { .. }) => {
+                        self.session_error = None;
+                        return Task::done(Message::PollSessions);
+                    }
+                    Ok(_) => self.session_error = None,
+                    Err(error) => self.session_error = Some(error.to_string()),
+                }
+                return Task::none();
+            }
+            Message::SelectSession(session) => {
+                if self.sessions.select_session(session) {
+                    self.session_name = self
+                        .sessions
+                        .catalog()
+                        .and_then(|snapshot| snapshot.catalog().session(session))
+                        .map_or_else(String::new, |target| target.name().to_owned());
+                    return self.start_session_request(RequestBody::ActivateSession { session });
+                }
+                self.session_error = Some("persistent session selection is stale".into());
+                return Task::none();
+            }
+            Message::SelectSessionWindow(window) => {
+                if self.sessions.select_window(window) {
+                    let Some(session) = self.sessions.selected_session() else {
+                        return Task::none();
+                    };
+                    self.window_name = self
+                        .sessions
+                        .catalog()
+                        .and_then(|snapshot| snapshot.catalog().session(session))
+                        .and_then(|target| target.windows().iter().find(|item| item.id() == window))
+                        .map_or_else(String::new, |target| target.name().to_owned());
+                    return self
+                        .start_session_request(RequestBody::ActivateWindow { session, window });
+                }
+                self.session_error = Some("persistent window selection is stale".into());
+                return Task::none();
+            }
+            Message::SelectSessionPane(pane) => {
+                if self.sessions.select_pane(pane) {
+                    let Some(session) = self.sessions.selected_session() else {
+                        return Task::none();
+                    };
+                    return self.start_session_request(RequestBody::FocusPane { session, pane });
+                }
+                self.session_error = Some("persistent pane selection is stale".into());
+                return Task::none();
+            }
+            Message::SessionNameChanged(name) => {
+                self.session_name = name;
+                return Task::none();
+            }
+            Message::RenameSession => {
+                let Some(session) = self.sessions.selected_session() else {
+                    return Task::none();
+                };
+                return self.start_session_request(RequestBody::RenameSession {
+                    session,
+                    name: self.session_name.clone(),
+                });
+            }
+            Message::DuplicateSession => {
+                let Some(session) = self.sessions.selected_session() else {
+                    return Task::none();
+                };
+                return self.start_session_request(RequestBody::DuplicateSession { session });
+            }
+            Message::BeginRemoveSession => {
+                let Some(session) = self.sessions.selected_session() else {
+                    return Task::none();
+                };
+                let Some(target) = self
+                    .sessions
+                    .catalog()
+                    .and_then(|snapshot| snapshot.catalog().session(session))
+                else {
+                    return Task::none();
+                };
+                let running = target
+                    .windows()
+                    .iter()
+                    .flat_map(strukt_session::SessionWindow::panes)
+                    .filter(|pane| session_pane_is_live(pane.lifecycle()))
+                    .count();
+                if running > 0 {
+                    self.session_error = Some(format!(
+                        "terminate {running} running pane(s) before removing {}",
+                        target.name()
+                    ));
+                } else {
+                    self.session_confirmation = SessionConfirmation::RemoveSession {
+                        session,
+                        name: target.name().to_owned(),
+                    };
+                }
+                return Task::none();
+            }
+            Message::WindowNameChanged(name) => {
+                self.window_name = name;
+                return Task::none();
+            }
+            Message::CreateSessionWindow => {
+                let (Some(session), Some(root)) = (
+                    self.sessions.selected_session(),
+                    self.workspace
+                        .as_ref()
+                        .map(|workspace| workspace.root.path().to_path_buf()),
+                ) else {
+                    return Task::none();
+                };
+                let number = self
+                    .sessions
+                    .catalog()
+                    .and_then(|snapshot| snapshot.catalog().session(session))
+                    .map_or(1, |target| target.windows().len() + 1);
+                return self.start_session_request(RequestBody::CreateWindow {
+                    session,
+                    name: format!("Window {number}"),
+                    working_directory: root,
+                });
+            }
+            Message::RenameSessionWindow => {
+                let (Some(session), Some(window)) = (
+                    self.sessions.selected_session(),
+                    self.sessions.selected_window(),
+                ) else {
+                    return Task::none();
+                };
+                return self.start_session_request(RequestBody::RenameWindow {
+                    session,
+                    window,
+                    name: self.window_name.clone(),
+                });
+            }
+            Message::DuplicateSessionWindow => {
+                let (Some(session), Some(window)) = (
+                    self.sessions.selected_session(),
+                    self.sessions.selected_window(),
+                ) else {
+                    return Task::none();
+                };
+                return self
+                    .start_session_request(RequestBody::DuplicateWindow { session, window });
+            }
+            Message::BeginCloseSessionWindow => {
+                let (Some(session), Some(window)) = (
+                    self.sessions.selected_session(),
+                    self.sessions.selected_window(),
+                ) else {
+                    return Task::none();
+                };
+                let target = self
+                    .sessions
+                    .catalog()
+                    .and_then(|snapshot| snapshot.catalog().session(session))
+                    .and_then(|target| target.windows().iter().find(|item| item.id() == window));
+                let Some(target) = target else {
+                    return Task::none();
+                };
+                let running = target
+                    .panes()
+                    .filter(|pane| session_pane_is_live(pane.lifecycle()))
+                    .count();
+                if running > 0 {
+                    self.session_error = Some(format!(
+                        "terminate {running} running pane(s) before closing {}",
+                        target.name()
+                    ));
+                    return Task::none();
+                }
+                self.session_confirmation = SessionConfirmation::CloseWindow {
+                    session,
+                    window,
+                    name: target.name().to_owned(),
+                };
+                return Task::none();
+            }
+            Message::SplitSessionPane(axis) => {
+                let Some(session) = self.sessions.selected_session() else {
+                    return Task::none();
+                };
+                return self.start_session_request(RequestBody::SplitPane { session, axis });
+            }
+            Message::BeginCloseSessionPane => {
+                let (Some(session), Some(pane)) = (
+                    self.sessions.selected_session(),
+                    self.sessions.selected_pane(),
+                ) else {
+                    return Task::none();
+                };
+                let live = self
+                    .sessions
+                    .catalog()
+                    .and_then(|snapshot| snapshot.catalog().pane(pane))
+                    .is_some_and(|(_, _, pane)| session_pane_is_live(pane.lifecycle()));
+                if live {
+                    self.session_error =
+                        Some(format!("terminate running pane {pane} before closing it"));
+                } else {
+                    self.session_confirmation = SessionConfirmation::ClosePane { session, pane };
+                }
+                return Task::none();
+            }
+            Message::BeginTerminateSessionPane => {
+                let (Some(session), Some(pane)) = (
+                    self.sessions.selected_session(),
+                    self.sessions.selected_pane(),
+                ) else {
+                    return Task::none();
+                };
+                let Some(generation) = self
+                    .sessions
+                    .catalog()
+                    .and_then(|snapshot| snapshot.catalog().pane(pane))
+                    .filter(|(_, _, pane)| session_pane_is_live(pane.lifecycle()))
+                    .map(|(_, _, pane)| pane.generation())
+                    .filter(|generation| *generation > 0)
+                else {
+                    self.session_error = Some("the selected pane is not running".into());
+                    return Task::none();
+                };
+                self.session_confirmation = SessionConfirmation::TerminatePane {
+                    session,
+                    pane,
+                    generation,
+                };
+                return Task::none();
+            }
+            Message::ResolveSessionConfirmation(confirmed) => {
+                let confirmation = std::mem::take(&mut self.session_confirmation);
+                if !confirmed {
+                    return Task::none();
+                }
+                let body = match confirmation {
+                    SessionConfirmation::RemoveSession { session, .. } => {
+                        RequestBody::RemoveSession { session }
+                    }
+                    SessionConfirmation::CloseWindow {
+                        session, window, ..
+                    } => RequestBody::CloseWindow { session, window },
+                    SessionConfirmation::ClosePane { session, pane } => {
+                        RequestBody::ClosePane { session, pane }
+                    }
+                    SessionConfirmation::TerminatePane {
+                        session,
+                        pane,
+                        generation,
+                    } => RequestBody::TerminatePane {
+                        session,
+                        pane,
+                        generation,
+                    },
+                    SessionConfirmation::None => return Task::none(),
+                };
+                return self.start_session_request(body);
+            }
+            Message::SessionInputChanged(input) => {
+                self.session_input = input;
+                return Task::none();
+            }
+            Message::SendSessionInput => {
+                let Some((pane, generation)) = selected_live_session_pane(&self.sessions) else {
+                    self.session_error = Some("select a running persistent pane first".into());
+                    return Task::none();
+                };
+                let mut bytes = std::mem::take(&mut self.session_input).into_bytes();
+                bytes.push(b'\n');
+                return self.start_session_request(RequestBody::WritePane {
+                    pane,
+                    generation,
+                    bytes,
+                });
+            }
+            Message::ResizeSessionPane { rows, columns } => {
+                let Some((pane, generation)) = selected_live_session_pane(&self.sessions) else {
+                    self.session_error = Some("select a running persistent pane first".into());
+                    return Task::none();
+                };
+                return self.start_session_request(RequestBody::ResizePane {
+                    pane,
+                    generation,
+                    rows,
+                    columns,
+                });
+            }
             Message::NewTerminal => {
                 if !self.capabilities.is_enabled(CapabilityId::TERMINAL) {
                     return Task::none();
@@ -930,6 +1422,8 @@ impl StruktApp {
             }
             Message::WorkspaceOpened(Ok(mut opened)) => {
                 let terminal_restore = terminal_contribution(&opened.state).ok().flatten();
+                self.terminal_migrated_to_sessions =
+                    session_contribution(&opened.state).ok().flatten().is_some();
                 match TerminalSurfaces::restore(terminal_restore.as_ref()) {
                     Ok(terminal) => {
                         self.terminal = terminal;
@@ -2685,6 +3179,34 @@ impl StruktApp {
             | Message::ResolveTerminalLink(_)
             | Message::TerminalLinkOpened(_)
             | Message::PollTerminal
+            | Message::ConnectSessions
+            | Message::ReconnectSessions
+            | Message::SessionsConnected(_)
+            | Message::CreateSession
+            | Message::RefreshSessions
+            | Message::StartSessionPane
+            | Message::DetachSessions
+            | Message::PollSessions
+            | Message::SessionRequestFinished(_)
+            | Message::SelectSession(_)
+            | Message::SelectSessionWindow(_)
+            | Message::SelectSessionPane(_)
+            | Message::SessionNameChanged(_)
+            | Message::RenameSession
+            | Message::DuplicateSession
+            | Message::BeginRemoveSession
+            | Message::WindowNameChanged(_)
+            | Message::CreateSessionWindow
+            | Message::RenameSessionWindow
+            | Message::DuplicateSessionWindow
+            | Message::BeginCloseSessionWindow
+            | Message::SplitSessionPane(_)
+            | Message::BeginCloseSessionPane
+            | Message::BeginTerminateSessionPane
+            | Message::ResolveSessionConfirmation(_)
+            | Message::SessionInputChanged(_)
+            | Message::SendSessionInput
+            | Message::ResizeSessionPane { .. }
             | Message::ToggleHiddenFiles
             | Message::ToggleIgnoredFiles
             | Message::FilesRefreshed { .. }
@@ -3416,10 +3938,12 @@ impl StruktApp {
         let Some(mut state) = self.workspace.clone() else {
             return Task::none();
         };
-        let terminal_snapshot = self.terminal.session_snapshot();
-        let _ = set_terminal_contribution(&mut state, &terminal_snapshot);
-        if let Some(workspace) = &mut self.workspace {
-            let _ = set_terminal_contribution(workspace, &terminal_snapshot);
+        if !self.terminal_migrated_to_sessions {
+            let terminal_snapshot = self.terminal.session_snapshot();
+            let _ = set_terminal_contribution(&mut state, &terminal_snapshot);
+            if let Some(workspace) = &mut self.workspace {
+                let _ = set_terminal_contribution(workspace, &terminal_snapshot);
+            }
         }
         if let Some(snapshot) = self.language.snapshot() {
             let _ = set_language_contribution(&mut state, &snapshot);
@@ -3445,6 +3969,9 @@ impl StruktApp {
     }
 
     fn sync_terminal_contribution(&mut self) {
+        if self.terminal_migrated_to_sessions {
+            return;
+        }
         let snapshot = self.terminal.session_snapshot();
         if let Some(workspace) = &mut self.workspace
             && let Err(error) = set_terminal_contribution(workspace, &snapshot)
@@ -3846,10 +4373,31 @@ impl StruktApp {
             subscriptions
                 .push(time::every(Duration::from_millis(16)).map(|_| Message::PollLanguage));
         }
+        if self.sessions.health() == ClientHealth::Ready {
+            subscriptions
+                .push(time::every(Duration::from_millis(250)).map(|_| Message::PollSessions));
+        }
+        if self.sessions.health() == ClientHealth::Stale {
+            subscriptions
+                .push(time::every(Duration::from_secs(2)).map(|_| Message::ReconnectSessions));
+        }
         if let Some(timeout) = self.launch_mode.smoke_timeout() {
             subscriptions.push(time::every(timeout).map(|_| Message::SmokeTimeout));
         }
         Subscription::batch(subscriptions)
+    }
+
+    fn start_session_request(&mut self, body: RequestBody) -> Task<Message> {
+        match self.sessions.begin_request(body) {
+            Ok(job) => {
+                self.session_error = None;
+                session_request_task(job)
+            }
+            Err(error) => {
+                self.session_error = Some(error.to_string());
+                Task::none()
+            }
+        }
     }
 }
 
@@ -3871,6 +4419,21 @@ fn semantic_terminal_key(key: &Key<&str>) -> Option<TerminalKey> {
     }
 }
 
+fn session_pane_is_live(lifecycle: &strukt_session::PaneLifecycle) -> bool {
+    matches!(
+        lifecycle,
+        strukt_session::PaneLifecycle::Starting
+            | strukt_session::PaneLifecycle::Running
+            | strukt_session::PaneLifecycle::Backpressured
+    )
+}
+
+fn selected_live_session_pane(sessions: &SessionSurfaces) -> Option<(PaneId, u64)> {
+    let pane = sessions.selected_pane()?;
+    let (_, _, definition) = sessions.catalog()?.catalog().pane(pane)?;
+    session_pane_is_live(definition.lifecycle()).then_some((pane, definition.generation()))
+}
+
 fn start_terminal_task(job: strukt_terminal::RuntimeStartJob) -> Task<Message> {
     let pane = job.pane();
     let generation = job.generation();
@@ -3885,6 +4448,28 @@ fn start_terminal_task(job: strukt_terminal::RuntimeStartJob) -> Task<Message> {
             generation,
             completion: TerminalSpawnCompletion::new(result),
         },
+    )
+}
+
+fn connect_sessions_task(job: strukt_session::ClientConnectJob) -> Task<Message> {
+    Task::perform(
+        async move {
+            tokio::task::spawn_blocking(move || job.run())
+                .await
+                .expect("persistent session connect worker must remain available")
+        },
+        |completion| Message::SessionsConnected(SessionConnectCompletion::new(completion)),
+    )
+}
+
+fn session_request_task(job: strukt_session::ClientRequestJob) -> Task<Message> {
+    Task::perform(
+        async move {
+            tokio::task::spawn_blocking(move || job.run())
+                .await
+                .expect("persistent session request worker must remain available")
+        },
+        |completion| Message::SessionRequestFinished(SessionRequestCompletion::new(completion)),
     )
 }
 

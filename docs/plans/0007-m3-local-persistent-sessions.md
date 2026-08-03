@@ -301,38 +301,38 @@ git commit -m "feat: add local session IPC"
 - Modify: `crates/strukt-terminal/src/runtime.rs`
 - Modify: `crates/strukt-terminal/src/lib.rs`
 
-- [ ] **Step 1: Write failing service reducer tests**
+- [x] **Step 1: Write failing service reducer tests**
 
 Require revision-safe hierarchy mutations, explicit start, no start on restore,
 generation-scoped input/resize/output, detach without terminate, independent batch
 restart results, bounded termination, fair draining, idle exit, and service-instance
 stale rejection.
 
-- [ ] **Step 2: Extract reusable terminal runtime projections**
+- [x] **Step 2: Extract reusable terminal runtime projections**
 
 Add the smallest public read-only snapshot and attention hooks needed by the
 service. Preserve M2 runtime tests and avoid exposing mutable parser/grid state.
 
-- [ ] **Step 3: Implement service request handling**
+- [x] **Step 3: Implement service request handling**
 
 Authenticate before catalog access. Route mutations through one catalog reducer,
 perform blocking spawn/terminate/store work outside its lock, and apply completions
 only when instance/revision/generation still match.
 
-- [ ] **Step 4: Implement detach, fairness, and idle lifecycle**
+- [x] **Step 4: Implement detach, fairness, and idle lifecycle**
 
 Keep PTYs alive with zero clients, coalesce output revision events, drain panes
 round-robin, persist debounced definitions/snapshots, and exit only after the
 documented no-client/no-running-pane idle period.
 
-- [ ] **Step 5: Add real native service tests**
+- [x] **Step 5: Add real native service tests**
 
 Launch `strukt-sessiond` with isolated app data and repository fixtures. Prove two
 sessions remain isolated, detach preserves processes, reattach restores output,
 terminate affects only the target, abrupt helper death restores stopped definitions,
 and no child command restarts in a new instance.
 
-- [ ] **Step 6: Verify the daemon and fixture**
+- [x] **Step 6: Verify the daemon and fixture**
 
 Run:
 
@@ -360,25 +360,25 @@ git commit -m "feat: add native persistent session service"
 - Create: `crates/strukt-session/tests/client.rs`
 - Modify: `crates/strukt-session/src/lib.rs`
 
-- [ ] **Step 1: Write failing client tests**
+- [x] **Step 1: Write failing client tests**
 
 Require lazy service start, authenticated attach, request routing, catalog refresh,
 snapshot coalescing, stale response/event rejection, bounded reconnect backoff,
 single writer lease, explicit detach, and frozen stale projection on transport loss.
 
-- [ ] **Step 2: Implement synchronous client state and executable jobs**
+- [x] **Step 2: Implement synchronous client state and executable jobs**
 
 Keep connection state UI-independent. Return connect/request/poll jobs that callers
 execute outside reducers. Never hide process launch, blocking IPC, retry sleeps, or
 catalog mutation inside a state transition.
 
-- [ ] **Step 3: Implement service discovery and safe start**
+- [x] **Step 3: Implement service discovery and safe start**
 
 Probe a rendezvous record first. Start only the exact repository helper path on an
 explicit create/attach/restart action. Pass only the application-data path and
 bootstrap handle/reference, never a secret or workspace path in arguments.
 
-- [ ] **Step 4: Verify reconnection and stale isolation**
+- [x] **Step 4: Verify reconnection and stale isolation**
 
 Run:
 
@@ -406,32 +406,32 @@ git commit -m "feat: add local session provider client"
 - Modify: `crates/strukt-app/src/app.rs`
 - Modify: `crates/strukt-app/src/terminal.rs`
 
-- [ ] **Step 1: Write failing app reducer tests**
+- [x] **Step 1: Write failing app reducer tests**
 
 Require no service/PTTY on workspace open, explicit lazy connect, session/window
 selection, capability-gated commands, stale catalog rejection, detach on UI close,
 transport-loss presentation, confirmation for destructive live actions, and no
 focus leakage into editor/language/ephemeral terminal actions.
 
-- [ ] **Step 2: Add immutable app projections**
+- [x] **Step 2: Add immutable app projections**
 
 Store provider health, catalog revision, session list, active hierarchy, pending
 request guards, confirmation state, and bounded failure details. Keep the provider
 client and all blocking jobs outside serializable shell/workspace state.
 
-- [ ] **Step 3: Route stable commands**
+- [x] **Step 3: Route stable commands**
 
 Add stable session/window command messages and keyboard shortcuts. Translate active
 pane input/resize only after verifying workspace, provider, service instance,
 session, window, pane, and generation.
 
-- [ ] **Step 4: Integrate structured pane snapshots**
+- [x] **Step 4: Integrate structured pane snapshots**
 
 Render the active provider pane through the existing terminal widget without
 duplicating parser/grid behavior in the app. Hidden sessions receive health and
 revision updates but do not trigger unnecessary widget rebuilds.
 
-- [ ] **Step 5: Verify app coordination**
+- [x] **Step 5: Verify app coordination**
 
 Run:
 
@@ -458,29 +458,29 @@ git commit -m "feat: coordinate persistent local sessions"
 - Modify: `crates/strukt-theme/src/tokens.rs`
 - Modify: `crates/strukt-theme/tests/builtin_themes.rs`
 
-- [ ] **Step 1: Write failing view and theme tests**
+- [x] **Step 1: Write failing view and theme tests**
 
 Require persistent file-browser access, session list labels and counts, window
 strip, live/stopped/stale/unread/attention semantics, exact destructive dialog
 labels, keyboard focus order, compact layout, and distinct light/dark tokens.
 
-- [ ] **Step 2: Add semantic tokens**
+- [x] **Step 2: Add semantic tokens**
 
 Add provider/session live, stopped, stale, unread, attention, active, and selected
 tokens with non-color indicators and documented contrast behavior.
 
-- [ ] **Step 3: Build the Sessions activity surface**
+- [x] **Step 3: Build the Sessions activity surface**
 
 Keep the stable activity rail and file explorer. Add a session list with provider,
 state, counts, and actions; a compact window strip; and active session/window labels
 in the status area. Do not let output steal focus or replace files.
 
-- [ ] **Step 4: Build confirmation and failure surfaces**
+- [x] **Step 4: Build confirmation and failure surfaces**
 
 Name exact targets and running-pane counts. Expose retry/reconnect, copy bounded
 failure, terminate, and remove actions according to provider capabilities.
 
-- [ ] **Step 5: Verify responsive layout and focus**
+- [x] **Step 5: Verify responsive layout and focus**
 
 Run:
 
@@ -509,25 +509,25 @@ git commit -m "feat: show persistent sessions and windows"
 - Modify: `crates/strukt-persistence/src/lib.rs`
 - Modify: `crates/strukt-app/src/session.rs`
 
-- [ ] **Step 1: Write failing migration tests**
+- [x] **Step 1: Write failing migration tests**
 
 Require one `Local` session, terminal-tab to window mapping, exact valid layouts and
 working directories, stopped panes, idempotency, M3-wins conflict behavior,
 unknown sibling preservation, and no helper/process start.
 
-- [ ] **Step 2: Implement versioned M3 contribution metadata**
+- [x] **Step 2: Implement versioned M3 contribution metadata**
 
 Persist only workspace presentation linkage and selected session/provider IDs in
 the existing workspace snapshot. Keep the authoritative live/stopped catalog in
 application data owned by the session service.
 
-- [ ] **Step 3: Implement explicit migration job**
+- [x] **Step 3: Implement explicit migration job**
 
 Convert the old contribution into a stopped service catalog only on first explicit
 M3 use. Do not mutate the workspace or delete old data until the service catalog
 and next workspace snapshot both save successfully.
 
-- [ ] **Step 4: Verify persistence isolation**
+- [x] **Step 4: Verify persistence isolation**
 
 Run:
 
