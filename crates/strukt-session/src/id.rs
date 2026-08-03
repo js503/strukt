@@ -95,3 +95,4 @@ fn nibble(byte: u8) -> Result<u8, IdError> {
 opaque_id!(SessionId);
 opaque_id!(WindowId);
 opaque_id!(PaneId);
+opaque_id!(ServiceInstanceId);

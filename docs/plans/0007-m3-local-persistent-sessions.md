@@ -104,25 +104,25 @@ git commit -m "feat: add persistent session domain"
 - Create: `crates/strukt-session/tests/provider.rs`
 - Modify: `crates/strukt-session/src/lib.rs`
 
-- [ ] **Step 1: Write failing provider contract tests**
+- [x] **Step 1: Write failing provider contract tests**
 
 Require capability-gated actions; bounded provider errors; immutable catalog,
 session, window, and pane snapshots; output revision; attention/unread behavior;
 and no process handles, commands, input, environment, or secrets in snapshots.
 
-- [ ] **Step 2: Implement capability and action models**
+- [x] **Step 2: Implement capability and action models**
 
 Define `SessionProviderCapabilities`, `SessionAction`, `ProviderError`, attach
 leases, health, and provider metadata. Keep remote/tmux distinctions as capability
 flags, not control-flow branches in app-facing types.
 
-- [ ] **Step 3: Implement structured terminal snapshot conversion**
+- [x] **Step 3: Implement structured terminal snapshot conversion**
 
 Expose bounded grid/scrollback/cursor/title/mode projections from
 `strukt-terminal` through owned serializable values. Add explicit snapshot byte and
 row caps. Never serialize a terminal transport or live runtime.
 
-- [ ] **Step 4: Verify provider independence**
+- [x] **Step 4: Verify provider independence**
 
 Run:
 
@@ -133,7 +133,7 @@ cargo clippy -p strukt-session --all-targets --locked --offline -- -D warnings
 
 Expected: pass without depending on `strukt-app`.
 
-- [ ] **Step 5: Commit the provider contract**
+- [x] **Step 5: Commit the provider contract**
 
 ```bash
 git add crates/strukt-session crates/strukt-terminal
