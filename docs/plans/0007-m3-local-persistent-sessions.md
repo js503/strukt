@@ -50,7 +50,7 @@ contracts to avoid overlapping writes and speculative UI behavior.
 - Create: `crates/strukt-session/src/catalog.rs`
 - Create: `crates/strukt-session/tests/catalog.rs`
 
-- [ ] **Step 1: Write failing hierarchy tests**
+- [x] **Step 1: Write failing hierarchy tests**
 
 Cover random stable session/window IDs, valid names, session/window/pane caps,
 layout depth, active/focused invariants, independent revisions, lifecycle states,
@@ -64,20 +64,20 @@ cargo test -p strukt-session --test catalog --locked --offline
 
 Expected: fail because the crate and domain types do not exist.
 
-- [ ] **Step 2: Add the crate and opaque IDs**
+- [x] **Step 2: Add the crate and opaque IDs**
 
 Add 128-bit OS-random IDs with exact lowercase-hex serialization and strict parsing.
 Reuse `TerminalPaneId` only at the terminal-runtime boundary; session protocol pane
 IDs remain provider-owned to prevent accidental cross-provider aliasing.
 
-- [ ] **Step 3: Implement validated catalog mutations**
+- [x] **Step 3: Implement validated catalog mutations**
 
 Implement create, rename, activate, duplicate, and remove for sessions/windows;
 split/focus/ratio/close for panes; expected-revision checks; and normalized bounded
 errors. A new session has one window and one stopped pane. Duplicates are stopped
 definitions with empty runtime/history.
 
-- [ ] **Step 4: Verify domain invariants**
+- [x] **Step 4: Verify domain invariants**
 
 Run:
 
@@ -88,7 +88,7 @@ cargo clippy -p strukt-session --all-targets --locked --offline -- -D warnings
 
 Expected: pass.
 
-- [ ] **Step 5: Commit the hierarchy foundation**
+- [x] **Step 5: Commit the hierarchy foundation**
 
 ```bash
 git add Cargo.toml Cargo.lock crates/strukt-session

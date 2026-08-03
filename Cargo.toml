@@ -11,6 +11,7 @@ members = [
   "crates/strukt-terminal",
   "crates/strukt-platform",
   "crates/strukt-language",
+  "crates/strukt-session",
 ]
 resolver = "3"
 
@@ -45,6 +46,7 @@ strukt-core = { path = "crates/strukt-core" }
 strukt-editor = { path = "crates/strukt-editor" }
 strukt-fs = { path = "crates/strukt-fs" }
 strukt-language = { path = "crates/strukt-language" }
+strukt-session = { path = "crates/strukt-session" }
 strukt-persistence = { path = "crates/strukt-persistence" }
 strukt-platform = { path = "crates/strukt-platform" }
 strukt-shell = { path = "crates/strukt-shell" }

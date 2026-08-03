@@ -212,6 +212,8 @@ detach, reattach, and restore them through the workspace interface.
   [`plans/0007-m3-local-persistent-sessions.md`](plans/0007-m3-local-persistent-sessions.md)
 - Tracking issue:
   [#11 — M3: local persistent sessions](https://github.com/js503/strukt/issues/11)
+- Pull request:
+  [#12 — feat: add M3 local persistent sessions](https://github.com/js503/strukt/pull/12)
 - Interaction reference:
   [`mockups/workspace-shell/remote-multiplexer.html`](mockups/workspace-shell/remote-multiplexer.html)
 

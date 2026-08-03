@@ -4133,6 +4133,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "strukt-session"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "serde",
+ "serde_json",
+ "strukt-terminal",
+ "tempfile",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "strukt-shell"
 version = "0.1.0"
 dependencies = [
