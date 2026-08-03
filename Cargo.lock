@@ -4163,6 +4163,7 @@ dependencies = [
 name = "strukt-session"
 version = "0.1.0"
 dependencies = [
+ "atomic-write-file",
  "ciborium",
  "getrandom 0.4.3",
  "hmac",

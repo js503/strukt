@@ -334,6 +334,96 @@ impl SessionCatalog {
         self.sessions.get(&session)
     }
 
+    /// Validates a complete deserialized catalog.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CatalogError::InvalidCatalog`] when any hierarchy, identifier,
+    /// capacity, name, path, focus, or revision invariant is invalid.
+    pub fn validate(&self) -> Result<(), CatalogError> {
+        if self.sessions.len() > MAX_SESSIONS {
+            return Err(CatalogError::InvalidCatalog);
+        }
+        if self.sessions.is_empty() != self.active_session.is_none()
+            || self
+                .active_session
+                .is_some_and(|active| !self.sessions.contains_key(&active))
+        {
+            return Err(CatalogError::InvalidCatalog);
+        }
+        let mut pane_ids = BTreeSet::new();
+        let mut total_panes = 0_usize;
+        for (session_id, session) in &self.sessions {
+            if *session_id != session.id
+                || session.revision == 0
+                || validated_name(&session.name).is_err()
+                || session.windows.is_empty()
+                || session.windows.len() > MAX_WINDOWS_PER_SESSION
+                || !session
+                    .windows
+                    .iter()
+                    .any(|window| window.id == session.active_window)
+            {
+                return Err(CatalogError::InvalidCatalog);
+            }
+            let mut window_ids = BTreeSet::new();
+            for window in &session.windows {
+                if !window_ids.insert(window.id)
+                    || window.revision == 0
+                    || validated_name(&window.name).is_err()
+                    || !window.validate()
+                {
+                    return Err(CatalogError::InvalidCatalog);
+                }
+                total_panes = total_panes
+                    .checked_add(window.panes.len())
+                    .ok_or(CatalogError::InvalidCatalog)?;
+                for (pane_id, pane) in &window.panes {
+                    if *pane_id != pane.id
+                        || pane.working_directory.as_os_str().is_empty()
+                        || !pane_ids.insert(*pane_id)
+                    {
+                        return Err(CatalogError::InvalidCatalog);
+                    }
+                }
+            }
+        }
+        if total_panes > MAX_TOTAL_PANES {
+            return Err(CatalogError::InvalidCatalog);
+        }
+        Ok(())
+    }
+
+    /// Returns a validated clone suitable for service-restart persistence.
+    ///
+    /// Every pane is normalized to generation zero and stopped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CatalogError::InvalidCatalog`] for invalid source state.
+    pub fn stopped_clone(&self) -> Result<Self, CatalogError> {
+        self.validate()?;
+        let mut stopped = self.clone();
+        for pane in stopped
+            .sessions
+            .values_mut()
+            .flat_map(|session| &mut session.windows)
+            .flat_map(|window| window.panes.values_mut())
+        {
+            pane.generation = 0;
+            pane.lifecycle = PaneLifecycle::Stopped;
+        }
+        Ok(stopped)
+    }
+
+    #[must_use]
+    pub fn contains_pane(&self, pane: PaneId) -> bool {
+        self.sessions
+            .values()
+            .flat_map(|session| &session.windows)
+            .any(|window| window.panes.contains_key(&pane))
+    }
+
     /// Creates one stopped session with one window and pane.
     ///
     /// # Errors
@@ -953,6 +1043,8 @@ pub enum CatalogError {
     LayoutTooDeep,
     #[error("session layout is invalid")]
     InvalidLayout,
+    #[error("session catalog is invalid")]
+    InvalidCatalog,
     #[error("the last pane must be closed with its window")]
     LastPane,
     #[error("the last window must be closed with its session")]

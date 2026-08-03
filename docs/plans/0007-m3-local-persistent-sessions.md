@@ -206,25 +206,25 @@ git commit -m "feat: add authenticated session protocol"
 - Create: `crates/strukt-session/tests/store.rs`
 - Modify: `crates/strukt-session/src/lib.rs`
 
-- [ ] **Step 1: Write failing store tests**
+- [x] **Step 1: Write failing store tests**
 
 Require atomic current/last-valid fallback, bounds, unknown-field round trips,
 corrupt-current recovery, exclusive owner identity, sanitized bounded history, and
 stopped-only restoration after a new service instance.
 
-- [ ] **Step 2: Implement versioned catalog records**
+- [x] **Step 2: Implement versioned catalog records**
 
 Persist only the approved definitions/presentation/history fields. Convert every
 live lifecycle state to stopped on disk. Validate IDs, names, hierarchy, paths,
 row/byte counts, and schema before returning a catalog.
 
-- [ ] **Step 3: Add explicit privacy regression tests**
+- [x] **Step 3: Add explicit privacy regression tests**
 
 Serialize representative sessions and assert that input, commands, environment,
 secrets, process IDs, endpoint names, raw frames, clipboard, and selections are
 absent. Verify no workspace `.strukt` path is touched.
 
-- [ ] **Step 4: Verify persistence**
+- [x] **Step 4: Verify persistence**
 
 Run:
 
@@ -235,7 +235,7 @@ cargo clippy -p strukt-session --all-targets --locked --offline -- -D warnings
 
 Expected: pass.
 
-- [ ] **Step 5: Commit persistence**
+- [x] **Step 5: Commit persistence**
 
 ```bash
 git add crates/strukt-session

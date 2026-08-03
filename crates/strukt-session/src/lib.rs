@@ -7,6 +7,7 @@ mod id;
 mod protocol;
 mod provider;
 mod snapshot;
+mod store;
 
 pub use auth::{AuthenticationError, AuthenticationProof, HandshakeChallenge, ServiceSecret};
 pub use catalog::{
@@ -26,3 +27,4 @@ pub use snapshot::{
     AttentionState, CursorSnapshot, ModesSnapshot, PaneScreenSnapshot, ProviderCatalogSnapshot,
     SnapshotError,
 };
+pub use store::{PaneHistorySnapshot, PersistedCatalog, SessionStore, SessionStoreError};
