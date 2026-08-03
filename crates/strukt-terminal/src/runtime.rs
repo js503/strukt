@@ -106,6 +106,75 @@ pub struct RuntimeStartJob {
     prior_process: Option<Box<dyn TerminalProcess>>,
 }
 
+#[derive(Clone, Debug)]
+pub struct RuntimePaneProjection {
+    generation: u64,
+    state: RuntimePaneState,
+    health: RuntimePaneHealth,
+    snapshot: TerminalSnapshot,
+}
+
+impl RuntimePaneProjection {
+    #[must_use]
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    #[must_use]
+    pub const fn state(&self) -> &RuntimePaneState {
+        &self.state
+    }
+
+    #[must_use]
+    pub const fn health(&self) -> RuntimePaneHealth {
+        self.health
+    }
+
+    #[must_use]
+    pub const fn snapshot(&self) -> &TerminalSnapshot {
+        &self.snapshot
+    }
+}
+
+pub struct RuntimeTerminateJob {
+    pane: TerminalPaneId,
+    generation: u64,
+    process: Box<dyn TerminalProcess>,
+    grace: Duration,
+}
+
+impl RuntimeTerminateJob {
+    #[must_use]
+    pub const fn pane(&self) -> TerminalPaneId {
+        self.pane
+    }
+
+    #[must_use]
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    #[must_use]
+    pub fn run(mut self) -> RuntimeTerminateCompletion {
+        let result = self
+            .process
+            .terminate(self.grace)
+            .map_err(|error| error.to_string());
+        RuntimeTerminateCompletion {
+            pane: self.pane,
+            generation: self.generation,
+            result,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct RuntimeTerminateCompletion {
+    pane: TerminalPaneId,
+    generation: u64,
+    result: Result<(), String>,
+}
+
 impl RuntimeStartJob {
     #[must_use]
     pub const fn pane(&self) -> TerminalPaneId {
@@ -338,6 +407,16 @@ impl TerminalRuntime {
             .map(|runtime| runtime.model.snapshot(viewport_offset))
     }
 
+    #[must_use]
+    pub fn projection(&self, pane: TerminalPaneId) -> Option<RuntimePaneProjection> {
+        self.panes.get(&pane).map(|runtime| RuntimePaneProjection {
+            generation: runtime.generation,
+            state: runtime.state.clone(),
+            health: runtime.health(),
+            snapshot: runtime.model.snapshot(0),
+        })
+    }
+
     /// Copies selected visible text through the pane's bounded model.
     ///
     /// # Errors
@@ -509,6 +588,60 @@ impl TerminalRuntime {
     pub fn terminate(&mut self, pane: TerminalPaneId, grace: Duration) -> Result<(), RuntimeError> {
         let result = self.process_mut(pane)?.terminate(grace);
         self.record_transport_result(pane, result)
+    }
+
+    /// Removes a live process from reducer state for bounded background termination.
+    ///
+    /// # Errors
+    ///
+    /// Returns a missing-pane or missing-process error.
+    pub fn begin_terminate(
+        &mut self,
+        pane: TerminalPaneId,
+        grace: Duration,
+    ) -> Result<RuntimeTerminateJob, RuntimeError> {
+        let runtime = self
+            .panes
+            .get_mut(&pane)
+            .ok_or(RuntimeError::PaneNotFound)?;
+        let process = runtime
+            .process
+            .take()
+            .ok_or(RuntimeError::ProcessNotRunning)?;
+        Ok(RuntimeTerminateJob {
+            pane,
+            generation: runtime.generation,
+            process,
+            grace,
+        })
+    }
+
+    /// Applies a termination completion only to its current generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a pane-local termination failure.
+    pub fn finish_terminate(
+        &mut self,
+        completion: RuntimeTerminateCompletion,
+    ) -> Result<(), RuntimeError> {
+        let Some(runtime) = self.panes.get_mut(&completion.pane) else {
+            return Ok(());
+        };
+        if runtime.generation != completion.generation {
+            return Ok(());
+        }
+        match completion.result {
+            Ok(()) => {
+                runtime.state = RuntimePaneState::Exited { code: None };
+                runtime.last_error = None;
+                Ok(())
+            }
+            Err(message) => {
+                runtime.fail(message.clone());
+                Err(RuntimeError::TerminationFailed(message))
+            }
+        }
     }
 
     /// Removes a stopped or terminated pane runtime from memory.
@@ -726,6 +859,8 @@ pub enum RuntimeError {
     QueueFull,
     #[error("terminal process failed to start: {0}")]
     StartFailed(String),
+    #[error("terminal process failed to terminate: {0}")]
+    TerminationFailed(String),
     #[error(transparent)]
     Selection(#[from] SelectionError),
     #[error(transparent)]

@@ -188,6 +188,8 @@ pub enum TransportError {
     InvalidSize,
     #[error("terminal executable must not be empty")]
     InvalidExecutable,
+    #[error("no usable default shell was found")]
+    ShellUnavailable,
     #[error("terminal working directory must be an existing absolute directory")]
     InvalidWorkingDirectory,
     #[error("terminal environment key is invalid")]

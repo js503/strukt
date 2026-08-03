@@ -4084,6 +4084,7 @@ checksum = "6637bab7722d379c8b41ba849228d680cc12d0a45ba1fa2b48f2a30577a06731"
 name = "strukt-app"
 version = "0.1.0"
 dependencies = [
+ "directories",
  "getrandom 0.4.3",
  "iced",
  "keyring",
@@ -4095,6 +4096,7 @@ dependencies = [
  "strukt-fs",
  "strukt-language",
  "strukt-persistence",
+ "strukt-session",
  "strukt-shell",
  "strukt-terminal",
  "strukt-theme",
@@ -4168,6 +4170,7 @@ dependencies = [
  "serde",
  "serde_json",
  "strukt-language",
+ "strukt-session",
  "strukt-terminal",
  "strukt-workspace",
  "tempfile",

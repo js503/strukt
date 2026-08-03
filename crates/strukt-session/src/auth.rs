@@ -1,5 +1,9 @@
 use std::fmt;
+use std::fs;
+use std::io::Write;
+use std::path::Path;
 
+use atomic_write_file::AtomicWriteFile;
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -31,6 +35,41 @@ impl ServiceSecret {
     #[must_use]
     pub fn from_bytes(bytes: [u8; SECRET_BYTES]) -> Self {
         Self(Zeroizing::new(bytes))
+    }
+
+    /// Generates a fresh per-service secret and atomically stores it outside the
+    /// workspace with owner-only Unix permissions.
+    ///
+    /// # Errors
+    ///
+    /// Returns random-source or IO errors.
+    pub fn generate_and_store(path: &Path) -> Result<Self, AuthenticationError> {
+        let secret = Self::generate()?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = AtomicWriteFile::open(path)?;
+        file.write_all(secret.0.as_ref())?;
+        file.commit()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(secret)
+    }
+
+    /// Loads one exact-length service secret from its private reference.
+    ///
+    /// # Errors
+    ///
+    /// Returns IO or invalid-secret errors.
+    pub fn load_from(path: impl AsRef<Path>) -> Result<Self, AuthenticationError> {
+        let bytes = fs::read(path)?;
+        let bytes: [u8; SECRET_BYTES] = bytes
+            .try_into()
+            .map_err(|_| AuthenticationError::InvalidSecret)?;
+        Ok(Self::from_bytes(bytes))
     }
 
     /// Produces an authentication proof for one challenge.
@@ -157,7 +196,7 @@ fn update_challenge(mac: &mut HmacSha256, challenge: &HandshakeChallenge) {
     mac.update(&challenge.client_nonce);
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+#[derive(Debug, Error)]
 pub enum AuthenticationError {
     #[error("the operating system random source is unavailable")]
     RandomUnavailable,
@@ -167,4 +206,6 @@ pub enum AuthenticationError {
     InvalidSecret,
     #[error(transparent)]
     Id(#[from] IdError),
+    #[error("authentication secret IO failed: {0}")]
+    Io(#[from] std::io::Error),
 }

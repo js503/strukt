@@ -60,6 +60,25 @@ fn protocol_versions_request_ids_and_body_bounds_are_enforced() {
         },
     );
     assert_eq!(invalid_name.validate(), Err(WireError::InvalidBody));
+    let session = SessionId::new().unwrap();
+    let invalid_rename = RequestEnvelope::new(
+        4,
+        0,
+        RequestBody::RenameSession {
+            session,
+            name: "   ".into(),
+        },
+    );
+    assert_eq!(invalid_rename.validate(), Err(WireError::InvalidBody));
+    let invalid_ratio = RequestEnvelope::new(
+        5,
+        0,
+        RequestBody::SetSplitRatio {
+            session,
+            ratio_basis_points: 999,
+        },
+    );
+    assert_eq!(invalid_ratio.validate(), Err(WireError::InvalidBody));
 }
 
 #[test]

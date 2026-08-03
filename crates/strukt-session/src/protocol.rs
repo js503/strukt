@@ -1,15 +1,23 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use strukt_terminal::SplitAxis;
 use thiserror::Error;
 
 use crate::{
-    PaneId, ProviderCatalogSnapshot, ProviderError, ServiceInstanceId, SessionId, WindowId,
+    PaneId, PaneScreenSnapshot, ProviderCatalogSnapshot, ProviderError, ServiceInstanceId,
+    SessionId, WindowId,
 };
 
 pub const PROTOCOL_VERSION: u16 = 1;
 const MAX_NAME_CHARS: usize = 80;
 const MAX_PATH_BYTES: usize = 4_096;
+const MAX_INPUT_BYTES: usize = 256 * 1024;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum FixtureMode {
+    Hold,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum RequestBody {
@@ -20,6 +28,93 @@ pub enum RequestBody {
         name: String,
         working_directory: PathBuf,
     },
+    ImportStoppedCatalog {
+        catalog: crate::SessionCatalog,
+    },
+    RenameSession {
+        session: SessionId,
+        name: String,
+    },
+    ActivateSession {
+        session: SessionId,
+    },
+    DuplicateSession {
+        session: SessionId,
+    },
+    RemoveSession {
+        session: SessionId,
+    },
+    CreateWindow {
+        session: SessionId,
+        name: String,
+        working_directory: PathBuf,
+    },
+    RenameWindow {
+        session: SessionId,
+        window: WindowId,
+        name: String,
+    },
+    ActivateWindow {
+        session: SessionId,
+        window: WindowId,
+    },
+    DuplicateWindow {
+        session: SessionId,
+        window: WindowId,
+    },
+    CloseWindow {
+        session: SessionId,
+        window: WindowId,
+    },
+    SplitPane {
+        session: SessionId,
+        axis: SplitAxis,
+    },
+    FocusPane {
+        session: SessionId,
+        pane: PaneId,
+    },
+    SetSplitRatio {
+        session: SessionId,
+        ratio_basis_points: u16,
+    },
+    ClosePane {
+        session: SessionId,
+        pane: PaneId,
+    },
+    StartPane {
+        session: SessionId,
+        pane: PaneId,
+        rows: u16,
+        columns: u16,
+    },
+    StartFixturePane {
+        session: SessionId,
+        pane: PaneId,
+        mode: FixtureMode,
+        rows: u16,
+        columns: u16,
+    },
+    WritePane {
+        pane: PaneId,
+        generation: u64,
+        bytes: Vec<u8>,
+    },
+    ResizePane {
+        pane: PaneId,
+        generation: u64,
+        rows: u16,
+        columns: u16,
+    },
+    Snapshot {
+        pane: PaneId,
+    },
+    TerminatePane {
+        session: SessionId,
+        pane: PaneId,
+        generation: u64,
+    },
+    Shutdown,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -87,6 +182,11 @@ impl RequestEnvelope {
             RequestBody::CreateSession {
                 name,
                 working_directory,
+            }
+            | RequestBody::CreateWindow {
+                name,
+                working_directory,
+                ..
             } => {
                 let trimmed = name.trim();
                 let path_bytes = working_directory.as_os_str().as_encoded_bytes();
@@ -98,7 +198,71 @@ impl RequestEnvelope {
                     return Err(WireError::InvalidBody);
                 }
             }
-            RequestBody::Catalog | RequestBody::Attach | RequestBody::Detach => {}
+            RequestBody::RenameSession { name, .. } | RequestBody::RenameWindow { name, .. }
+                if name.trim().is_empty() || name.trim().chars().count() > MAX_NAME_CHARS =>
+            {
+                return Err(WireError::InvalidBody);
+            }
+            RequestBody::SetSplitRatio {
+                ratio_basis_points, ..
+            } if !(1_000..=9_000).contains(ratio_basis_points) => {
+                return Err(WireError::InvalidBody);
+            }
+            RequestBody::ImportStoppedCatalog { catalog }
+                if catalog.validate().is_err()
+                    || catalog
+                        .sessions()
+                        .flat_map(crate::Session::windows)
+                        .any(|window| {
+                            window.panes().any(|pane| {
+                                pane.generation() != 0
+                                    || pane.lifecycle() != &crate::PaneLifecycle::Stopped
+                            })
+                        }) =>
+            {
+                return Err(WireError::InvalidBody);
+            }
+            RequestBody::StartPane { rows, columns, .. }
+            | RequestBody::StartFixturePane { rows, columns, .. }
+            | RequestBody::ResizePane { rows, columns, .. }
+                if *rows == 0 || *columns == 0 =>
+            {
+                return Err(WireError::InvalidBody);
+            }
+            RequestBody::WritePane {
+                generation, bytes, ..
+            } if *generation == 0 || bytes.len() > MAX_INPUT_BYTES => {
+                return Err(WireError::InvalidBody);
+            }
+            RequestBody::ResizePane { generation, .. }
+            | RequestBody::TerminatePane { generation, .. }
+                if *generation == 0 =>
+            {
+                return Err(WireError::InvalidBody);
+            }
+            RequestBody::Catalog
+            | RequestBody::Attach
+            | RequestBody::Detach
+            | RequestBody::ImportStoppedCatalog { .. }
+            | RequestBody::StartPane { .. }
+            | RequestBody::StartFixturePane { .. }
+            | RequestBody::RenameSession { .. }
+            | RequestBody::ActivateSession { .. }
+            | RequestBody::DuplicateSession { .. }
+            | RequestBody::RemoveSession { .. }
+            | RequestBody::RenameWindow { .. }
+            | RequestBody::ActivateWindow { .. }
+            | RequestBody::DuplicateWindow { .. }
+            | RequestBody::CloseWindow { .. }
+            | RequestBody::SplitPane { .. }
+            | RequestBody::FocusPane { .. }
+            | RequestBody::SetSplitRatio { .. }
+            | RequestBody::ClosePane { .. }
+            | RequestBody::WritePane { .. }
+            | RequestBody::ResizePane { .. }
+            | RequestBody::Snapshot { .. }
+            | RequestBody::TerminatePane { .. }
+            | RequestBody::Shutdown => {}
         }
         Ok(())
     }
@@ -110,6 +274,17 @@ pub enum ResponseBody {
     Attached(ProviderCatalogSnapshot),
     Detached,
     SessionCreated(SessionId),
+    SessionDuplicated(SessionId),
+    WindowCreated(WindowId),
+    WindowDuplicated(WindowId),
+    PaneSplit(PaneId),
+    CatalogChanged(ProviderCatalogSnapshot),
+    PaneStarted { pane: PaneId, generation: u64 },
+    PaneWritten,
+    PaneResized,
+    PaneSnapshot(PaneScreenSnapshot),
+    PaneTerminated { pane: PaneId, generation: u64 },
+    ShuttingDown,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

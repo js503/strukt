@@ -1,4 +1,6 @@
+use std::ffi::OsString;
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 use std::sync::{Arc, Condvar, Mutex};
@@ -24,6 +26,69 @@ impl PortableTransport {
     pub const fn new() -> Self {
         Self
     }
+}
+
+/// Builds the same model-agnostic default shell request for UI and service use.
+///
+/// # Errors
+///
+/// Returns [`TransportError::ShellUnavailable`] when no platform shell can be
+/// resolved.
+pub fn default_shell_request(
+    working_directory: PathBuf,
+    size: TerminalSize,
+) -> Result<SpawnRequest, TransportError> {
+    #[cfg(windows)]
+    let executable = default_shell();
+    #[cfg(not(windows))]
+    let executable = default_shell()?;
+    Ok(SpawnRequest {
+        executable,
+        arguments: Vec::new(),
+        working_directory,
+        environment: vec![
+            (OsString::from("TERM"), OsString::from("xterm-256color")),
+            (OsString::from("COLORTERM"), OsString::from("truecolor")),
+        ],
+        size,
+    })
+}
+
+#[cfg(windows)]
+fn default_shell() -> PathBuf {
+    if let Some(program_files) = std::env::var_os("ProgramFiles") {
+        let powershell = PathBuf::from(program_files).join("PowerShell/7/pwsh.exe");
+        if powershell.is_file() {
+            return powershell;
+        }
+    }
+    if let Some(system_root) = std::env::var_os("SystemRoot") {
+        let powershell =
+            PathBuf::from(system_root).join("System32/WindowsPowerShell/v1.0/powershell.exe");
+        if powershell.is_file() {
+            return powershell;
+        }
+    }
+    std::env::var_os("COMSPEC")
+        .filter(|value| !value.is_empty())
+        .map_or_else(|| PathBuf::from("cmd.exe"), PathBuf::from)
+}
+
+#[cfg(not(windows))]
+fn default_shell() -> Result<PathBuf, TransportError> {
+    if let Some(shell) = std::env::var_os("SHELL")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute() && path.is_file())
+    {
+        return Ok(shell);
+    }
+    for fallback in [PathBuf::from("/bin/zsh"), PathBuf::from("/bin/sh")] {
+        if fallback.is_file() {
+            return Ok(fallback);
+        }
+    }
+    Err(TransportError::ShellUnavailable)
 }
 
 impl TerminalTransport for PortableTransport {

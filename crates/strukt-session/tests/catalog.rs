@@ -101,6 +101,38 @@ fn duplicate_copies_definitions_but_no_runtime_state() {
 }
 
 #[test]
+fn duplicate_window_remaps_layout_into_stopped_definitions() {
+    let directory = std::env::current_dir().expect("current directory");
+    let mut catalog = SessionCatalog::new();
+    let session = catalog
+        .create_session(0, "source", &directory)
+        .expect("session");
+    let source = catalog
+        .session(session)
+        .expect("source")
+        .active_window()
+        .expect("window")
+        .id();
+    let duplicate = catalog
+        .duplicate_window(catalog.revision(), session, source)
+        .expect("duplicate window");
+    let target = catalog.session(session).expect("session");
+    assert_eq!(target.windows().len(), 2);
+    let duplicate = target
+        .windows()
+        .iter()
+        .find(|window| window.id() == duplicate)
+        .expect("duplicate");
+    assert_ne!(duplicate.id(), source);
+    assert!(
+        duplicate
+            .panes()
+            .all(|pane| pane.generation() == 0 && pane.lifecycle() == &PaneLifecycle::Stopped)
+    );
+    assert!(duplicate.validate());
+}
+
+#[test]
 fn split_focus_and_ratio_preserve_a_valid_window_tree() {
     let root = tempfile::tempdir().unwrap();
     let mut catalog = SessionCatalog::new();

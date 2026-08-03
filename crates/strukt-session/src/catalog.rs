@@ -169,6 +169,14 @@ pub struct SessionPane {
     lifecycle: PaneLifecycle,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StoppedWindowDefinition {
+    pub name: String,
+    pub root: SessionLayoutNode,
+    pub focused_pane: PaneId,
+    pub panes: Vec<(PaneId, PathBuf)>,
+}
+
 impl SessionPane {
     #[must_use]
     pub const fn id(&self) -> PaneId {
@@ -424,6 +432,17 @@ impl SessionCatalog {
             .any(|window| window.panes.contains_key(&pane))
     }
 
+    #[must_use]
+    pub fn pane(&self, pane: PaneId) -> Option<(SessionId, WindowId, &SessionPane)> {
+        self.sessions.values().find_map(|session| {
+            session.windows.iter().find_map(|window| {
+                window
+                    .pane(pane)
+                    .map(|target| (session.id, window.id, target))
+            })
+        })
+    }
+
     /// Creates one stopped session with one window and pane.
     ///
     /// # Errors
@@ -466,6 +485,87 @@ impl SessionCatalog {
                     panes: BTreeMap::from([(pane_id, pane)]),
                 }],
                 active_window: window_id,
+            },
+        );
+        self.active_session = Some(session_id);
+        self.bump_revision();
+        Ok(session_id)
+    }
+
+    /// Imports one stopped session hierarchy without starting any runtime work.
+    ///
+    /// This is intended for explicit, versioned presentation-state migration.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation, capacity, hierarchy, revision, or random-source errors.
+    pub fn import_stopped_session(
+        &mut self,
+        expected_revision: u64,
+        name: impl Into<String>,
+        windows: Vec<StoppedWindowDefinition>,
+        active_window_index: usize,
+    ) -> Result<SessionId, CatalogError> {
+        self.expect_revision(expected_revision)?;
+        if self.sessions.len() >= MAX_SESSIONS
+            || windows.is_empty()
+            || windows.len() > MAX_WINDOWS_PER_SESSION
+            || active_window_index >= windows.len()
+        {
+            return Err(CatalogError::InvalidCatalog);
+        }
+        let pane_count = windows
+            .iter()
+            .map(|window| window.panes.len())
+            .sum::<usize>();
+        if self.total_panes().saturating_add(pane_count) > MAX_TOTAL_PANES {
+            return Err(CatalogError::CapacityReached);
+        }
+        let session_id = SessionId::new()?;
+        let mut imported = Vec::with_capacity(windows.len());
+        let mut all_panes = BTreeSet::new();
+        for definition in windows {
+            let name = validated_name(&definition.name)?;
+            let mut panes = BTreeMap::new();
+            for (pane, directory) in definition.panes {
+                if !all_panes.insert(pane) {
+                    return Err(CatalogError::InvalidCatalog);
+                }
+                panes.insert(
+                    pane,
+                    SessionPane {
+                        id: pane,
+                        working_directory: validated_directory(&directory)?,
+                        generation: 0,
+                        lifecycle: PaneLifecycle::Stopped,
+                    },
+                );
+            }
+            if panes.is_empty()
+                || panes.len() > MAX_PANES_PER_WINDOW
+                || !panes.contains_key(&definition.focused_pane)
+                || !definition.root.validate(&panes)
+            {
+                return Err(CatalogError::InvalidCatalog);
+            }
+            imported.push(SessionWindow {
+                id: WindowId::new()?,
+                name,
+                revision: 1,
+                root: definition.root,
+                focused_pane: definition.focused_pane,
+                panes,
+            });
+        }
+        let active_window = imported[active_window_index].id;
+        self.sessions.insert(
+            session_id,
+            Session {
+                id: session_id,
+                name: validated_name(&name.into())?,
+                revision: 1,
+                windows: imported,
+                active_window,
             },
         );
         self.active_session = Some(session_id);
@@ -624,6 +724,69 @@ impl SessionCatalog {
         target.revision = target.revision.saturating_add(1);
         self.bump_revision();
         Ok(())
+    }
+
+    /// Duplicates one window definition into a new stopped active window.
+    ///
+    /// # Errors
+    ///
+    /// Returns stale revision, capacity, hierarchy, or random-source errors.
+    pub fn duplicate_window(
+        &mut self,
+        expected_revision: u64,
+        session: SessionId,
+        source: WindowId,
+    ) -> Result<WindowId, CatalogError> {
+        self.expect_revision(expected_revision)?;
+        let total_panes = self.total_panes();
+        let target = self
+            .sessions
+            .get_mut(&session)
+            .ok_or(CatalogError::SessionNotFound)?;
+        if target.windows.len() >= MAX_WINDOWS_PER_SESSION {
+            return Err(CatalogError::CapacityReached);
+        }
+        let source = target
+            .windows
+            .iter()
+            .find(|window| window.id == source)
+            .cloned()
+            .ok_or(CatalogError::WindowNotFound)?;
+        if total_panes.saturating_add(source.panes.len()) > MAX_TOTAL_PANES {
+            return Err(CatalogError::CapacityReached);
+        }
+        let window_id = WindowId::new()?;
+        let mut ids = BTreeMap::new();
+        let mut panes = BTreeMap::new();
+        for source_pane in source.panes.values() {
+            let pane_id = PaneId::new()?;
+            ids.insert(source_pane.id, pane_id);
+            panes.insert(
+                pane_id,
+                SessionPane {
+                    id: pane_id,
+                    working_directory: source_pane.working_directory.clone(),
+                    generation: 0,
+                    lifecycle: PaneLifecycle::Stopped,
+                },
+            );
+        }
+        let window = SessionWindow {
+            id: window_id,
+            name: validated_name(&format!("{} copy", source.name))?,
+            revision: 1,
+            root: source.root.remap(&ids)?,
+            focused_pane: ids
+                .get(&source.focused_pane)
+                .copied()
+                .ok_or(CatalogError::PaneNotFound)?,
+            panes,
+        };
+        target.windows.push(window);
+        target.active_window = window_id;
+        target.revision = target.revision.saturating_add(1);
+        self.bump_revision();
+        Ok(window_id)
     }
 
     /// Closes a stopped non-final window.
@@ -952,6 +1115,80 @@ impl SessionCatalog {
         target.revision = target.revision.saturating_add(1);
         self.bump_revision();
         Ok(())
+    }
+
+    /// Starts a new explicit pane generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns stale revision or hierarchy errors.
+    pub fn begin_pane_generation(
+        &mut self,
+        expected_revision: u64,
+        session: SessionId,
+        pane: PaneId,
+    ) -> Result<u64, CatalogError> {
+        self.expect_revision(expected_revision)?;
+        let target = self
+            .sessions
+            .get_mut(&session)
+            .ok_or(CatalogError::SessionNotFound)?;
+        let window = target
+            .windows
+            .iter_mut()
+            .find(|window| window.panes.contains_key(&pane))
+            .ok_or(CatalogError::PaneNotFound)?;
+        let pane = window
+            .panes
+            .get_mut(&pane)
+            .ok_or(CatalogError::PaneNotFound)?;
+        pane.generation = pane.generation.saturating_add(1);
+        pane.lifecycle = PaneLifecycle::Starting;
+        let generation = pane.generation;
+        window.revision = window.revision.saturating_add(1);
+        target.revision = target.revision.saturating_add(1);
+        self.bump_revision();
+        Ok(generation)
+    }
+
+    /// Applies a lifecycle completion only to the current pane generation.
+    ///
+    /// Returns `false` for a stale generation without changing the catalog.
+    ///
+    /// # Errors
+    ///
+    /// Returns hierarchy errors for unknown current objects.
+    pub fn set_generation_lifecycle(
+        &mut self,
+        session: SessionId,
+        pane: PaneId,
+        generation: u64,
+        lifecycle: PaneLifecycle,
+    ) -> Result<bool, CatalogError> {
+        let target = self
+            .sessions
+            .get_mut(&session)
+            .ok_or(CatalogError::SessionNotFound)?;
+        let window = target
+            .windows
+            .iter_mut()
+            .find(|window| window.panes.contains_key(&pane))
+            .ok_or(CatalogError::PaneNotFound)?;
+        let pane = window
+            .panes
+            .get_mut(&pane)
+            .ok_or(CatalogError::PaneNotFound)?;
+        if pane.generation != generation {
+            return Ok(false);
+        }
+        if pane.lifecycle == lifecycle {
+            return Ok(true);
+        }
+        pane.lifecycle = lifecycle;
+        window.revision = window.revision.saturating_add(1);
+        target.revision = target.revision.saturating_add(1);
+        self.bump_revision();
+        Ok(true)
     }
 
     /// Removes a stopped session.
