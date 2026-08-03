@@ -30,7 +30,7 @@ exit criteria are satisfied and verified, not when a target date arrives.
 | M0 | Product and architecture foundation | Complete | — | Approved product model, spatial design, remote-development model, and delivery process |
 | M1 | Native shell foundation | Complete | M0 | Cross-platform native shell proving capability boundaries, shell state, and semantic theming |
 | M2 | Local development workspace | Complete | M1 | Real local files, IDE-level editing, language intelligence, PTY/ConPTY terminals, terminal rendering, and workspace persistence |
-| M3 | Local persistent sessions | Not planned | M2 | Named local sessions with windows, split panes, detach/reattach, and restoration |
+| M3 | Local persistent sessions | In progress | M2 | Named local sessions with windows, split panes, detach/reattach, and restoration |
 | M4 | SSH remote workspace | Not planned | M2 | A remote development box behaves as a first-class workspace over standard SSH |
 | M5 | Remote persistent sessions | Not planned | M3, M4 | Multiple persistent sessions per remote host, reconnect recovery, and tmux interoperability |
 | Alpha | Public alpha release | Not planned | M3, M4, M5 | Installable, documented local and remote development release for macOS and Windows with Linux in the build pipeline |
@@ -206,8 +206,12 @@ detach, reattach, and restore them through the workspace interface.
 
 - Governing spec:
   [`specs/0001-workspace-shell-and-remote-development.md`](specs/0001-workspace-shell-and-remote-development.md)
-- Dedicated spec: not yet created
-- Implementation plan: not yet created
+- Dedicated spec:
+  [`specs/0007-m3-local-persistent-sessions.md`](specs/0007-m3-local-persistent-sessions.md)
+- Implementation plan:
+  [`plans/0007-m3-local-persistent-sessions.md`](plans/0007-m3-local-persistent-sessions.md)
+- Tracking issue:
+  [#11 — M3: local persistent sessions](https://github.com/js503/strukt/issues/11)
 - Interaction reference:
   [`mockups/workspace-shell/remote-multiplexer.html`](mockups/workspace-shell/remote-multiplexer.html)
 
