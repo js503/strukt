@@ -34,13 +34,13 @@ fn daemon_preserves_detached_sessions_and_restores_only_stopped_definitions_afte
 
     let mut client = TestClient::connect(data.path());
     client.attach();
-    client.write(first_pane, first_generation, b"alpha\n");
+    client.write(first_pane, first_generation, b"alpha\r");
     assert!(
         client
             .wait_for_text(first_pane, "fixture:alpha")
             .contains("fixture:alpha")
     );
-    client.write(second_pane, second_generation, b"beta\n");
+    client.write(second_pane, second_generation, b"beta\r");
     assert!(
         client
             .wait_for_text(second_pane, "fixture:beta")
@@ -48,7 +48,7 @@ fn daemon_preserves_detached_sessions_and_restores_only_stopped_definitions_afte
     );
 
     client.terminate_session(first);
-    client.write(second_pane, second_generation, b"still-alive\n");
+    client.write(second_pane, second_generation, b"still-alive\r");
     assert!(
         client
             .wait_for_text(second_pane, "fixture:still-alive")

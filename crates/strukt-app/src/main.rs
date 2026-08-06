@@ -198,6 +198,11 @@ mod tests {
     }
 
     #[test]
+    fn persistent_session_lines_use_portable_terminal_enter_framing() {
+        assert_eq!(crate::app::session_line_input("alpha".into()), b"alpha\r");
+    }
+
+    #[test]
     fn session_smoke_requires_exact_flag_and_existing_root() {
         let root = tempdir().unwrap();
         assert_eq!(

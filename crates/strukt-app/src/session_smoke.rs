@@ -201,7 +201,7 @@ fn write_and_wait(
         RequestBody::WritePane {
             pane,
             generation,
-            bytes: format!("{line}\n").into_bytes(),
+            bytes: format!("{line}\r").into_bytes(),
         },
         |body| matches!(body, ResponseBody::PaneWritten),
     )?;

@@ -1232,8 +1232,7 @@ impl StruktApp {
                     self.session_error = Some("select a running persistent pane first".into());
                     return Task::none();
                 };
-                let mut bytes = std::mem::take(&mut self.session_input).into_bytes();
-                bytes.push(b'\n');
+                let bytes = session_line_input(std::mem::take(&mut self.session_input));
                 return self.start_session_request(RequestBody::WritePane {
                     pane,
                     generation,
@@ -4557,6 +4556,12 @@ fn session_pane_is_live(lifecycle: &strukt_session::PaneLifecycle) -> bool {
             | strukt_session::PaneLifecycle::Running
             | strukt_session::PaneLifecycle::Backpressured
     )
+}
+
+pub(crate) fn session_line_input(input: String) -> Vec<u8> {
+    let mut bytes = input.into_bytes();
+    bytes.push(b'\r');
+    bytes
 }
 
 fn selected_live_session_pane(sessions: &SessionSurfaces) -> Option<(PaneId, u64)> {
