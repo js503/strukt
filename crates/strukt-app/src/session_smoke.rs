@@ -48,12 +48,17 @@ pub(crate) fn run(workspace_root: &Path) -> Result<(), String> {
     write_and_wait(&mut client, second_pane, second_generation, "still-alive")?;
     expect_response(
         &mut client,
-        RequestBody::TerminatePane {
-            session: first,
-            pane: first_pane,
-            generation: first_generation,
+        RequestBody::TerminateSession { session: first },
+        |body| {
+            matches!(
+                body,
+                ResponseBody::SessionTerminated {
+                    session,
+                    terminated: 1,
+                    failed: 0,
+                } if *session == first
+            )
         },
-        |body| matches!(body, ResponseBody::PaneTerminated { .. }),
     )?;
     write_and_wait(
         &mut client,

@@ -8,7 +8,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use strukt_session::{
-    AuthenticatedListener, CatalogError, EndpointIdentity, FixtureMode, LocalStream,
+    AuthenticatedListener, CatalogError, EndpointIdentity, FixtureMode, LocalStream, PaneLifecycle,
     ProviderCapabilities, ProviderCatalogSnapshot, ProviderError, ProviderKind, RendezvousRecord,
     RendezvousStore, RequestBody, RequestEnvelope, ResponseBody, ResponseEnvelope, ServiceError,
     ServiceInstanceId, ServiceLock, ServiceSecret, SessionCatalog, SessionService, SessionStore,
@@ -293,6 +293,14 @@ fn handle_controlled_request(
                 catalog.duplicate_session(expected_revision, session)
             })?,
         ),
+        RequestBody::RestartSession {
+            session,
+            rows,
+            columns,
+        } => restart_session(service, expected_revision, session, rows, columns)?,
+        RequestBody::TerminateSession { session } => {
+            terminate_session(service, expected_revision, session)?
+        }
         RequestBody::RemoveSession { session } => {
             service.apply_catalog_mutation(instance, |catalog| {
                 catalog.remove_session(expected_revision, session)
@@ -396,6 +404,7 @@ fn handle_controlled_request(
         } => {
             service.resize(
                 instance,
+                expected_revision,
                 pane,
                 generation,
                 TerminalSize::new(rows, columns)?,
@@ -408,8 +417,14 @@ fn handle_controlled_request(
             pane,
             generation,
         } => {
-            let job =
-                service.begin_terminate(instance, session, pane, generation, TERMINATION_GRACE)?;
+            let job = service.begin_terminate(
+                instance,
+                expected_revision,
+                session,
+                pane,
+                generation,
+                TERMINATION_GRACE,
+            )?;
             service.finish_terminate(job.run())?;
             ResponseBody::PaneTerminated { pane, generation }
         }
@@ -424,6 +439,121 @@ fn handle_controlled_request(
         }
     };
     Ok((response, false))
+}
+
+fn session_panes(
+    service: &SessionService,
+    expected_revision: u64,
+    session: strukt_session::SessionId,
+) -> Result<Vec<(strukt_session::PaneId, u64, PaneLifecycle)>, ServiceError> {
+    if service.catalog().revision() != expected_revision {
+        return Err(CatalogError::StaleRevision {
+            expected: expected_revision,
+            actual: service.catalog().revision(),
+        }
+        .into());
+    }
+    let target = service
+        .catalog()
+        .session(session)
+        .ok_or(CatalogError::SessionNotFound)?;
+    Ok(target
+        .windows()
+        .iter()
+        .flat_map(strukt_session::SessionWindow::panes)
+        .map(|pane| (pane.id(), pane.generation(), pane.lifecycle().clone()))
+        .collect())
+}
+
+fn pane_is_live(lifecycle: &PaneLifecycle) -> bool {
+    matches!(
+        lifecycle,
+        PaneLifecycle::Starting | PaneLifecycle::Running | PaneLifecycle::Backpressured
+    )
+}
+
+fn terminate_session(
+    service: &mut SessionService,
+    expected_revision: u64,
+    session: strukt_session::SessionId,
+) -> Result<ResponseBody, ServiceError> {
+    let panes = session_panes(service, expected_revision, session)?;
+    let mut terminated = 0_u16;
+    let mut failed = 0_u16;
+    for (pane, generation, lifecycle) in panes {
+        if !pane_is_live(&lifecycle) {
+            continue;
+        }
+        let result = service
+            .begin_terminate(
+                service.service_instance(),
+                service.catalog().revision(),
+                session,
+                pane,
+                generation,
+                TERMINATION_GRACE,
+            )
+            .and_then(|job| service.finish_terminate(job.run()));
+        if result.is_ok() {
+            terminated = terminated.saturating_add(1);
+        } else {
+            failed = failed.saturating_add(1);
+        }
+    }
+    Ok(ResponseBody::SessionTerminated {
+        session,
+        terminated,
+        failed,
+    })
+}
+
+fn restart_session(
+    service: &mut SessionService,
+    expected_revision: u64,
+    session: strukt_session::SessionId,
+    rows: u16,
+    columns: u16,
+) -> Result<ResponseBody, ServiceError> {
+    let panes = session_panes(service, expected_revision, session)?;
+    let mut restarted = 0_u16;
+    let mut failed = 0_u16;
+    for (pane, generation, lifecycle) in panes {
+        if pane_is_live(&lifecycle) {
+            let terminated = service
+                .begin_terminate(
+                    service.service_instance(),
+                    service.catalog().revision(),
+                    session,
+                    pane,
+                    generation,
+                    TERMINATION_GRACE,
+                )
+                .and_then(|job| service.finish_terminate(job.run()));
+            if terminated.is_err() {
+                failed = failed.saturating_add(1);
+                continue;
+            }
+        }
+        if start_default_pane(
+            service,
+            service.catalog().revision(),
+            session,
+            pane,
+            rows,
+            columns,
+        )
+        .is_ok()
+        {
+            restarted = restarted.saturating_add(1);
+        } else {
+            failed = failed.saturating_add(1);
+        }
+    }
+    Ok(ResponseBody::SessionRestarted {
+        session,
+        restarted,
+        failed,
+    })
 }
 
 fn start_default_pane(
@@ -512,6 +642,7 @@ fn catalog_snapshot(service: &SessionService) -> ProviderCatalogSnapshot {
         ProviderCapabilities::native_local(),
         service.catalog().clone(),
     )
+    .with_pane_statuses(service.pane_statuses())
 }
 
 fn persist_if_dirty(

@@ -16,6 +16,14 @@ const MIN_SPLIT_RATIO: u16 = 1_000;
 const MAX_SPLIT_RATIO: u16 = 9_000;
 const DEFAULT_SPLIT_RATIO: u16 = 5_000;
 
+const fn default_rows() -> u16 {
+    24
+}
+
+const fn default_columns() -> u16 {
+    80
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum PaneLifecycle {
     Stopped,
@@ -165,6 +173,10 @@ impl SessionLayoutNode {
 pub struct SessionPane {
     id: PaneId,
     working_directory: PathBuf,
+    #[serde(default = "default_rows")]
+    requested_rows: u16,
+    #[serde(default = "default_columns")]
+    requested_columns: u16,
     generation: u64,
     lifecycle: PaneLifecycle,
 }
@@ -191,6 +203,11 @@ impl SessionPane {
     #[must_use]
     pub const fn generation(&self) -> u64 {
         self.generation
+    }
+
+    #[must_use]
+    pub const fn requested_size(&self) -> (u16, u16) {
+        (self.requested_rows, self.requested_columns)
     }
 
     #[must_use]
@@ -250,6 +267,10 @@ impl SessionWindow {
         !self.panes.is_empty()
             && self.panes.len() <= MAX_PANES_PER_WINDOW
             && self.panes.contains_key(&self.focused_pane)
+            && self
+                .panes
+                .values()
+                .all(|pane| pane.requested_rows > 0 && pane.requested_columns > 0)
             && self.root.validate(&self.panes)
     }
 }
@@ -467,6 +488,8 @@ impl SessionCatalog {
         let pane = SessionPane {
             id: pane_id,
             working_directory: directory,
+            requested_rows: default_rows(),
+            requested_columns: default_columns(),
             generation: 0,
             lifecycle: PaneLifecycle::Stopped,
         };
@@ -536,6 +559,8 @@ impl SessionCatalog {
                     SessionPane {
                         id: pane,
                         working_directory: validated_directory(&directory)?,
+                        requested_rows: default_rows(),
+                        requested_columns: default_columns(),
                         generation: 0,
                         lifecycle: PaneLifecycle::Stopped,
                     },
@@ -655,6 +680,8 @@ impl SessionCatalog {
                 SessionPane {
                     id: pane_id,
                     working_directory: directory,
+                    requested_rows: default_rows(),
+                    requested_columns: default_columns(),
                     generation: 0,
                     lifecycle: PaneLifecycle::Stopped,
                 },
@@ -766,6 +793,8 @@ impl SessionCatalog {
                 SessionPane {
                     id: pane_id,
                     working_directory: source_pane.working_directory.clone(),
+                    requested_rows: source_pane.requested_rows,
+                    requested_columns: source_pane.requested_columns,
                     generation: 0,
                     lifecycle: PaneLifecycle::Stopped,
                 },
@@ -874,6 +903,8 @@ impl SessionCatalog {
                     SessionPane {
                         id: pane_id,
                         working_directory: source_pane.working_directory.clone(),
+                        requested_rows: source_pane.requested_rows,
+                        requested_columns: source_pane.requested_columns,
                         generation: 0,
                         lifecycle: PaneLifecycle::Stopped,
                     },
@@ -952,6 +983,8 @@ impl SessionCatalog {
             SessionPane {
                 id: new_pane,
                 working_directory: directory,
+                requested_rows: window.panes[&focused].requested_rows,
+                requested_columns: window.panes[&focused].requested_columns,
                 generation: 0,
                 lifecycle: PaneLifecycle::Stopped,
             },
@@ -1127,6 +1160,8 @@ impl SessionCatalog {
         expected_revision: u64,
         session: SessionId,
         pane: PaneId,
+        rows: u16,
+        columns: u16,
     ) -> Result<u64, CatalogError> {
         self.expect_revision(expected_revision)?;
         let target = self
@@ -1142,6 +1177,11 @@ impl SessionCatalog {
             .panes
             .get_mut(&pane)
             .ok_or(CatalogError::PaneNotFound)?;
+        if rows == 0 || columns == 0 {
+            return Err(CatalogError::InvalidCatalog);
+        }
+        pane.requested_rows = rows;
+        pane.requested_columns = columns;
         pane.generation = pane.generation.saturating_add(1);
         pane.lifecycle = PaneLifecycle::Starting;
         let generation = pane.generation;
@@ -1149,6 +1189,44 @@ impl SessionCatalog {
         target.revision = target.revision.saturating_add(1);
         self.bump_revision();
         Ok(generation)
+    }
+
+    /// Persists the last explicitly requested terminal size.
+    ///
+    /// # Errors
+    ///
+    /// Returns stale-revision, hierarchy, or invalid-size errors.
+    pub fn set_pane_size(
+        &mut self,
+        expected_revision: u64,
+        session: SessionId,
+        pane: PaneId,
+        rows: u16,
+        columns: u16,
+    ) -> Result<(), CatalogError> {
+        self.expect_revision(expected_revision)?;
+        if rows == 0 || columns == 0 {
+            return Err(CatalogError::InvalidCatalog);
+        }
+        let target = self
+            .sessions
+            .get_mut(&session)
+            .ok_or(CatalogError::SessionNotFound)?;
+        let window = target
+            .windows
+            .iter_mut()
+            .find(|window| window.panes.contains_key(&pane))
+            .ok_or(CatalogError::PaneNotFound)?;
+        let pane = window
+            .panes
+            .get_mut(&pane)
+            .ok_or(CatalogError::PaneNotFound)?;
+        pane.requested_rows = rows;
+        pane.requested_columns = columns;
+        window.revision = window.revision.saturating_add(1);
+        target.revision = target.revision.saturating_add(1);
+        self.bump_revision();
+        Ok(())
     }
 
     /// Applies a lifecycle completion only to the current pane generation.

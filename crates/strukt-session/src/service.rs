@@ -142,6 +142,31 @@ impl SessionService {
             .map(|(_, _, pane)| pane.lifecycle().clone())
     }
 
+    pub fn pane_statuses(&self) -> impl Iterator<Item = (PaneId, u64, AttentionState)> + '_ {
+        self.catalog.sessions().flat_map(|session| {
+            session
+                .windows()
+                .iter()
+                .flat_map(crate::SessionWindow::panes)
+                .map(|pane| {
+                    let historical = self.historical.get(&pane.id());
+                    (
+                        pane.id(),
+                        self.unread_counts
+                            .get(&pane.id())
+                            .copied()
+                            .or_else(|| historical.map(PaneScreenSnapshot::unread_count))
+                            .unwrap_or(0),
+                        self.attention
+                            .get(&pane.id())
+                            .copied()
+                            .or_else(|| historical.map(PaneScreenSnapshot::attention))
+                            .unwrap_or_default(),
+                    )
+                })
+        })
+    }
+
     /// Attaches the single M3 controlling client.
     ///
     /// # Errors
@@ -282,10 +307,15 @@ impl SessionService {
         }
         let terminal_pane = self.ensure_runtime_pane(pane);
         self.historical.remove(&pane);
+        let requested_size = request.size;
         let runtime_job = self.runtime.begin_restart(terminal_pane, request)?;
-        let generation = self
-            .catalog
-            .begin_pane_generation(expected_revision, session, pane)?;
+        let generation = self.catalog.begin_pane_generation(
+            expected_revision,
+            session,
+            pane,
+            requested_size.rows(),
+            requested_size.columns(),
+        )?;
         if runtime_job.generation() != generation {
             self.runtime.discard(terminal_pane);
             return Err(ServiceError::GenerationDiverged);
@@ -360,17 +390,33 @@ impl SessionService {
     pub fn resize(
         &mut self,
         service_instance: ServiceInstanceId,
+        expected_revision: u64,
         pane: PaneId,
         generation: u64,
         size: TerminalSize,
     ) -> Result<(), ServiceError> {
         self.expect_instance(service_instance)?;
+        if self.catalog.revision() != expected_revision {
+            return Err(CatalogError::StaleRevision {
+                expected: expected_revision,
+                actual: self.catalog.revision(),
+            }
+            .into());
+        }
         let (session, _, _) = self.catalog.pane(pane).ok_or(CatalogError::PaneNotFound)?;
         if !self.matches_generation(session, pane, generation) {
             return Err(ServiceError::StaleGeneration);
         }
         let terminal = self.runtime_pane(pane)?;
         self.runtime.resize(terminal, size)?;
+        self.catalog.set_pane_size(
+            expected_revision,
+            session,
+            pane,
+            size.rows(),
+            size.columns(),
+        )?;
+        self.dirty = true;
         Ok(())
     }
 
@@ -382,12 +428,20 @@ impl SessionService {
     pub fn begin_terminate(
         &mut self,
         service_instance: ServiceInstanceId,
+        expected_revision: u64,
         session: SessionId,
         pane: PaneId,
         generation: u64,
         grace: Duration,
     ) -> Result<ServiceTerminateJob, ServiceError> {
         self.expect_instance(service_instance)?;
+        if self.catalog.revision() != expected_revision {
+            return Err(CatalogError::StaleRevision {
+                expected: expected_revision,
+                actual: self.catalog.revision(),
+            }
+            .into());
+        }
         if !self.matches_generation(session, pane, generation) {
             return Err(ServiceError::StaleGeneration);
         }
@@ -463,6 +517,15 @@ impl SessionService {
                 }
             }
             let lifecycle = runtime_lifecycle(projection.state());
+            if matches!(
+                lifecycle,
+                PaneLifecycle::Exited { .. }
+                    | PaneLifecycle::Failed { .. }
+                    | PaneLifecycle::Backpressured
+            ) && definition.lifecycle() != &lifecycle
+            {
+                self.attention.insert(pane, AttentionState::Attention);
+            }
             let _ = self.catalog.set_generation_lifecycle(
                 session,
                 pane,
@@ -482,27 +545,50 @@ impl SessionService {
     /// # Errors
     ///
     /// Returns hierarchy or snapshot-bound errors.
-    pub fn snapshot(&self, pane: PaneId) -> Result<PaneScreenSnapshot, ServiceError> {
-        let (_, _, definition) = self.catalog.pane(pane).ok_or(CatalogError::PaneNotFound)?;
+    pub fn snapshot(&mut self, pane: PaneId) -> Result<PaneScreenSnapshot, ServiceError> {
+        let (session, _, definition) = self.catalog.pane(pane).ok_or(CatalogError::PaneNotFound)?;
+        let generation = definition.generation();
+        let lifecycle = definition.lifecycle().clone();
+        let viewed = self.is_active_visible_pane(session, pane);
         let Some(terminal) = self.terminal_panes.get(&pane).copied() else {
-            return self
+            let mut snapshot = self
                 .historical
                 .get(&pane)
                 .cloned()
-                .ok_or(ServiceError::StaleGeneration);
+                .ok_or(ServiceError::StaleGeneration)?;
+            if viewed {
+                let changed =
+                    snapshot.unread_count() > 0 || snapshot.attention() != AttentionState::None;
+                snapshot.mark_viewed();
+                if changed {
+                    self.historical.insert(pane, snapshot.clone());
+                    self.dirty = true;
+                }
+                self.unread_counts.remove(&pane);
+                self.attention.remove(&pane);
+            }
+            return Ok(snapshot);
         };
         let projection = self
             .runtime
             .projection(terminal)
             .ok_or(ServiceError::StaleGeneration)?;
-        Ok(PaneScreenSnapshot::from_terminal(
+        let mut snapshot = PaneScreenSnapshot::from_terminal(
             projection.snapshot(),
             self.output_revisions.get(&pane).copied().unwrap_or(0),
-            definition.generation(),
-            definition.lifecycle().clone(),
+            generation,
+            lifecycle,
             self.unread_counts.get(&pane).copied().unwrap_or(0),
             self.attention.get(&pane).copied().unwrap_or_default(),
-        )?)
+        )?;
+        if viewed {
+            snapshot.mark_viewed();
+            let had_unread = self.unread_counts.remove(&pane).is_some();
+            let had_attention = self.attention.remove(&pane).is_some();
+            let changed = had_unread || had_attention;
+            self.dirty |= changed;
+        }
+        Ok(snapshot)
     }
 
     #[must_use]

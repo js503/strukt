@@ -110,14 +110,17 @@ fn attention_and_unread_transitions_are_explicit() {
 #[test]
 fn provider_catalog_snapshots_are_immutable_owned_values() {
     let instance = ServiceInstanceId::new().unwrap();
+    let pane = strukt_session::PaneId::new().unwrap();
     let snapshot = ProviderCatalogSnapshot::new(
         instance,
         ProviderKind::NativeLocal,
         ProviderCapabilities::native_local(),
         SessionCatalog::new(),
-    );
+    )
+    .with_pane_statuses([(pane, 3, AttentionState::Attention)]);
     assert_eq!(snapshot.service_instance(), instance);
     assert_eq!(snapshot.catalog().revision(), 0);
+    assert_eq!(snapshot.pane_status(pane), (3, AttentionState::Attention));
     let json = serde_json::to_string(&snapshot).unwrap();
     assert!(json.contains("native-local") || json.contains("NativeLocal"));
     for forbidden in ["process_handle", "command_history", "environment", "secret"] {

@@ -5,7 +5,7 @@ use iced::{Background, Border, Color, Element, Fill, Length};
 use strukt_core::CapabilityId;
 use strukt_editor::{CloseDecision, DocumentStatus, FindQuery, GrammarRegistry, OpenDisposition};
 use strukt_fs::{FileEntry, FileKind};
-use strukt_session::{ClientHealth, PaneLifecycle};
+use strukt_session::{AttentionState, ClientHealth, PaneLifecycle};
 use strukt_shell::Activity;
 use strukt_terminal::{LayoutNode, PaneState, SplitAxis, TerminalPaneId};
 use strukt_theme::{Rgb, ThemeTokens};
@@ -368,6 +368,11 @@ fn sessions_canvas(app: &StruktApp) -> Element<'_, Message> {
         ClientHealth::Connecting => app_theme(app).session_active,
     };
     let ready = health == ClientHealth::Ready && !app.sessions.request_in_flight();
+    let capabilities = app
+        .sessions
+        .catalog()
+        .map(strukt_session::ProviderCatalogSnapshot::capabilities)
+        .unwrap_or_default();
     let mut controls = row![
         button("Connect").on_press_maybe(
             matches!(
@@ -376,13 +381,17 @@ fn sessions_canvas(app: &StruktApp) -> Element<'_, Message> {
             )
             .then_some(Message::ConnectSessions),
         ),
-        button("New session")
-            .on_press_maybe((ready && app.workspace.is_some()).then_some(Message::CreateSession)),
+        button("New session").on_press_maybe(
+            (ready && capabilities.create_session && app.workspace.is_some())
+                .then_some(Message::CreateSession),
+        ),
         button("Start pane").on_press_maybe(
-            (ready && app.sessions.selected_pane().is_some()).then_some(Message::StartSessionPane),
+            (ready && capabilities.mutate_panes && app.sessions.selected_pane().is_some())
+                .then_some(Message::StartSessionPane),
         ),
         button("Refresh").on_press_maybe(ready.then_some(Message::RefreshSessions)),
-        button("Detach").on_press_maybe(ready.then_some(Message::DetachSessions)),
+        button("Detach")
+            .on_press_maybe((ready && capabilities.detach).then_some(Message::DetachSessions)),
     ]
     .spacing(6);
     if app.sessions.request_in_flight() {
@@ -393,77 +402,114 @@ fn sessions_canvas(app: &StruktApp) -> Element<'_, Message> {
             text_input("Session name", &app.session_name)
                 .on_input_maybe(ready.then_some(Message::SessionNameChanged)),
             button("Rename session").on_press_maybe(
-                (ready && app.sessions.selected_session().is_some())
+                (ready && capabilities.rename_session && app.sessions.selected_session().is_some())
                     .then_some(Message::RenameSession),
             ),
+        ]
+        .spacing(6),
+        row![
             button("Duplicate session").on_press_maybe(
-                (ready && app.sessions.selected_session().is_some())
-                    .then_some(Message::DuplicateSession),
+                (ready
+                    && capabilities.duplicate_session
+                    && app.sessions.selected_session().is_some())
+                .then_some(Message::DuplicateSession),
+            ),
+            button("Restart session").on_press_maybe(
+                (ready
+                    && capabilities.terminate_session
+                    && app.sessions.selected_session().is_some())
+                .then_some(Message::BeginRestartSession),
+            ),
+        ]
+        .spacing(6),
+        row![
+            button("Terminate session").on_press_maybe(
+                (ready
+                    && capabilities.terminate_session
+                    && app.sessions.selected_session().is_some())
+                .then_some(Message::BeginTerminateSession),
             ),
             button("Remove session").on_press_maybe(
-                (ready && app.sessions.selected_session().is_some())
-                    .then_some(Message::BeginRemoveSession),
+                (ready
+                    && capabilities.terminate_session
+                    && app.sessions.selected_session().is_some())
+                .then_some(Message::BeginRemoveSession),
             ),
         ]
         .spacing(6),
         row![
             text_input("Window name", &app.window_name)
                 .on_input_maybe(ready.then_some(Message::WindowNameChanged)),
-            button("New window").on_press_maybe(
-                (ready && app.sessions.selected_session().is_some())
-                    .then_some(Message::CreateSessionWindow),
-            ),
             button("Rename window").on_press_maybe(
-                (ready && app.sessions.selected_window().is_some())
+                (ready && capabilities.mutate_windows && app.sessions.selected_window().is_some())
                     .then_some(Message::RenameSessionWindow),
             ),
+        ]
+        .spacing(6),
+        row![
+            button("New window").on_press_maybe(
+                (ready && capabilities.mutate_windows && app.sessions.selected_session().is_some())
+                    .then_some(Message::CreateSessionWindow),
+            ),
             button("Duplicate window").on_press_maybe(
-                (ready && app.sessions.selected_window().is_some())
+                (ready && capabilities.mutate_windows && app.sessions.selected_window().is_some())
                     .then_some(Message::DuplicateSessionWindow),
             ),
             button("Close window").on_press_maybe(
-                (ready && app.sessions.selected_window().is_some())
+                (ready && capabilities.mutate_windows && app.sessions.selected_window().is_some())
                     .then_some(Message::BeginCloseSessionWindow),
             ),
         ]
         .spacing(6),
         row![
             button("Split right").on_press_maybe(
-                (ready && app.sessions.selected_pane().is_some())
+                (ready && capabilities.mutate_panes && app.sessions.selected_pane().is_some())
                     .then_some(Message::SplitSessionPane(SplitAxis::Vertical)),
             ),
             button("Split down").on_press_maybe(
-                (ready && app.sessions.selected_pane().is_some())
+                (ready && capabilities.mutate_panes && app.sessions.selected_pane().is_some())
                     .then_some(Message::SplitSessionPane(SplitAxis::Horizontal)),
             ),
             button("Terminate pane").on_press_maybe(
-                (ready && app.sessions.selected_pane().is_some())
+                (ready && capabilities.terminate_session && app.sessions.selected_pane().is_some())
                     .then_some(Message::BeginTerminateSessionPane),
             ),
             button("Close pane").on_press_maybe(
-                (ready && app.sessions.selected_pane().is_some())
+                (ready && capabilities.mutate_panes && app.sessions.selected_pane().is_some())
                     .then_some(Message::BeginCloseSessionPane),
             ),
         ]
         .spacing(6),
     ]
     .spacing(6);
-    let pane_input = row![
-        text_input(
-            "Send input to the selected running pane",
-            &app.session_input
-        )
-        .on_input_maybe(ready.then_some(Message::SessionInputChanged))
-        .on_submit_maybe(ready.then_some(Message::SendSessionInput)),
-        button("Send").on_press_maybe(ready.then_some(Message::SendSessionInput)),
-        button("80×24").on_press_maybe(ready.then_some(Message::ResizeSessionPane {
-            rows: 24,
-            columns: 80,
-        })),
-        button("120×36").on_press_maybe(ready.then_some(Message::ResizeSessionPane {
-            rows: 36,
-            columns: 120,
-        })),
+    let pane_input = column![
+        row![
+            text_input(
+                "Send input to the selected running pane",
+                &app.session_input
+            )
+            .on_input_maybe((ready && capabilities.input).then_some(Message::SessionInputChanged))
+            .on_submit_maybe((ready && capabilities.input).then_some(Message::SendSessionInput)),
+            button("Send")
+                .on_press_maybe((ready && capabilities.input).then_some(Message::SendSessionInput)),
+        ]
+        .spacing(6),
+        row![
+            text("Pane size"),
+            button("80×24").on_press_maybe((ready && capabilities.resize).then_some(
+                Message::ResizeSessionPane {
+                    rows: 24,
+                    columns: 80,
+                }
+            )),
+            button("120×36").on_press_maybe((ready && capabilities.resize).then_some(
+                Message::ResizeSessionPane {
+                    rows: 36,
+                    columns: 120,
+                }
+            )),
+        ]
+        .spacing(6),
     ]
     .spacing(6);
 
@@ -504,9 +550,17 @@ fn sessions_canvas(app: &StruktApp) -> Element<'_, Message> {
                                 PaneLifecycle::Failed { .. } => "failed",
                                 PaneLifecycle::Backpressured => "busy",
                             };
+                            let (unread, attention) = snapshot.pane_status(pane.id());
+                            let signal = match attention {
+                                AttentionState::Attention => " · attention".to_owned(),
+                                AttentionState::Unread if unread > 0 => {
+                                    format!(" · {unread} unread")
+                                }
+                                AttentionState::None | AttentionState::Unread => String::new(),
+                            };
                             inventory = inventory.push(
                                 button(text(format!(
-                                    "    {} pane · {state}",
+                                    "    {} pane · {state}{signal}",
                                     if pane_selected { "●" } else { "○" }
                                 )))
                                 .width(Fill)
@@ -552,6 +606,12 @@ fn sessions_canvas(app: &StruktApp) -> Element<'_, Message> {
         SessionConfirmation::RemoveSession { name, .. } => confirmation_row(format!(
             "Remove stopped session ‘{name}’ and its bounded history?"
         )),
+        SessionConfirmation::RestartSession { name, running, .. } => confirmation_row(format!(
+            "Restart {running} running pane(s) in session ‘{name}’?"
+        )),
+        SessionConfirmation::TerminateSession { name, running, .. } => confirmation_row(format!(
+            "Terminate {running} running pane(s) in session ‘{name}’?"
+        )),
         SessionConfirmation::CloseWindow { name, .. } => {
             confirmation_row(format!("Close stopped window ‘{name}’?"))
         }
@@ -560,6 +620,9 @@ fn sessions_canvas(app: &StruktApp) -> Element<'_, Message> {
         }
         SessionConfirmation::TerminatePane { pane, .. } => confirmation_row(format!(
             "Terminate running pane {pane}? Its current process will be stopped."
+        )),
+        SessionConfirmation::RestartPane { pane, .. } => confirmation_row(format!(
+            "Restart running pane {pane}? Its current process will be replaced."
         )),
     };
 

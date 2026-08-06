@@ -79,6 +79,19 @@ fn protocol_versions_request_ids_and_body_bounds_are_enforced() {
         },
     );
     assert_eq!(invalid_ratio.validate(), Err(WireError::InvalidBody));
+    let invalid_restart_size = RequestEnvelope::new(
+        6,
+        0,
+        RequestBody::RestartSession {
+            session,
+            rows: 0,
+            columns: 80,
+        },
+    );
+    assert_eq!(invalid_restart_size.validate(), Err(WireError::InvalidBody));
+    RequestEnvelope::new(7, 0, RequestBody::TerminateSession { session })
+        .validate()
+        .expect("session termination is a valid bounded request");
 }
 
 #[test]

@@ -9,7 +9,7 @@ use crate::{
     SessionId, WindowId,
 };
 
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 const MAX_NAME_CHARS: usize = 80;
 const MAX_PATH_BYTES: usize = 4_096;
 const MAX_INPUT_BYTES: usize = 256 * 1024;
@@ -39,6 +39,14 @@ pub enum RequestBody {
         session: SessionId,
     },
     DuplicateSession {
+        session: SessionId,
+    },
+    RestartSession {
+        session: SessionId,
+        rows: u16,
+        columns: u16,
+    },
+    TerminateSession {
         session: SessionId,
     },
     RemoveSession {
@@ -224,6 +232,7 @@ impl RequestEnvelope {
             }
             RequestBody::StartPane { rows, columns, .. }
             | RequestBody::StartFixturePane { rows, columns, .. }
+            | RequestBody::RestartSession { rows, columns, .. }
             | RequestBody::ResizePane { rows, columns, .. }
                 if *rows == 0 || *columns == 0 =>
             {
@@ -249,6 +258,8 @@ impl RequestEnvelope {
             | RequestBody::RenameSession { .. }
             | RequestBody::ActivateSession { .. }
             | RequestBody::DuplicateSession { .. }
+            | RequestBody::RestartSession { .. }
+            | RequestBody::TerminateSession { .. }
             | RequestBody::RemoveSession { .. }
             | RequestBody::RenameWindow { .. }
             | RequestBody::ActivateWindow { .. }
@@ -275,15 +286,31 @@ pub enum ResponseBody {
     Detached,
     SessionCreated(SessionId),
     SessionDuplicated(SessionId),
+    SessionRestarted {
+        session: SessionId,
+        restarted: u16,
+        failed: u16,
+    },
+    SessionTerminated {
+        session: SessionId,
+        terminated: u16,
+        failed: u16,
+    },
     WindowCreated(WindowId),
     WindowDuplicated(WindowId),
     PaneSplit(PaneId),
     CatalogChanged(ProviderCatalogSnapshot),
-    PaneStarted { pane: PaneId, generation: u64 },
+    PaneStarted {
+        pane: PaneId,
+        generation: u64,
+    },
     PaneWritten,
     PaneResized,
     PaneSnapshot(PaneScreenSnapshot),
-    PaneTerminated { pane: PaneId, generation: u64 },
+    PaneTerminated {
+        pane: PaneId,
+        generation: u64,
+    },
     ShuttingDown,
 }
 

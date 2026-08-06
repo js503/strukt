@@ -66,6 +66,31 @@ fn restored_catalog_stays_stopped_until_an_explicit_generation_scoped_start() {
         .write(instance, pane, generation, b"yes")
         .expect("current generation input");
     assert_eq!(transport.writes(), vec![b"yes".to_vec()]);
+    let stale_revision = service.catalog().revision().saturating_sub(1);
+    assert!(
+        service
+            .resize(
+                instance,
+                stale_revision,
+                pane,
+                generation,
+                TerminalSize::new(40, 132).unwrap(),
+            )
+            .is_err()
+    );
+    service
+        .resize(
+            instance,
+            service.catalog().revision(),
+            pane,
+            generation,
+            TerminalSize::new(40, 132).unwrap(),
+        )
+        .expect("revision-safe resize");
+    assert_eq!(
+        service.catalog().pane(pane).unwrap().2.requested_size(),
+        (40, 132)
+    );
 }
 
 #[test]
@@ -80,9 +105,24 @@ fn detach_keeps_processes_alive_and_idle_exit_requires_no_running_panes() {
     assert_eq!(transport.terminate_count(), 0);
 
     let generation = service.pane_generation(pane).expect("pane generation");
+    let stale_revision = service.catalog().revision().saturating_sub(1);
+    assert!(
+        service
+            .begin_terminate(
+                instance,
+                stale_revision,
+                session,
+                pane,
+                generation,
+                Duration::from_millis(10),
+            )
+            .is_err(),
+        "destructive termination must reject stale catalog projections"
+    );
     let job = service
         .begin_terminate(
             instance,
+            service.catalog().revision(),
             session,
             pane,
             generation,
@@ -102,6 +142,10 @@ fn detach_keeps_processes_alive_and_idle_exit_requires_no_running_panes() {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "fair draining, attention, persistence, and restore form one end-to-end invariant"
+)]
 fn output_drains_fairly_and_coalesces_snapshot_revisions() {
     let directory = std::env::current_dir().expect("current directory");
     let mut catalog = SessionCatalog::new();
@@ -139,6 +183,7 @@ fn output_drains_fairly_and_coalesces_snapshot_revisions() {
             .expect("start job");
         service.finish_start(job.run()).expect("finish start");
     }
+    service.attach(instance).expect("attach viewer");
     transport.push_output("noisy", OutputChunk::new(0, vec![b'x'; 512 * 1024]));
     transport.push_output("quiet", OutputChunk::new(0, b"quiet-progress".to_vec()));
 
@@ -146,6 +191,33 @@ fn output_drains_fairly_and_coalesces_snapshot_revisions() {
 
     assert!(batch.changed_panes().contains(&noisy));
     assert!(batch.changed_panes().contains(&quiet));
+    assert!(
+        service
+            .snapshot(noisy)
+            .expect("hidden snapshot")
+            .unread_count()
+            > 0
+    );
+    assert_eq!(
+        service
+            .snapshot(quiet)
+            .expect("visible snapshot")
+            .unread_count(),
+        0
+    );
+    service
+        .apply_catalog_mutation(instance, |catalog| {
+            catalog.activate_session(catalog.revision(), noisy_session)
+        })
+        .expect("activate noisy session");
+    assert_eq!(
+        service
+            .snapshot(noisy)
+            .expect("newly viewed snapshot")
+            .unread_count(),
+        0,
+        "viewing the newest active pane clears unread state"
+    );
     assert!(
         service
             .snapshot(quiet)
@@ -179,7 +251,7 @@ fn output_drains_fairly_and_coalesces_snapshot_revisions() {
         .expect("quiet bounded history");
     assert_eq!(quiet_history.screen().generation(), 0);
     assert_eq!(quiet_history.screen().lifecycle(), &PaneLifecycle::Stopped);
-    let restored = SessionService::restore(
+    let mut restored = SessionService::restore(
         ServiceInstanceId::new().expect("restored instance"),
         &persisted,
         Arc::new(FakeTransport::default()),

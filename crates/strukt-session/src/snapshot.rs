@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use strukt_terminal::{Cell, TerminalSnapshot};
 use thiserror::Error;
 
-use crate::{PaneLifecycle, ProviderCapabilities, ProviderKind, ServiceInstanceId, SessionCatalog};
+use crate::{
+    PaneId, PaneLifecycle, ProviderCapabilities, ProviderKind, ServiceInstanceId, SessionCatalog,
+};
 
 const MAX_ROWS: usize = 2_048;
 const MAX_COLUMNS: usize = 512;
@@ -80,6 +82,8 @@ pub struct ProviderCatalogSnapshot {
     provider_kind: ProviderKind,
     capabilities: ProviderCapabilities,
     catalog: SessionCatalog,
+    #[serde(default)]
+    pane_statuses: BTreeMap<PaneId, (u64, AttentionState)>,
 }
 
 impl ProviderCatalogSnapshot {
@@ -95,7 +99,20 @@ impl ProviderCatalogSnapshot {
             provider_kind,
             capabilities,
             catalog,
+            pane_statuses: BTreeMap::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_pane_statuses(
+        mut self,
+        statuses: impl IntoIterator<Item = (PaneId, u64, AttentionState)>,
+    ) -> Self {
+        self.pane_statuses = statuses
+            .into_iter()
+            .map(|(pane, unread, attention)| (pane, (unread, attention)))
+            .collect();
+        self
     }
 
     #[must_use]
@@ -117,9 +134,19 @@ impl ProviderCatalogSnapshot {
     pub const fn catalog(&self) -> &SessionCatalog {
         &self.catalog
     }
+
+    #[must_use]
+    pub fn pane_status(&self, pane: PaneId) -> (u64, AttentionState) {
+        self.pane_statuses.get(&pane).copied().unwrap_or_default()
+    }
 }
 
 impl PaneScreenSnapshot {
+    pub(crate) fn mark_viewed(&mut self) {
+        self.unread_count = 0;
+        self.attention = AttentionState::None;
+    }
+
     /// Creates an owned, bounded provider snapshot from the terminal model.
     ///
     /// # Errors
@@ -258,3 +285,4 @@ pub enum SnapshotError {
     #[error("terminal snapshot exceeds the aggregate byte limit")]
     TooLarge,
 }
+use std::collections::BTreeMap;

@@ -47,7 +47,7 @@ fn daemon_preserves_detached_sessions_and_restores_only_stopped_definitions_afte
             .contains("fixture:beta")
     );
 
-    client.terminate(first, first_pane, first_generation);
+    client.terminate_session(first);
     client.write(second_pane, second_generation, b"still-alive\n");
     assert!(
         client
@@ -211,15 +211,17 @@ impl TestClient {
         ));
     }
 
-    fn terminate(&mut self, session: SessionId, pane: strukt_session::PaneId, generation: u64) {
+    fn terminate_session(&mut self, session: SessionId) {
+        let response = self.request(RequestBody::TerminateSession { session });
         assert!(matches!(
-            self.request(RequestBody::TerminatePane {
-                session,
-                pane,
-                generation,
-            }),
-            ResponseBody::PaneTerminated { .. }
+            response,
+            ResponseBody::SessionTerminated {
+                session: terminated,
+                terminated: 1,
+                failed: 0,
+            } if terminated == session
         ));
+        self.refresh_catalog();
     }
 
     fn wait_for_text(&mut self, pane: strukt_session::PaneId, expected: &str) -> String {

@@ -277,6 +277,16 @@ pub enum SessionConfirmation {
         session: SessionId,
         name: String,
     },
+    RestartSession {
+        session: SessionId,
+        name: String,
+        running: usize,
+    },
+    TerminateSession {
+        session: SessionId,
+        name: String,
+        running: usize,
+    },
     CloseWindow {
         session: SessionId,
         window: WindowId,
@@ -290,6 +300,10 @@ pub enum SessionConfirmation {
         session: SessionId,
         pane: PaneId,
         generation: u64,
+    },
+    RestartPane {
+        session: SessionId,
+        pane: PaneId,
     },
 }
 
@@ -356,6 +370,8 @@ pub enum Message {
     SessionNameChanged(String),
     RenameSession,
     DuplicateSession,
+    BeginRestartSession,
+    BeginTerminateSession,
     BeginRemoveSession,
     WindowNameChanged(String),
     CreateSessionWindow,
@@ -792,6 +808,15 @@ impl StruktApp {
                     self.session_error = Some("select a persistent session pane first".into());
                     return Task::none();
                 };
+                let live = self
+                    .sessions
+                    .catalog()
+                    .and_then(|snapshot| snapshot.catalog().pane(pane))
+                    .is_some_and(|(_, _, pane)| session_pane_is_live(pane.lifecycle()));
+                if live {
+                    self.session_confirmation = SessionConfirmation::RestartPane { session, pane };
+                    return Task::none();
+                }
                 return self.start_session_request(RequestBody::StartPane {
                     session,
                     pane,
@@ -845,9 +870,26 @@ impl StruktApp {
                         | ResponseBody::SessionDuplicated(_)
                         | ResponseBody::WindowCreated(_)
                         | ResponseBody::WindowDuplicated(_)
-                        | ResponseBody::PaneSplit(_),
+                        | ResponseBody::PaneSplit(_)
+                        | ResponseBody::PaneSnapshot(_),
                     ) => {
                         self.session_error = None;
+                        return Task::done(Message::RefreshSessions);
+                    }
+                    Ok(ResponseBody::SessionRestarted {
+                        restarted, failed, ..
+                    }) => {
+                        self.session_error = (failed > 0).then(|| {
+                            format!("restarted {restarted} pane(s); {failed} pane(s) failed")
+                        });
+                        return Task::done(Message::RefreshSessions);
+                    }
+                    Ok(ResponseBody::SessionTerminated {
+                        terminated, failed, ..
+                    }) => {
+                        self.session_error = (failed > 0).then(|| {
+                            format!("terminated {terminated} pane(s); {failed} pane(s) failed")
+                        });
                         return Task::done(Message::RefreshSessions);
                     }
                     Ok(ResponseBody::PaneStarted { .. }) => {
@@ -916,6 +958,65 @@ impl StruktApp {
                     return Task::none();
                 };
                 return self.start_session_request(RequestBody::DuplicateSession { session });
+            }
+            Message::BeginRestartSession => {
+                let Some(session) = self.sessions.selected_session() else {
+                    return Task::none();
+                };
+                let Some(target) = self
+                    .sessions
+                    .catalog()
+                    .and_then(|snapshot| snapshot.catalog().session(session))
+                else {
+                    return Task::none();
+                };
+                let running = target
+                    .windows()
+                    .iter()
+                    .flat_map(strukt_session::SessionWindow::panes)
+                    .filter(|pane| session_pane_is_live(pane.lifecycle()))
+                    .count();
+                if running == 0 {
+                    return self.start_session_request(RequestBody::RestartSession {
+                        session,
+                        rows: 24,
+                        columns: 80,
+                    });
+                }
+                self.session_confirmation = SessionConfirmation::RestartSession {
+                    session,
+                    name: target.name().to_owned(),
+                    running,
+                };
+                return Task::none();
+            }
+            Message::BeginTerminateSession => {
+                let Some(session) = self.sessions.selected_session() else {
+                    return Task::none();
+                };
+                let Some(target) = self
+                    .sessions
+                    .catalog()
+                    .and_then(|snapshot| snapshot.catalog().session(session))
+                else {
+                    return Task::none();
+                };
+                let running = target
+                    .windows()
+                    .iter()
+                    .flat_map(strukt_session::SessionWindow::panes)
+                    .filter(|pane| session_pane_is_live(pane.lifecycle()))
+                    .count();
+                if running == 0 {
+                    self.session_error = Some("the selected session has no running panes".into());
+                    return Task::none();
+                }
+                self.session_confirmation = SessionConfirmation::TerminateSession {
+                    session,
+                    name: target.name().to_owned(),
+                    running,
+                };
+                return Task::none();
             }
             Message::BeginRemoveSession => {
                 let Some(session) = self.sessions.selected_session() else {
@@ -1087,6 +1188,16 @@ impl StruktApp {
                     SessionConfirmation::RemoveSession { session, .. } => {
                         RequestBody::RemoveSession { session }
                     }
+                    SessionConfirmation::RestartSession { session, .. } => {
+                        RequestBody::RestartSession {
+                            session,
+                            rows: 24,
+                            columns: 80,
+                        }
+                    }
+                    SessionConfirmation::TerminateSession { session, .. } => {
+                        RequestBody::TerminateSession { session }
+                    }
                     SessionConfirmation::CloseWindow {
                         session, window, ..
                     } => RequestBody::CloseWindow { session, window },
@@ -1101,6 +1212,12 @@ impl StruktApp {
                         session,
                         pane,
                         generation,
+                    },
+                    SessionConfirmation::RestartPane { session, pane } => RequestBody::StartPane {
+                        session,
+                        pane,
+                        rows: 24,
+                        columns: 80,
                     },
                     SessionConfirmation::None => return Task::none(),
                 };
@@ -3206,6 +3323,8 @@ impl StruktApp {
             | Message::SessionNameChanged(_)
             | Message::RenameSession
             | Message::DuplicateSession
+            | Message::BeginRestartSession
+            | Message::BeginTerminateSession
             | Message::BeginRemoveSession
             | Message::WindowNameChanged(_)
             | Message::CreateSessionWindow
