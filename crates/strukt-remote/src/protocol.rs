@@ -100,6 +100,7 @@ pub struct ClientHello {
     pub protocol_major: u16,
     pub protocol_minor: u16,
     pub nonce: [u8; 32],
+    pub workspace_root: String,
     pub limits: ProtocolLimits,
 }
 
@@ -110,6 +111,7 @@ pub struct ServerHello {
     pub nonce: [u8; 32],
     pub helper_version: String,
     pub build_target: RemoteBuildTarget,
+    pub workspace_root: String,
     pub limits: ProtocolLimits,
     pub capabilities: BTreeSet<Capability>,
 }

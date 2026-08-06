@@ -4192,10 +4192,15 @@ name = "strukt-remote"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "cap-fs-ext",
+ "cap-std",
  "ciborium",
  "getrandom 0.4.3",
  "serde",
  "serde_json",
+ "strukt-editor",
+ "strukt-fs",
+ "strukt-workspace",
  "tempfile",
  "thiserror 2.0.19",
 ]

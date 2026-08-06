@@ -17,6 +17,7 @@ fn hello(major: u16, minor: u16) -> (ClientHello, ServerHello) {
             protocol_major: major,
             protocol_minor: minor,
             nonce,
+            workspace_root: "/srv/strukt".into(),
             limits: ProtocolLimits::default(),
         },
         ServerHello {
@@ -25,6 +26,7 @@ fn hello(major: u16, minor: u16) -> (ClientHello, ServerHello) {
             nonce,
             helper_version: "0.1.0".into(),
             build_target: RemoteBuildTarget::LinuxX86_64,
+            workspace_root: "/srv/strukt".into(),
             limits: ProtocolLimits {
                 max_frame_bytes: 512 * 1_024,
                 max_in_flight: 32,
