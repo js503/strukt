@@ -615,14 +615,14 @@ git commit -m "test: validate persistent local sessions"
 - Modify: `docs/tracker.md`
 - Modify: `docs/decisions/0001-native-ui-framework.md`
 
-- [ ] **Step 1: Complete the native macOS walkthrough**
+- [x] **Step 1: Complete the native macOS walkthrough**
 
 Exercise session/window/pane hierarchy, detach after closing the UI, reattach,
 unread/attention, service loss, stale display, restart/terminate confirmation,
 file-browser access, keyboard focus, themes, stopped restoration, and no workspace
 metadata. Record Iced accessibility/IME limits honestly.
 
-- [ ] **Step 2: Run full-slice agentic review**
+- [x] **Step 2: Run full-slice agentic review**
 
 Review local endpoint ownership and ACL assumptions, authentication, secret
 lifetime, framing/queue bounds, service lock races, process inheritance and cleanup,
@@ -632,18 +632,18 @@ migration, capability isolation, app focus, cross-platform helper behavior, and
 M4/M5 boundary drift. Resolve all critical and important findings with focused
 regressions.
 
-- [ ] **Step 3: Record exact local and hosted evidence**
+- [x] **Step 3: Record exact local and hosted evidence**
 
 Require the implementation and final documentation heads to pass macOS 14, Ubuntu
 24.04, and Windows Server 2022. Record run/job links, native service/smoke markers,
 manual results, review findings, and accepted public-alpha limitations.
 
-- [ ] **Step 4: Update milestone artifacts**
+- [x] **Step 4: Update milestone artifacts**
 
 Mark M3 complete in roadmap/tracker, link spec/plan/issue/PR/evidence, update README
 and ADR 0001, and keep M4 then M5 as the remaining public-alpha implementation path.
 
-- [ ] **Step 5: Commit completion evidence**
+- [x] **Step 5: Commit completion evidence**
 
 ```bash
 git add README.md docs/decisions/0001-native-ui-framework.md \
