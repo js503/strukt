@@ -14,12 +14,10 @@ use strukt_terminal::{GridSize, TerminalModel};
 #[test]
 fn service_start_is_lazy_and_only_explicit_connect_intents_may_launch_it() {
     let backend = Arc::new(FakeBackend::default());
-    let mut client = SessionClient::with_backend(
-        PathBuf::from("/application-data"),
-        PathBuf::from("/repository/bin/strukt-sessiond"),
-        backend.clone(),
-    )
-    .expect("client");
+    let application_data = test_application_data();
+    let mut client =
+        SessionClient::with_backend(application_data.clone(), test_helper(), backend.clone())
+            .expect("client");
     assert_eq!(backend.starts(), 0);
     assert_eq!(backend.connects(), 0);
 
@@ -32,7 +30,10 @@ fn service_start_is_lazy_and_only_explicit_connect_intents_may_launch_it() {
     assert_eq!(backend.starts(), 1);
     assert_eq!(
         backend.start_arguments(),
-        vec!["--app-data", "/application-data"]
+        vec![
+            "--app-data".to_owned(),
+            application_data.to_string_lossy().into_owned(),
+        ]
     );
     client.finish_connect(completion).expect("finish connect");
     assert_eq!(client.health(), ClientHealth::Ready);
@@ -146,12 +147,25 @@ fn transport_loss_freezes_catalog_and_newest_snapshots_while_stale_work_is_rejec
 }
 
 fn test_client(backend: Arc<FakeBackend>) -> SessionClient {
-    SessionClient::with_backend(
-        PathBuf::from("/application-data"),
-        PathBuf::from("/repository/bin/strukt-sessiond"),
-        backend,
-    )
-    .expect("client")
+    SessionClient::with_backend(test_application_data(), test_helper(), backend).expect("client")
+}
+
+fn test_application_data() -> PathBuf {
+    std::env::current_dir()
+        .expect("absolute test root")
+        .join("application-data")
+}
+
+fn test_helper() -> PathBuf {
+    std::env::current_dir()
+        .expect("absolute test root")
+        .join("repository")
+        .join("bin")
+        .join(if cfg!(windows) {
+            "strukt-sessiond.exe"
+        } else {
+            "strukt-sessiond"
+        })
 }
 
 fn empty_snapshot() -> ProviderCatalogSnapshot {
@@ -265,7 +279,10 @@ impl ClientBackend for FakeBackend {
     fn start_service(&self) -> Result<(), ClientError> {
         let mut state = self.state.lock().expect("backend");
         state.starts += 1;
-        state.start_arguments = vec!["--app-data".to_owned(), "/application-data".to_owned()];
+        state.start_arguments = vec![
+            "--app-data".to_owned(),
+            test_application_data().to_string_lossy().into_owned(),
+        ];
         Ok(())
     }
 
