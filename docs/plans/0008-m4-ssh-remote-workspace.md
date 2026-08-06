@@ -93,32 +93,32 @@ git commit -m "feat: add remote workspace identities"
 - Create: `crates/strukt-remote/tests/config.rs`
 - Create: `crates/strukt-remote/tests/ssh.rs`
 
-- [ ] **Step 1: Write failing config-discovery tests**
+- [x] **Step 1: Write failing config-discovery tests**
 
 Use disposable config trees to cover literal aliases, multiple `Host` tokens,
 wildcards, negation, comments, quoting, bounded recursive `Include`, glob ordering,
 cycles, unreadable files, duplicate aliases, and explicit aliases independent of
 discovery.
 
-- [ ] **Step 2: Implement best-effort alias discovery**
+- [x] **Step 2: Implement best-effort alias discovery**
 
 Return deterministic discovered aliases plus bounded warnings. Never treat a
 wildcard pattern as a selectable alias and never block an explicit alias because
 discovery failed.
 
-- [ ] **Step 3: Write failing OpenSSH construction tests**
+- [x] **Step 3: Write failing OpenSSH construction tests**
 
 Cover executable resolution, Windows fallback path, `ssh -V`, `ssh -G`, probe,
 terminal, helper, cancellation, fixed options, separate arguments, hostile aliases,
 bounded diagnostics, deadlines, environment policy, and no shell invocation.
 
-- [ ] **Step 4: Implement the typed OpenSSH adapter**
+- [x] **Step 4: Implement the typed OpenSSH adapter**
 
 Add injectable process execution, config preview parsing, executable metadata,
 argument-vector builders, operation deadlines, cancellation, and structured exit
 results. Preserve normal OpenSSH security defaults.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 cargo test -p strukt-remote --test config --test ssh --locked --offline

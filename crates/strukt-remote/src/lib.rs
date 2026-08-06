@@ -1,8 +1,15 @@
 #![forbid(unsafe_code)]
 
+pub mod config;
+pub mod ssh;
 pub mod state;
 pub mod target;
 
+pub use config::{ConfigDiscovery, ConfigDiscoveryLimits, discover_aliases};
+pub use ssh::{
+    EffectiveConfig, OpenSsh, OpenSshError, SshCancellation, SshCommandKind, SshCommandSpec,
+    SshExecutable, SshExecutor, SshOutput, parse_effective_config,
+};
 pub use state::{
     ConnectionCapabilities, ConnectionMachine, ConnectionPhase, ConnectionProjection,
     RecoveryAction, RetryPolicy, StateError,
