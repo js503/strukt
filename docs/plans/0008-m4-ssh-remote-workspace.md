@@ -137,30 +137,30 @@ git commit -m "feat: add standard OpenSSH transport"
 - Create: `crates/strukt-remote/tests/framing.rs`
 - Create: `crates/strukt-remote/tests/protocol.rs`
 
-- [ ] **Step 1: Write failing framing tests**
+- [x] **Step 1: Write failing framing tests**
 
 Cover magic preface, partial reads/writes, zero/oversized lengths, truncation,
 multiple frames, allocation bounds, trailing data, EOF, invalid CBOR, and clear
 protocol errors without panics.
 
-- [ ] **Step 2: Implement bounded CBOR framing**
+- [x] **Step 2: Implement bounded CBOR framing**
 
 Use fixed maximums and checked conversions. Keep stderr outside the protocol stream.
 
-- [ ] **Step 3: Write failing protocol tests**
+- [x] **Step 3: Write failing protocol tests**
 
 Cover major mismatch, minor/capability intersection, nonce echo, build target,
 limits, stable request IDs, duplicate IDs, stream sequence, credit, completion,
 cancellation, post-cancel data, typed filesystem/process errors, ignored extensible
 fields, and rejection of invalid state transitions.
 
-- [ ] **Step 4: Implement protocol types and negotiation**
+- [x] **Step 4: Implement protocol types and negotiation**
 
 Define handshake, capability set, request/response/event envelopes, filesystem,
 search, Git, process, language stream, watch, cancellation, and protocol errors.
 Do not add persistent-session messages.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 cargo test -p strukt-remote --test framing --test protocol --locked --offline

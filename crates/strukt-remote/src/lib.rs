@@ -1,11 +1,21 @@
 #![forbid(unsafe_code)]
 
 pub mod config;
+pub mod framing;
+pub mod protocol;
 pub mod ssh;
 pub mod state;
 pub mod target;
 
 pub use config::{ConfigDiscovery, ConfigDiscoveryLimits, discover_aliases};
+pub use framing::{
+    DEFAULT_FRAME_LIMIT, FramingError, read_frame, read_preface, write_frame, write_preface,
+};
+pub use protocol::{
+    Capability, ClientHello, NegotiatedProtocol, OperationTracker, ProtocolError, ProtocolLimits,
+    RemoteBuildTarget, RemoteError, RemoteErrorKind, RequestBody, RequestEnvelope, RequestId,
+    ResponseBody, ResponseEnvelope, ServerHello, StreamChunk, negotiate,
+};
 pub use ssh::{
     EffectiveConfig, OpenSsh, OpenSshError, SshCancellation, SshCommandKind, SshCommandSpec,
     SshExecutable, SshExecutor, SshOutput, parse_effective_config,

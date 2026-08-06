@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 blake3.workspace = true
+ciborium.workspace = true
 getrandom.workspace = true
 serde.workspace = true
 thiserror.workspace = true
