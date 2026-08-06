@@ -25,10 +25,11 @@ software engineering: one context, every tool, and any model.
 
 ## Status
 
-- Stage: local persistent-session implementation
+- Stage: SSH remote-workspace shaping
 - Current foundation: native shell plus real local workspace, file, editor, and
-  ephemeral PTY/ConPTY terminal workflows
-- Milestones: M1 and M2 complete; M3 through M5 are the public-alpha critical path
+  language workflows, ephemeral terminals, and native local persistent sessions
+- Milestones: M1 through M3 complete; M4 and M5 remain on the public-alpha
+  critical path
 
 ## Key Docs
 
@@ -77,8 +78,19 @@ language-agnostic LSP client. It supports exact approval for workspace commands,
 diagnostics grouped in Problems, completion, hover, definition, persisted
 enablement, explicit restart, capability-aware saves, deadline enforcement, and
 stopped-only restoration without writing workspace metadata. SSH and persistent
-local or remote sessions belong to M4, M3, and M5 respectively. M6 onward is the
-post-alpha feature roadmap.
+local or remote sessions belong to M4, M3, and M5 respectively. M3 now adds named
+local sessions, windows, split panes, authenticated per-user IPC, live detach and
+reattach, bounded historical output, explicit batch restart/termination, and
+stopped-only machine-restart restoration. M6 onward is the post-alpha roadmap.
+
+The deterministic M3 smoke accepts any existing folder and uses only the bundled
+session helper and fixture:
+
+```bash
+fixture="$(mktemp -d)"
+cargo build -p strukt-session --bin strukt-sessiond --bin session-fixture
+cargo run -p strukt-app -- --session-smoke "$fixture"
+```
 
 The deterministic workspace-files smoke mode expects a folder containing
 `strukt-smoke.txt`:
@@ -126,6 +138,8 @@ cargo run -p strukt-app -- --m2-integration-smoke "$fixture"
   stress, native walkthrough, and current framework limitations.
 - See `docs/evidence/m2-language-intelligence-validation.md` for language,
   cross-platform integration, native walkthrough, and full M2 review evidence.
+- See `docs/evidence/m3-local-persistent-sessions-validation.md` for session
+  service, protocol, lifecycle, security, native walkthrough, and matrix evidence.
 
 ## Pull Request Expectations
 

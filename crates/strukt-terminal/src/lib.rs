@@ -21,9 +21,10 @@ pub use layout::{
     TerminalTabSnapshot, TerminalWorkspace, TerminalWorkspaceError, TerminalWorkspaceSnapshot,
 };
 pub use parser::{ParserDiagnostics, TerminalModel};
-pub use portable::PortableTransport;
+pub use portable::{PortableTransport, default_shell_request};
 pub use runtime::{
-    DrainBudget, RuntimeBatch, RuntimeError, RuntimePaneHealth, RuntimePaneState, RuntimeStartJob,
+    DrainBudget, RuntimeBatch, RuntimeError, RuntimePaneHealth, RuntimePaneProjection,
+    RuntimePaneState, RuntimeStartJob, RuntimeTerminateCompletion, RuntimeTerminateJob,
     TerminalRuntime,
 };
 pub use selection::{

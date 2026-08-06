@@ -10,6 +10,7 @@ use strukt_workspace::{WorkspaceId, WorkspaceState};
 use thiserror::Error;
 
 use crate::language_store::contribution_is_valid as language_contribution_is_valid;
+use crate::session_store::contribution_is_valid as session_contribution_is_valid;
 use crate::terminal_store::contribution_is_valid as terminal_contribution_is_valid;
 
 const CURRENT_SCHEMA: u32 = 1;
@@ -209,7 +210,9 @@ impl WorkspaceStore {
 }
 
 fn contributions_are_valid(state: &WorkspaceState) -> bool {
-    terminal_contribution_is_valid(state) && language_contribution_is_valid(state)
+    terminal_contribution_is_valid(state)
+        && language_contribution_is_valid(state)
+        && session_contribution_is_valid(state)
 }
 
 fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T, StoreError> {

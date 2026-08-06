@@ -4,6 +4,8 @@ mod app;
 mod editor;
 mod language;
 mod recovery_key;
+mod session;
+mod session_smoke;
 mod terminal;
 mod terminal_widget;
 mod view;
@@ -63,6 +65,14 @@ fn main() -> iced::Result {
         return Ok(());
     }
 
+    if let LaunchMode::SessionSmoke { root } = &launch_mode {
+        if let Err(error) = session_smoke::run(root) {
+            panic!("strukt M3 session smoke failed: {error}");
+        }
+        println!("{}", app::SESSION_SMOKE_SUCCESS);
+        return Ok(());
+    }
+
     iced::application(
         move || StruktApp::boot(launch_mode.clone()),
         StruktApp::update,
@@ -91,6 +101,7 @@ mod tests {
         EditorRecoveryStore, EditorSessionSnapshot, RecoveryMetadata, RecoveryPayload,
         TerminalSessionSnapshot, WorkspaceStore, set_terminal_contribution, terminal_contribution,
     };
+    use strukt_session::ClientHealth;
     use strukt_shell::Activity;
     use strukt_terminal::{PaneState, SplitAxis, TerminalWorkspace};
     use strukt_workspace::{WorkspaceRoot, WorkspaceState};
@@ -155,6 +166,65 @@ mod tests {
             ignored: true,
             ..file_entry(path)
         }
+    }
+
+    #[test]
+    fn session_view_statuses_are_explicit_without_relying_on_color() {
+        assert_eq!(
+            crate::view::session_health_label(ClientHealth::Stopped),
+            "Stopped"
+        );
+        assert_eq!(
+            crate::view::session_health_label(ClientHealth::Ready),
+            "Ready"
+        );
+        assert_eq!(
+            crate::view::session_health_label(ClientHealth::Stale),
+            "Disconnected · showing last known state"
+        );
+        assert_eq!(
+            crate::view::session_health_label(ClientHealth::Failed),
+            "Unavailable"
+        );
+    }
+
+    #[test]
+    fn session_view_keeps_file_browser_available() {
+        let mut app = StruktApp::default();
+        app.shell.active_activity = Activity::Sessions;
+        app.shell.explorer_visible = true;
+        assert!(app.shell.explorer_visible);
+        assert_eq!(app.shell.active_activity, Activity::Sessions);
+    }
+
+    #[test]
+    fn persistent_session_lines_use_portable_terminal_enter_framing() {
+        assert_eq!(crate::app::session_line_input("alpha".into()), b"alpha\r");
+    }
+
+    #[test]
+    fn session_smoke_requires_exact_flag_and_existing_root() {
+        let root = tempdir().unwrap();
+        assert_eq!(
+            LaunchMode::from_args([
+                "--session-smoke".to_owned(),
+                root.path().display().to_string(),
+            ]),
+            LaunchMode::SessionSmoke {
+                root: root.path().to_path_buf(),
+            }
+        );
+        assert_eq!(
+            LaunchMode::from_args(["--session-smoke".to_owned()]),
+            LaunchMode::Interactive
+        );
+        assert_eq!(
+            LaunchMode::from_args([
+                "--session-smoke".to_owned(),
+                root.path().join("missing").display().to_string(),
+            ]),
+            LaunchMode::Interactive
+        );
     }
 
     #[test]

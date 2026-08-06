@@ -36,3 +36,19 @@ fn editor_and_syntax_tokens_are_semantic_and_mode_specific() {
     assert_ne!(dark.syntax_comment, dark.syntax_string);
     assert_ne!(dark.syntax_type, dark.syntax_function);
 }
+
+#[test]
+fn persistent_session_states_have_mode_specific_semantic_tokens() {
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        let theme = ThemeTokens::builtin(mode);
+        assert_ne!(theme.session_live, theme.session_stopped);
+        assert_ne!(theme.session_stale, theme.session_live);
+        assert_ne!(theme.session_unread, theme.session_attention);
+        assert_ne!(theme.session_active, theme.session_selected);
+        assert_ne!(theme.session_attention, theme.canvas);
+    }
+    assert_ne!(
+        ThemeTokens::builtin(ThemeMode::Light).session_live,
+        ThemeTokens::builtin(ThemeMode::Dark).session_live
+    );
+}

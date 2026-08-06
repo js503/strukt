@@ -5,11 +5,12 @@ use iced::{Background, Border, Color, Element, Fill, Length};
 use strukt_core::CapabilityId;
 use strukt_editor::{CloseDecision, DocumentStatus, FindQuery, GrammarRegistry, OpenDisposition};
 use strukt_fs::{FileEntry, FileKind};
+use strukt_session::{AttentionState, ClientHealth, PaneLifecycle};
 use strukt_shell::Activity;
 use strukt_terminal::{LayoutNode, PaneState, SplitAxis, TerminalPaneId};
 use strukt_theme::{Rgb, ThemeTokens};
 
-use crate::app::{DocumentNotice, ExplorerDialog, Message, StruktApp};
+use crate::app::{DocumentNotice, ExplorerDialog, Message, SessionConfirmation, StruktApp};
 use crate::language::{DiagnosticSeverity, LanguageState, ProblemFilter};
 use crate::terminal_widget::TerminalWidget;
 
@@ -324,6 +325,8 @@ fn primary_canvas(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> 
         quick_open_canvas(app).into()
     } else if app.shell.active_activity == Activity::Search {
         search_canvas(app).into()
+    } else if app.shell.active_activity == Activity::Sessions {
+        sessions_canvas(app)
     } else if app
         .editor
         .as_ref()
@@ -349,6 +352,325 @@ fn primary_canvas(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> 
         .height(Fill)
         .style(panel_style(tokens, tokens.canvas))
         .into()
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "the session canvas keeps its hierarchy and active pane projection together"
+)]
+fn sessions_canvas(app: &StruktApp) -> Element<'_, Message> {
+    let health = app.sessions.health();
+    let health_label = session_health_label(health);
+    let health_color = match health {
+        ClientHealth::Ready => app_theme(app).session_live,
+        ClientHealth::Stopped | ClientHealth::Failed => app_theme(app).session_stopped,
+        ClientHealth::Stale => app_theme(app).session_stale,
+        ClientHealth::Connecting => app_theme(app).session_active,
+    };
+    let ready = health == ClientHealth::Ready && !app.sessions.request_in_flight();
+    let capabilities = app
+        .sessions
+        .catalog()
+        .map(strukt_session::ProviderCatalogSnapshot::capabilities)
+        .unwrap_or_default();
+    let mut controls = row![
+        button("Connect").on_press_maybe(
+            matches!(
+                health,
+                ClientHealth::Stopped | ClientHealth::Stale | ClientHealth::Failed
+            )
+            .then_some(Message::ConnectSessions),
+        ),
+        button("New session").on_press_maybe(
+            (ready && capabilities.create_session && app.workspace.is_some())
+                .then_some(Message::CreateSession),
+        ),
+        button("Start pane").on_press_maybe(
+            (ready && capabilities.mutate_panes && app.sessions.selected_pane().is_some())
+                .then_some(Message::StartSessionPane),
+        ),
+        button("Refresh").on_press_maybe(ready.then_some(Message::RefreshSessions)),
+        button("Detach")
+            .on_press_maybe((ready && capabilities.detach).then_some(Message::DetachSessions)),
+    ]
+    .spacing(6);
+    if app.sessions.request_in_flight() {
+        controls = controls.push(text("Working…"));
+    }
+    let hierarchy_actions = column![
+        row![
+            text_input("Session name", &app.session_name)
+                .on_input_maybe(ready.then_some(Message::SessionNameChanged)),
+            button("Rename session").on_press_maybe(
+                (ready && capabilities.rename_session && app.sessions.selected_session().is_some())
+                    .then_some(Message::RenameSession),
+            ),
+        ]
+        .spacing(6),
+        row![
+            button("Duplicate session").on_press_maybe(
+                (ready
+                    && capabilities.duplicate_session
+                    && app.sessions.selected_session().is_some())
+                .then_some(Message::DuplicateSession),
+            ),
+            button("Restart session").on_press_maybe(
+                (ready
+                    && capabilities.terminate_session
+                    && app.sessions.selected_session().is_some())
+                .then_some(Message::BeginRestartSession),
+            ),
+        ]
+        .spacing(6),
+        row![
+            button("Terminate session").on_press_maybe(
+                (ready
+                    && capabilities.terminate_session
+                    && app.sessions.selected_session().is_some())
+                .then_some(Message::BeginTerminateSession),
+            ),
+            button("Remove session").on_press_maybe(
+                (ready
+                    && capabilities.terminate_session
+                    && app.sessions.selected_session().is_some())
+                .then_some(Message::BeginRemoveSession),
+            ),
+        ]
+        .spacing(6),
+        row![
+            text_input("Window name", &app.window_name)
+                .on_input_maybe(ready.then_some(Message::WindowNameChanged)),
+            button("Rename window").on_press_maybe(
+                (ready && capabilities.mutate_windows && app.sessions.selected_window().is_some())
+                    .then_some(Message::RenameSessionWindow),
+            ),
+        ]
+        .spacing(6),
+        row![
+            button("New window").on_press_maybe(
+                (ready && capabilities.mutate_windows && app.sessions.selected_session().is_some())
+                    .then_some(Message::CreateSessionWindow),
+            ),
+            button("Duplicate window").on_press_maybe(
+                (ready && capabilities.mutate_windows && app.sessions.selected_window().is_some())
+                    .then_some(Message::DuplicateSessionWindow),
+            ),
+            button("Close window").on_press_maybe(
+                (ready && capabilities.mutate_windows && app.sessions.selected_window().is_some())
+                    .then_some(Message::BeginCloseSessionWindow),
+            ),
+        ]
+        .spacing(6),
+        row![
+            button("Split right").on_press_maybe(
+                (ready && capabilities.mutate_panes && app.sessions.selected_pane().is_some())
+                    .then_some(Message::SplitSessionPane(SplitAxis::Vertical)),
+            ),
+            button("Split down").on_press_maybe(
+                (ready && capabilities.mutate_panes && app.sessions.selected_pane().is_some())
+                    .then_some(Message::SplitSessionPane(SplitAxis::Horizontal)),
+            ),
+            button("Terminate pane").on_press_maybe(
+                (ready && capabilities.terminate_session && app.sessions.selected_pane().is_some())
+                    .then_some(Message::BeginTerminateSessionPane),
+            ),
+            button("Close pane").on_press_maybe(
+                (ready && capabilities.mutate_panes && app.sessions.selected_pane().is_some())
+                    .then_some(Message::BeginCloseSessionPane),
+            ),
+        ]
+        .spacing(6),
+    ]
+    .spacing(6);
+    let pane_input = column![
+        row![
+            text_input(
+                "Send input to the selected running pane",
+                &app.session_input
+            )
+            .on_input_maybe((ready && capabilities.input).then_some(Message::SessionInputChanged))
+            .on_submit_maybe((ready && capabilities.input).then_some(Message::SendSessionInput)),
+            button("Send")
+                .on_press_maybe((ready && capabilities.input).then_some(Message::SendSessionInput)),
+        ]
+        .spacing(6),
+        row![
+            text("Pane size"),
+            button("80×24").on_press_maybe((ready && capabilities.resize).then_some(
+                Message::ResizeSessionPane {
+                    rows: 24,
+                    columns: 80,
+                }
+            )),
+            button("120×36").on_press_maybe((ready && capabilities.resize).then_some(
+                Message::ResizeSessionPane {
+                    rows: 36,
+                    columns: 120,
+                }
+            )),
+        ]
+        .spacing(6),
+    ]
+    .spacing(6);
+
+    let mut inventory = column![text("SESSIONS").size(12)].spacing(4);
+    if let Some(snapshot) = app.sessions.catalog() {
+        for session in snapshot.catalog().sessions() {
+            let selected = app.sessions.selected_session() == Some(session.id());
+            let label = if selected {
+                format!("● {}", session.name())
+            } else {
+                session.name().to_owned()
+            };
+            inventory = inventory.push(
+                button(text(label))
+                    .width(Fill)
+                    .on_press(Message::SelectSession(session.id())),
+            );
+            if selected {
+                for window in session.windows() {
+                    let window_selected = app.sessions.selected_window() == Some(window.id());
+                    inventory = inventory.push(
+                        button(text(format!(
+                            "  {} {}",
+                            if window_selected { "●" } else { "○" },
+                            window.name()
+                        )))
+                        .width(Fill)
+                        .on_press(Message::SelectSessionWindow(window.id())),
+                    );
+                    if window_selected {
+                        for pane in window.panes() {
+                            let pane_selected = app.sessions.selected_pane() == Some(pane.id());
+                            let state = match pane.lifecycle() {
+                                PaneLifecycle::Stopped => "stopped",
+                                PaneLifecycle::Starting => "starting",
+                                PaneLifecycle::Running => "running",
+                                PaneLifecycle::Exited { .. } => "exited",
+                                PaneLifecycle::Failed { .. } => "failed",
+                                PaneLifecycle::Backpressured => "busy",
+                            };
+                            let (unread, attention) = snapshot.pane_status(pane.id());
+                            let signal = match attention {
+                                AttentionState::Attention => " · attention".to_owned(),
+                                AttentionState::Unread if unread > 0 => {
+                                    format!(" · {unread} unread")
+                                }
+                                AttentionState::None | AttentionState::Unread => String::new(),
+                            };
+                            inventory = inventory.push(
+                                button(text(format!(
+                                    "    {} pane · {state}{signal}",
+                                    if pane_selected { "●" } else { "○" }
+                                )))
+                                .width(Fill)
+                                .on_press(Message::SelectSessionPane(pane.id())),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        if snapshot.catalog().sessions().next().is_none() {
+            inventory = inventory.push(text("No persistent sessions yet."));
+        }
+    } else {
+        inventory = inventory.push(text("Connect to view persistent sessions."));
+    }
+
+    let screen: Element<'_, Message> = app.sessions.active_snapshot().map_or_else(
+        || text("Select and start a pane to view its structured screen.").into(),
+        |snapshot| {
+            let content = snapshot
+                .rows()
+                .iter()
+                .map(|row| {
+                    row.iter()
+                        .map(strukt_terminal::Cell::text)
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            scrollable(text(content).font(iced::Font::MONOSPACE).size(13)).into()
+        },
+    );
+    let mut notices = column![].spacing(4);
+    if let Some(error) = app.sessions.error() {
+        notices = notices.push(text(format!("Configuration: {error}")));
+    }
+    if let Some(error) = &app.session_error {
+        notices = notices.push(text(format!("Session error: {error}")));
+    }
+    let confirmation: Element<'_, Message> = match &app.session_confirmation {
+        SessionConfirmation::None => Space::new().height(Length::Shrink).into(),
+        SessionConfirmation::RemoveSession { name, .. } => confirmation_row(format!(
+            "Remove stopped session ‘{name}’ and its bounded history?"
+        )),
+        SessionConfirmation::RestartSession { name, running, .. } => confirmation_row(format!(
+            "Restart {running} running pane(s) in session ‘{name}’?"
+        )),
+        SessionConfirmation::TerminateSession { name, running, .. } => confirmation_row(format!(
+            "Terminate {running} running pane(s) in session ‘{name}’?"
+        )),
+        SessionConfirmation::CloseWindow { name, .. } => {
+            confirmation_row(format!("Close stopped window ‘{name}’?"))
+        }
+        SessionConfirmation::ClosePane { pane, .. } => {
+            confirmation_row(format!("Close stopped pane {pane}?"))
+        }
+        SessionConfirmation::TerminatePane { pane, .. } => confirmation_row(format!(
+            "Terminate running pane {pane}? Its current process will be stopped."
+        )),
+        SessionConfirmation::RestartPane { pane, .. } => confirmation_row(format!(
+            "Restart running pane {pane}? Its current process will be replaced."
+        )),
+    };
+
+    column![
+        row![
+            text("Persistent sessions").size(22),
+            Space::new().width(Fill),
+            text(health_label).color(color(health_color))
+        ],
+        text("Local PTYs continue in strukt-sessiond after the app detaches."),
+        controls,
+        hierarchy_actions,
+        pane_input,
+        confirmation,
+        notices,
+        row![
+            container(scrollable(inventory)).width(Length::Fixed(260.0)),
+            container(screen).padding(10).width(Fill).height(Fill),
+        ]
+        .spacing(12)
+        .height(Fill),
+    ]
+    .spacing(10)
+    .into()
+}
+
+fn confirmation_row(label: String) -> Element<'static, Message> {
+    row![
+        text(label),
+        button("Confirm").on_press(Message::ResolveSessionConfirmation(true)),
+        button("Cancel").on_press(Message::ResolveSessionConfirmation(false)),
+    ]
+    .spacing(6)
+    .into()
+}
+
+pub(crate) const fn session_health_label(health: ClientHealth) -> &'static str {
+    match health {
+        ClientHealth::Stopped => "Stopped",
+        ClientHealth::Connecting => "Connecting",
+        ClientHealth::Ready => "Ready",
+        ClientHealth::Stale => "Disconnected · showing last known state",
+        ClientHealth::Failed => "Unavailable",
+    }
+}
+
+fn app_theme(app: &StruktApp) -> ThemeTokens {
+    ThemeTokens::builtin(app.shell.theme_mode)
 }
 
 #[expect(

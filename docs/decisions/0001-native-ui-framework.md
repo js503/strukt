@@ -144,6 +144,23 @@ inspection bridge still exposed only the top-level window. Control-level
 accessibility, IME composition, and human Windows visual certification therefore
 remain explicit public-alpha release gates. Iced remains accepted through M2.
 
+### M3 persistent-session revalidation
+
+M3 revalidated Iced against a UI-independent persistent-session provider and a
+separate native helper that owns live PTYs after the desktop app detaches. Iced
+continues to consume immutable catalog and pane snapshots; authentication,
+protocol framing, service locking, process jobs, bounded history, persistence,
+and lifecycle state stay in `strukt-session` and `strukt-terminal`.
+
+The native macOS walkthrough kept Sessions, the real file browser, and context
+surface visible together. It exposed action-row clipping at a 988-pixel window,
+which was corrected with narrow-safe grouped controls. `Command-B` hid and restored
+the explorer while Sessions remained active. The accessibility bridge still
+exposed only the top-level window and did not provide a visible Tab focus ring, so
+control-level accessibility, real IME composition, and human Windows visual QA
+remain Alpha gates. Full evidence is in
+[`docs/evidence/m3-local-persistent-sessions-validation.md`](../evidence/m3-local-persistent-sessions-validation.md).
+
 ## Validation gates
 
 This M1 acceptance is supported by the following completed gates:
