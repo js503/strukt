@@ -52,30 +52,30 @@ serde persistence, strict workspace lint, and deterministic repository fixtures.
 - Create: `crates/strukt-remote/tests/target.rs`
 - Create: `crates/strukt-remote/tests/state.rs`
 
-- [ ] **Step 1: Write failing target tests**
+- [x] **Step 1: Write failing target tests**
 
 Cover stable connection IDs, opaque valid aliases, rejection of empty, leading
 hyphen, NUL, line breaks, and oversized aliases, normalized absolute or home-rooted
 Linux roots, rejection of escapes, and distinct identities for different aliases
 or roots.
 
-- [ ] **Step 2: Implement target values**
+- [x] **Step 2: Implement target values**
 
 Add `ConnectionId`, `SshAlias`, `RemoteRoot`, `RemoteWorkspaceId`, and typed
 validation errors. Keep display labels separate from transport identity.
 
-- [ ] **Step 3: Write failing state-machine tests**
+- [x] **Step 3: Write failing state-machine tests**
 
 Cover disconnected, connecting, terminal-only, negotiation, ready, stale,
 reconnecting, failed, disconnecting, explicit retry, bounded exponential backoff,
 generation changes, cancellation, and invalid transitions.
 
-- [ ] **Step 4: Implement state and immutable projections**
+- [x] **Step 4: Implement state and immutable projections**
 
 Add explicit health, recovery actions, capability summaries, operation IDs,
 generation/sequence cursors, and deterministic backoff without any Iced dependency.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 cargo test -p strukt-remote --test target --test state --locked --offline

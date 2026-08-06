@@ -4188,6 +4188,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "strukt-remote"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "getrandom 0.4.3",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "strukt-session"
 version = "0.1.0"
 dependencies = [

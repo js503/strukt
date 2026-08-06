@@ -33,7 +33,7 @@ exit criteria are satisfied and verified, not when a target date arrives.
 | M1 | Native shell foundation | Complete | M0 | Cross-platform native shell proving capability boundaries, shell state, and semantic theming |
 | M2 | Local development workspace | Complete | M1 | Real local files, IDE-level editing, language intelligence, PTY/ConPTY terminals, terminal rendering, and workspace persistence |
 | M3 | Local persistent sessions | Complete | M2 | Named local sessions with windows, split panes, detach/reattach, and restoration |
-| M4 | SSH remote workspace | Planned | M2 | A remote development box behaves as a first-class workspace over standard SSH |
+| M4 | SSH remote workspace | In progress | M2 | A remote development box behaves as a first-class workspace over standard SSH |
 | M5 | Remote persistent sessions | Not planned | M3, M4 | Multiple persistent sessions per remote host, reconnect recovery, and tmux interoperability |
 | Alpha | Public alpha release | Not planned | M3, M4, M5 | Installable, documented local and remote development release for macOS and Windows with Linux in the build pipeline |
 | M6 | AI and workspace context | Post-alpha | Alpha | Optional, model-agnostic AI grounded in explicit local and remote workspace context |
@@ -255,6 +255,10 @@ the same workspace model used locally.
   [`specs/0008-m4-ssh-remote-workspace.md`](specs/0008-m4-ssh-remote-workspace.md)
 - Implementation plan:
   [`plans/0008-m4-ssh-remote-workspace.md`](plans/0008-m4-ssh-remote-workspace.md)
+- Tracking issue:
+  [#13 — M4: SSH remote workspace](https://github.com/js503/strukt/issues/13)
+- Pull request:
+  [#14 — feat: add M4 SSH remote workspaces](https://github.com/js503/strukt/pull/14)
 - Workspace reference:
   [`mockups/workspace-shell/remote-workspace.html`](mockups/workspace-shell/remote-workspace.html)
 
