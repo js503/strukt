@@ -6,7 +6,7 @@ use std::mem::{offset_of, size_of};
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::AsRawHandle;
 
-use cap_std::fs::{Dir, File, OpenOptions, OpenOptionsExt};
+use cap_std::fs::{File, OpenOptions, OpenOptionsExt};
 use windows_sys::Win32::Foundation::GENERIC_WRITE;
 use windows_sys::Win32::Storage::FileSystem::{
     DELETE, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FileRenameInfo, SetFileInformationByHandle,
@@ -18,14 +18,26 @@ pub fn prepare_rename_source(options: &mut OpenOptions) {
     options.access_mode(GENERIC_WRITE | DELETE);
 }
 
-/// Atomically replaces one entry in `parent` by renaming an already-open
-/// staging file to a path resolved from the retained parent directory handle.
+/// Atomically replaces one sibling entry by renaming an already-open staging
+/// file within its existing directory.
 ///
 /// # Errors
 ///
 /// Returns the Windows error reported by `SetFileInformationByHandle`.
-pub fn atomic_replace(source: &File, parent: &Dir, destination: &OsStr) -> io::Result<()> {
+pub fn atomic_replace(source: &File, destination: &OsStr) -> io::Result<()> {
     let name: Vec<u16> = destination.encode_wide().collect();
+    if name.is_empty()
+        || name.as_slice() == [u16::from(b'.')]
+        || name.as_slice() == [u16::from(b'.'), u16::from(b'.')]
+        || name
+            .iter()
+            .any(|character| matches!(*character, 0 | 47 | 58 | 92))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "destination must be one ordinary file name",
+        ));
+    }
     let name_bytes = name
         .len()
         .checked_mul(size_of::<u16>())
@@ -45,7 +57,7 @@ pub fn atomic_replace(source: &File, parent: &Dir, destination: &OsStr) -> io::R
             Anonymous: FILE_RENAME_INFO_0 {
                 ReplaceIfExists: true,
             },
-            RootDirectory: parent.as_raw_handle(),
+            RootDirectory: std::ptr::null_mut(),
             FileNameLength: u32::try_from(name_bytes).map_err(|_| {
                 io::Error::new(io::ErrorKind::InvalidInput, "file name is too long")
             })?,
@@ -70,6 +82,7 @@ pub fn atomic_replace(source: &File, parent: &Dir, destination: &OsStr) -> io::R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cap_std::fs::Dir;
     use std::fs;
     use std::io::Write as _;
 
@@ -85,7 +98,7 @@ mod tests {
         source.write_all(b"new").unwrap();
         source.sync_all().unwrap();
 
-        atomic_replace(&source, &parent, OsStr::new("target.txt")).unwrap();
+        atomic_replace(&source, OsStr::new("target.txt")).unwrap();
 
         assert_eq!(
             fs::read_to_string(temporary.path().join("target.txt")).unwrap(),
@@ -108,7 +121,7 @@ mod tests {
         source.write_all(b"new").unwrap();
         source.sync_all().unwrap();
 
-        atomic_replace(&source, &parent, OsStr::new("target.txt")).unwrap();
+        atomic_replace(&source, OsStr::new("target.txt")).unwrap();
 
         assert_eq!(
             fs::read_to_string(temporary.path().join("nested/target.txt")).unwrap(),
@@ -116,5 +129,24 @@ mod tests {
         );
         assert!(!temporary.path().join("nested/staged.txt").exists());
         assert!(!temporary.path().join("target.txt").exists());
+    }
+
+    #[test]
+    fn atomic_replace_rejects_non_sibling_destinations() {
+        let temporary = tempfile::tempdir().unwrap();
+        let parent = Dir::open_ambient_dir(temporary.path(), cap_std::ambient_authority()).unwrap();
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        prepare_rename_source(&mut options);
+        let source = parent.open_with("staged.txt", &options).unwrap();
+
+        for destination in ["", ".", "..", "../target", "nested/target", "stream:name"] {
+            assert_eq!(
+                atomic_replace(&source, OsStr::new(destination))
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::InvalidInput
+            );
+        }
     }
 }
