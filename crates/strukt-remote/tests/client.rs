@@ -68,6 +68,7 @@ fn client_negotiates_capabilities_and_round_trips_a_typed_request() {
         client.capabilities(),
         &BTreeSet::from([Capability::Files, Capability::Git])
     );
+    assert_eq!(client.workspace_root(), "/workspace");
     let response = client.request(RequestBody::GitSummary).unwrap();
     assert!(matches!(
         response,

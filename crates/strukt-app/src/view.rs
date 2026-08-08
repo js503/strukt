@@ -5,6 +5,7 @@ use iced::{Background, Border, Color, Element, Fill, Length};
 use strukt_core::CapabilityId;
 use strukt_editor::{CloseDecision, DocumentStatus, FindQuery, GrammarRegistry, OpenDisposition};
 use strukt_fs::{FileEntry, FileKind};
+use strukt_remote::Capability as RemoteCapability;
 use strukt_session::{AttentionState, ClientHealth, PaneLifecycle};
 use strukt_shell::Activity;
 use strukt_terminal::{LayoutNode, PaneState, SplitAxis, TerminalPaneId};
@@ -319,6 +320,18 @@ fn explorer_dialog(app: &StruktApp) -> Element<'_, Message> {
 fn primary_canvas(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> {
     let content: Element<'_, Message> = if app.shell.active_activity == Activity::Connections {
         connections_canvas(app)
+    } else if app.remote.status != RemoteStatus::Disconnected
+        && app.shell.active_activity == Activity::Search
+    {
+        remote_search_canvas(app)
+    } else if app.remote.status != RemoteStatus::Disconnected
+        && app.shell.active_activity == Activity::SourceControl
+    {
+        remote_git_canvas(app)
+    } else if app.remote.status != RemoteStatus::Disconnected
+        && app.shell.active_activity == Activity::Tasks
+    {
+        remote_tasks_canvas(app)
     } else if app.workspace.is_none() {
         welcome_canvas(app).into()
     } else if app.terminal_expanded {
@@ -364,6 +377,137 @@ fn primary_canvas(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> 
         .height(Fill)
         .style(panel_style(tokens, tokens.canvas))
         .into()
+}
+
+fn remote_search_canvas(app: &StruktApp) -> Element<'_, Message> {
+    let available = app.remote.capabilities.contains(&RemoteCapability::Search);
+    let ready =
+        available && app.remote.status == RemoteStatus::Ready && !app.remote.operation_in_flight();
+    let mut results = column![].spacing(5);
+    for result in &app.remote.search_results {
+        results = results.push(text(result));
+    }
+    column![
+        text(format!(
+            "Remote Search · {}",
+            app.remote.host_label.as_deref().unwrap_or("SSH host")
+        ))
+        .size(22),
+        text(if available {
+            "Search executes inside the approved remote root."
+        } else {
+            "The connected helper does not advertise remote search."
+        }),
+        row![
+            text_input("Search remote files", &app.remote.search_input)
+                .on_input(Message::RemoteSearchChanged),
+            button("Search").on_press_maybe(
+                (ready && !app.remote.search_input.is_empty()).then_some(Message::RunRemoteSearch),
+            ),
+        ]
+        .spacing(8),
+        scrollable(results).height(Fill),
+    ]
+    .spacing(12)
+    .into()
+}
+
+fn remote_git_canvas(app: &StruktApp) -> Element<'_, Message> {
+    let available = app.remote.capabilities.contains(&RemoteCapability::Git);
+    let ready =
+        available && app.remote.status == RemoteStatus::Ready && !app.remote.operation_in_flight();
+    column![
+        text(format!(
+            "Remote Git · {}",
+            app.remote.host_label.as_deref().unwrap_or("SSH host")
+        ))
+        .size(22),
+        text("Read-only Git status for the approved remote workspace root."),
+        button("Refresh remote Git").on_press_maybe(ready.then_some(Message::RefreshRemoteGit)),
+        text(app.remote.git_summary.as_deref().unwrap_or(if available {
+            "Git summary not loaded"
+        } else {
+            "Git unavailable"
+        })),
+    ]
+    .spacing(12)
+    .into()
+}
+
+fn remote_tasks_canvas(app: &StruktApp) -> Element<'_, Message> {
+    let ready = app.remote.status == RemoteStatus::Ready && !app.remote.operation_in_flight();
+    let process_ready = ready
+        && app
+            .remote
+            .capabilities
+            .contains(&RemoteCapability::Processes);
+    let language_ready = ready
+        && app
+            .remote
+            .capabilities
+            .contains(&RemoteCapability::Language)
+        && app.remote.selected_path.is_some();
+    let task_controls: Element<'_, Message> = app.remote.task_consent.as_ref().map_or_else(
+        || {
+            column![
+                text_input("Exact task executable", &app.remote.task_executable)
+                    .on_input(Message::RemoteTaskExecutableChanged),
+                text_input(
+                    "Arguments as JSON string array",
+                    &app.remote.task_arguments_json
+                )
+                .on_input(Message::RemoteTaskArgumentsChanged),
+                button("Review exact task")
+                    .on_press_maybe(process_ready.then_some(Message::ReviewRemoteTask)),
+            ]
+            .spacing(6)
+            .into()
+        },
+        |consent| {
+            column![
+                text(consent),
+                row![
+                    button("Run exactly this task").on_press(Message::ConfirmRemoteTask),
+                    button("Cancel").on_press(Message::CancelRemoteTask),
+                ]
+                .spacing(6),
+            ]
+            .spacing(6)
+            .into()
+        },
+    );
+    column![
+        text(format!(
+            "Remote Tasks & Diagnostics · {}",
+            app.remote.host_label.as_deref().unwrap_or("SSH host")
+        ))
+        .size(22),
+        text("Tasks require exact review. Language servers start only on explicit request."),
+        text("TASK").size(13),
+        task_controls,
+        scrollable(text(&app.remote.task_output)).height(Length::Fixed(120.0)),
+        text("LANGUAGE DIAGNOSTICS").size(13),
+        text_input(
+            "Language-server executable",
+            &app.remote.language_executable
+        )
+        .on_input(Message::RemoteLanguageExecutableChanged),
+        text_input(
+            "Language-server arguments as JSON string array",
+            &app.remote.language_arguments_json
+        )
+        .on_input(Message::RemoteLanguageArgumentsChanged),
+        button("Run diagnostics for the open remote document")
+            .on_press_maybe(language_ready.then_some(Message::VerifyRemoteLanguage)),
+        text(
+            app.remote
+                .language_status
+                .as_deref()
+                .unwrap_or("Open a remote text document, then opt in to diagnostics")
+        ),
+    ]
+    .spacing(10)
+    .into()
 }
 
 #[expect(
@@ -458,7 +602,6 @@ fn connections_canvas(app: &StruktApp) -> Element<'_, Message> {
             );
         }
     }
-
     column![
         text("SSH workspace").size(22),
         text("Uses your standard OpenSSH configuration and authentication."),

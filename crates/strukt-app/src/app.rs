@@ -45,7 +45,8 @@ use crate::language::{
 use crate::recovery_key::NativeRecoveryKeyProvider;
 use crate::remote::{
     RemoteConnectCompletion, RemoteDocumentCompletion, RemoteFilesCompletion,
-    RemoteInstallCompletion, RemoteRuntime, RemoteSaveCompletion, RemoteSurfaces,
+    RemoteInstallCompletion, RemoteLanguageCompletion, RemoteRuntime, RemoteSaveCompletion,
+    RemoteSurfaces, RemoteTaskCompletion, RemoteTextCompletion,
 };
 use crate::session::{SessionConnectCompletion, SessionRequestCompletion, SessionSurfaces};
 use crate::terminal::{TerminalSpawnCompletion, TerminalSurfaces};
@@ -355,6 +356,21 @@ pub enum Message {
         connection_id: String,
         result: Result<bool, String>,
     },
+    RemoteSearchChanged(String),
+    RunRemoteSearch,
+    RemoteSearchFinished(RemoteTextCompletion),
+    RefreshRemoteGit,
+    RemoteGitFinished(RemoteTextCompletion),
+    RemoteTaskExecutableChanged(String),
+    RemoteTaskArgumentsChanged(String),
+    ReviewRemoteTask,
+    ConfirmRemoteTask,
+    CancelRemoteTask,
+    RemoteTaskFinished(RemoteTaskCompletion),
+    RemoteLanguageExecutableChanged(String),
+    RemoteLanguageArgumentsChanged(String),
+    VerifyRemoteLanguage,
+    RemoteLanguageFinished(RemoteLanguageCompletion),
     ToggleContext,
     ToggleDrawer,
     ToggleExplorer,
@@ -1033,6 +1049,167 @@ impl StruktApp {
                     Ok(false) => {}
                     Err(error) => self.remote.error = Some(error),
                 }
+                return Task::none();
+            }
+            Message::RemoteSearchChanged(value) => {
+                self.remote.search_input = value;
+                return Task::none();
+            }
+            Message::RunRemoteSearch => {
+                if !self
+                    .remote
+                    .capabilities
+                    .contains(&strukt_remote::Capability::Search)
+                {
+                    return Task::none();
+                }
+                if !self.remote.begin_operation() {
+                    return Task::none();
+                }
+                let Some(runtime) = self.remote_runtime.clone() else {
+                    return Task::none();
+                };
+                let generation = self.remote.generation();
+                let query = self.remote.search_input.clone();
+                return Task::perform(
+                    async move { runtime.search(generation, query) },
+                    Message::RemoteSearchFinished,
+                );
+            }
+            Message::RemoteSearchFinished(completion) => {
+                self.remote.finish_search(&completion);
+                return Task::none();
+            }
+            Message::RefreshRemoteGit => {
+                if !self
+                    .remote
+                    .capabilities
+                    .contains(&strukt_remote::Capability::Git)
+                {
+                    return Task::none();
+                }
+                if !self.remote.begin_operation() {
+                    return Task::none();
+                }
+                let Some(runtime) = self.remote_runtime.clone() else {
+                    return Task::none();
+                };
+                let generation = self.remote.generation();
+                return Task::perform(
+                    async move { runtime.git_summary(generation) },
+                    Message::RemoteGitFinished,
+                );
+            }
+            Message::RemoteGitFinished(completion) => {
+                self.remote.finish_git(&completion);
+                return Task::none();
+            }
+            Message::RemoteTaskExecutableChanged(value) => {
+                self.remote.task_executable = value;
+                self.remote.task_consent = None;
+                return Task::none();
+            }
+            Message::RemoteTaskArgumentsChanged(value) => {
+                self.remote.task_arguments_json = value;
+                self.remote.task_consent = None;
+                return Task::none();
+            }
+            Message::ReviewRemoteTask => {
+                if !self
+                    .remote
+                    .capabilities
+                    .contains(&strukt_remote::Capability::Processes)
+                {
+                    return Task::none();
+                }
+                if let Err(error) = self.remote.prepare_task() {
+                    self.remote.error = Some(error);
+                }
+                return Task::none();
+            }
+            Message::ConfirmRemoteTask => {
+                if !self
+                    .remote
+                    .capabilities
+                    .contains(&strukt_remote::Capability::Processes)
+                {
+                    return Task::none();
+                }
+                let command = match self.remote.approved_task_command() {
+                    Ok(command) => command,
+                    Err(error) => {
+                        self.remote.error = Some(error);
+                        return Task::none();
+                    }
+                };
+                if !self.remote.begin_operation() {
+                    return Task::none();
+                }
+                self.remote.task_consent = None;
+                let Some(runtime) = self.remote_runtime.clone() else {
+                    return Task::none();
+                };
+                let generation = self.remote.generation();
+                return Task::perform(
+                    async move { runtime.run_task(generation, command.0, command.1) },
+                    Message::RemoteTaskFinished,
+                );
+            }
+            Message::CancelRemoteTask => {
+                self.remote.task_consent = None;
+                return Task::none();
+            }
+            Message::RemoteTaskFinished(completion) => {
+                self.remote.finish_task(&completion);
+                return Task::none();
+            }
+            Message::RemoteLanguageExecutableChanged(value) => {
+                self.remote.language_executable = value;
+                return Task::none();
+            }
+            Message::RemoteLanguageArgumentsChanged(value) => {
+                self.remote.language_arguments_json = value;
+                return Task::none();
+            }
+            Message::VerifyRemoteLanguage => {
+                if !self
+                    .remote
+                    .capabilities
+                    .contains(&strukt_remote::Capability::Language)
+                {
+                    return Task::none();
+                }
+                let command = match self.remote.parsed_language_command() {
+                    Ok(command) => command,
+                    Err(error) => {
+                        self.remote.error = Some(error);
+                        return Task::none();
+                    }
+                };
+                let Some(path) = self.remote.selected_path.clone() else {
+                    self.remote.error =
+                        Some("open a remote text document before diagnostics".into());
+                    return Task::none();
+                };
+                let text = self.remote.document_text.clone();
+                if !self.remote.begin_operation() {
+                    return Task::none();
+                }
+                let Some(runtime) = self.remote_runtime.clone() else {
+                    return Task::none();
+                };
+                let generation = self.remote.generation();
+                return Task::perform(
+                    async move {
+                        runtime.run_language_diagnostics(
+                            generation, command.0, command.1, &path, &text,
+                        )
+                    },
+                    Message::RemoteLanguageFinished,
+                );
+            }
+            Message::RemoteLanguageFinished(completion) => {
+                self.remote.finish_language(&completion);
                 return Task::none();
             }
             Message::ConnectSessions => {
@@ -3603,6 +3780,21 @@ impl StruktApp {
             | Message::SelectRemoteRecord(_)
             | Message::ForgetRemoteRecord(_)
             | Message::RemoteRecordForgotten { .. }
+            | Message::RemoteSearchChanged(_)
+            | Message::RunRemoteSearch
+            | Message::RemoteSearchFinished(_)
+            | Message::RefreshRemoteGit
+            | Message::RemoteGitFinished(_)
+            | Message::RemoteTaskExecutableChanged(_)
+            | Message::RemoteTaskArgumentsChanged(_)
+            | Message::ReviewRemoteTask
+            | Message::ConfirmRemoteTask
+            | Message::CancelRemoteTask
+            | Message::RemoteTaskFinished(_)
+            | Message::RemoteLanguageExecutableChanged(_)
+            | Message::RemoteLanguageArgumentsChanged(_)
+            | Message::VerifyRemoteLanguage
+            | Message::RemoteLanguageFinished(_)
             | Message::FolderPicked(_)
             | Message::WorkspaceOpened(_)
             | Message::NewTerminal

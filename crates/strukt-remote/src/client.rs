@@ -21,6 +21,7 @@ pub struct HelperClient<R, W> {
     negotiated: NegotiatedProtocol,
     generation: u64,
     next_request_id: u64,
+    workspace_root: String,
 }
 
 impl<R: Read, W: Write> HelperClient<R, W> {
@@ -51,12 +52,18 @@ impl<R: Read, W: Write> HelperClient<R, W> {
             negotiated,
             generation,
             next_request_id: 1,
+            workspace_root: server.workspace_root,
         })
     }
 
     #[must_use]
     pub const fn capabilities(&self) -> &BTreeSet<Capability> {
         &self.negotiated.capabilities
+    }
+
+    #[must_use]
+    pub fn workspace_root(&self) -> &str {
+        &self.workspace_root
     }
 
     /// Sends one bounded typed request and rejects stale or mismatched results.
@@ -181,6 +188,11 @@ impl OpenSshClient {
     #[must_use]
     pub fn capabilities(&self) -> Option<&BTreeSet<Capability>> {
         self.helper.as_ref().map(HelperClient::capabilities)
+    }
+
+    #[must_use]
+    pub fn workspace_root(&self) -> Option<&str> {
+        self.helper.as_ref().map(HelperClient::workspace_root)
     }
 
     /// Sends one helper request.
