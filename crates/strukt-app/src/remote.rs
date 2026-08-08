@@ -1,10 +1,12 @@
 use std::ffi::OsString;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use strukt_persistence::RemoteConnectionRecord;
 use strukt_remote::{
-    OpenSsh, OpenSshClient, RemoteRoot, RequestBody, ResponseBody, SshAlias, SshExecutable,
+    HelperArtifact, OpenSsh, OpenSshClient, RemoteBuildTarget, RemoteRoot, RequestBody,
+    ResponseBody, SshAlias, SshCancellation, SshCommandSpec, SshExecutable, execute_helper_install,
 };
 use strukt_terminal::{SpawnRequest, TerminalSize};
 
@@ -44,6 +46,9 @@ pub struct RemoteSurfaces {
     pub document_revision: Option<String>,
     pub document_dirty: bool,
     pub error: Option<String>,
+    pub install_consent: Option<String>,
+    pub records: Vec<RemoteConnectionRecord>,
+    pending_artifact: Option<HelperArtifact>,
     generation: u64,
     operation_in_flight: bool,
 }
@@ -62,6 +67,9 @@ impl Default for RemoteSurfaces {
             document_revision: None,
             document_dirty: false,
             error: None,
+            install_consent: None,
+            records: Vec::new(),
+            pending_artifact: None,
             generation: 0,
             operation_in_flight: false,
         }
@@ -115,6 +123,76 @@ impl RemoteSurfaces {
         })
     }
 
+    /// Verifies a packaged helper and exposes its exact installation consent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown filename, missing sidecar checksum, or
+    /// checksum mismatch.
+    pub fn prepare_install(&mut self, path: &Path) -> Result<(), String> {
+        let target = match path.file_name().and_then(|name| name.to_str()) {
+            Some("strukt-remote-linux-x86_64") => RemoteBuildTarget::LinuxX86_64,
+            Some("strukt-remote-linux-aarch64") => RemoteBuildTarget::LinuxAarch64,
+            _ => return Err("select a packaged Linux strukt-remote artifact".into()),
+        };
+        let parent = path
+            .parent()
+            .ok_or_else(|| "helper artifact has no parent directory".to_owned())?;
+        let mut sidecar_name = path
+            .file_name()
+            .ok_or_else(|| "helper artifact has no filename".to_owned())?
+            .to_os_string();
+        sidecar_name.push(".sha256");
+        let checksum = std::fs::read_to_string(parent.join(sidecar_name))
+            .map_err(|error| format!("helper checksum sidecar could not be read: {error}"))?
+            .split_whitespace()
+            .next()
+            .ok_or_else(|| "helper checksum sidecar is empty".to_owned())?
+            .to_owned();
+        let artifact = HelperArtifact::select(target, env!("CARGO_PKG_VERSION"), parent, &checksum)
+            .map_err(|error| error.to_string())?;
+        self.install_consent = Some(artifact.consent_summary());
+        self.pending_artifact = Some(artifact);
+        self.error = None;
+        Ok(())
+    }
+
+    /// Consumes the approved artifact into a bounded install job.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no verified artifact is pending or the alias is
+    /// invalid.
+    pub fn begin_install(&mut self) -> Result<RemoteInstallJob, String> {
+        let artifact = self
+            .pending_artifact
+            .take()
+            .ok_or_else(|| "choose and verify a helper artifact first".to_owned())?;
+        let alias = SshAlias::new(self.alias_input.clone()).map_err(|error| error.to_string())?;
+        let spec = OpenSsh::new(discover_ssh()?)
+            .install_helper(&alias, artifact.version(), artifact.checksum())
+            .map_err(|error| error.to_string())?;
+        self.install_consent = None;
+        self.operation_in_flight = true;
+        Ok(RemoteInstallJob { spec, artifact })
+    }
+
+    pub fn cancel_install(&mut self) {
+        self.pending_artifact = None;
+        self.install_consent = None;
+    }
+
+    pub fn finish_install(&mut self, completion: &RemoteInstallCompletion) {
+        self.operation_in_flight = false;
+        match &completion.result {
+            Ok(()) => {
+                self.status = RemoteStatus::Disconnected;
+                self.error = None;
+            }
+            Err(error) => self.error = Some(error.clone()),
+        }
+    }
+
     pub fn finish_connect(&mut self, completion: &RemoteConnectCompletion) -> bool {
         if completion.generation != self.generation {
             return false;
@@ -136,6 +214,73 @@ impl RemoteSurfaces {
             }
         }
         true
+    }
+
+    pub fn restore_records(&mut self, records: Vec<RemoteConnectionRecord>) {
+        self.records = records;
+        if let Some(record) = self.records.first() {
+            self.alias_input.clone_from(&record.alias);
+            if let Some(root) = record.recent_roots.first() {
+                self.root_input.clone_from(root);
+            }
+        }
+    }
+
+    pub fn remember_record(&mut self, record: RemoteConnectionRecord) {
+        self.records
+            .retain(|existing| existing.connection_id != record.connection_id);
+        self.records.push(record);
+        self.records.sort_by(|left, right| {
+            left.alias
+                .to_ascii_lowercase()
+                .cmp(&right.alias.to_ascii_lowercase())
+                .then_with(|| left.connection_id.cmp(&right.connection_id))
+        });
+    }
+
+    pub fn select_record(&mut self, index: usize) {
+        if let Some(record) = self.records.get(index) {
+            self.alias_input.clone_from(&record.alias);
+            if let Some(root) = record.recent_roots.first() {
+                self.root_input.clone_from(root);
+            }
+            self.error = None;
+        }
+    }
+
+    pub fn forget_record(&mut self, connection_id: &str) {
+        self.records
+            .retain(|record| record.connection_id != connection_id);
+    }
+
+    /// Creates the current secret-free persistence record without connecting.
+    ///
+    /// # Errors
+    ///
+    /// Returns an identity or record validation error.
+    pub fn current_record(&self) -> Result<RemoteConnectionRecord, String> {
+        let connection_id = self
+            .records
+            .iter()
+            .find(|record| record.alias == self.alias_input)
+            .map_or_else(
+                || {
+                    strukt_remote::ConnectionId::new()
+                        .map(|id| id.to_string())
+                        .map_err(|error| error.to_string())
+                },
+                |record| Ok(record.connection_id.clone()),
+            )?;
+        let mut roots = self
+            .records
+            .iter()
+            .find(|record| record.connection_id == connection_id)
+            .map_or_else(Vec::new, |record| record.recent_roots.clone());
+        roots.retain(|root| root != &self.root_input);
+        roots.insert(0, self.root_input.clone());
+        roots.truncate(20);
+        RemoteConnectionRecord::new(connection_id, self.alias_input.clone(), None, roots, None)
+            .map_err(|error| error.to_string())
     }
 
     #[must_use]
@@ -400,6 +545,33 @@ pub struct RemoteFilesCompletion {
 }
 
 #[derive(Clone, Debug)]
+pub struct RemoteInstallJob {
+    spec: SshCommandSpec,
+    artifact: HelperArtifact,
+}
+
+impl RemoteInstallJob {
+    pub fn run(self) -> RemoteInstallCompletion {
+        let result = execute_helper_install(&self.spec, &self.artifact, &SshCancellation::new())
+            .map_err(|error| error.to_string())
+            .and_then(|output| {
+                output.success.then_some(()).ok_or_else(|| {
+                    format!(
+                        "remote helper installer failed: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    )
+                })
+            });
+        RemoteInstallCompletion { result }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct RemoteInstallCompletion {
+    pub result: Result<(), String>,
+}
+
+#[derive(Clone, Debug)]
 pub struct RemoteDocument {
     pub path: String,
     pub revision: String,
@@ -432,6 +604,10 @@ fn discover_ssh() -> Result<SshExecutable, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
     use super::{RemoteStatus, RemoteSurfaces};
 
     #[test]
@@ -454,5 +630,28 @@ mod tests {
         assert!(surfaces.begin_connect().is_err());
         assert_eq!(surfaces.status, RemoteStatus::Disconnected);
         assert_eq!(surfaces.generation(), 0);
+    }
+
+    #[test]
+    fn helper_consent_requires_a_matching_packaged_checksum_sidecar() {
+        let directory = tempdir().unwrap();
+        let artifact = directory.path().join("strukt-remote-linux-x86_64");
+        fs::write(&artifact, b"hello").unwrap();
+        let mut surfaces = RemoteSurfaces::default();
+
+        assert!(surfaces.prepare_install(&artifact).is_err());
+        assert!(surfaces.install_consent.is_none());
+
+        fs::write(
+            directory
+                .path()
+                .join("strukt-remote-linux-x86_64.sha256"),
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824  strukt-remote-linux-x86_64\n",
+        )
+        .unwrap();
+        surfaces.prepare_install(&artifact).unwrap();
+        let consent = surfaces.install_consent.unwrap();
+        assert!(consent.contains("Linux x86_64"));
+        assert!(consent.contains("SHA-256 2cf24dba"));
     }
 }

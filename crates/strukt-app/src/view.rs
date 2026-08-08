@@ -366,6 +366,10 @@ fn primary_canvas(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> 
         .into()
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the connection canvas keeps consent, status, files, and editor boundary labels together"
+)]
 fn connections_canvas(app: &StruktApp) -> Element<'_, Message> {
     let connecting = app.remote.status == RemoteStatus::Connecting;
     let connected = matches!(
@@ -417,6 +421,43 @@ fn connections_canvas(app: &StruktApp) -> Element<'_, Message> {
             .into()
         },
     );
+    let install_consent: Element<'_, Message> = app.remote.install_consent.as_ref().map_or_else(
+        || column![].into(),
+        |summary| {
+            column![
+                text("Confirm remote helper installation"),
+                text(summary),
+                text("The verified artifact will be streamed over standard OpenSSH to the versioned private user-data path."),
+                row![
+                    button("Install exactly this helper")
+                        .on_press(Message::ConfirmRemoteHelperInstall),
+                    button("Cancel").on_press(Message::CancelRemoteHelperInstall),
+                ]
+                .spacing(8),
+            ]
+            .spacing(4)
+            .into()
+        },
+    );
+    let mut recent_hosts = column![text("RECENT HOSTS").size(13)].spacing(4);
+    if app.remote.records.is_empty() {
+        recent_hosts = recent_hosts.push(text("No saved SSH hosts."));
+    } else {
+        for (index, record) in app.remote.records.iter().enumerate() {
+            let root = record.recent_roots.first().map_or("", String::as_str);
+            recent_hosts = recent_hosts.push(
+                row![
+                    button(text(format!("{}  ·  {root}", record.alias))).on_press_maybe(
+                        (app.remote.status == RemoteStatus::Disconnected)
+                            .then_some(Message::SelectRemoteRecord(index)),
+                    ),
+                    button("Forget")
+                        .on_press(Message::ForgetRemoteRecord(record.connection_id.clone())),
+                ]
+                .spacing(6),
+            );
+        }
+    }
 
     column![
         text("SSH workspace").size(22),
@@ -428,6 +469,7 @@ fn connections_canvas(app: &StruktApp) -> Element<'_, Message> {
                 .on_input(Message::RemoteRootChanged),
         ]
         .spacing(8),
+        recent_hosts,
         row![
             button(if connecting {
                 "Connecting…"
@@ -444,8 +486,13 @@ fn connections_canvas(app: &StruktApp) -> Element<'_, Message> {
                 (!connecting && !app.remote.alias_input.is_empty())
                     .then_some(Message::NewRemoteTerminal),
             ),
+            button("Install / repair helper").on_press_maybe(
+                (!connecting && !app.remote.operation_in_flight())
+                    .then_some(Message::ChooseRemoteHelper),
+            ),
         ]
         .spacing(8),
+        install_consent,
         text(format!("Status: {}", app.remote.status.label())),
         notices,
         row![

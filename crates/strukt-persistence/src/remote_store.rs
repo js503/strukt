@@ -4,6 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use atomic_write_file::AtomicWriteFile;
+use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -122,6 +123,18 @@ pub struct RemoteStore {
 }
 
 impl RemoteStore {
+    /// Creates the secret-free remote store in platform application data.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the platform does not expose an application-data
+    /// location.
+    pub fn platform_default() -> Result<Self, RemoteStoreError> {
+        let directories = ProjectDirs::from("dev", "strukt", "strukt")
+            .ok_or(RemoteStoreError::ApplicationDataUnavailable)?;
+        Ok(Self::at(directories.data_local_dir().join("remote")))
+    }
+
     #[must_use]
     pub fn at(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
@@ -274,6 +287,8 @@ fn valid_version(version: &str) -> bool {
 
 #[derive(Debug, Error)]
 pub enum RemoteStoreError {
+    #[error("platform application-data directory is unavailable")]
+    ApplicationDataUnavailable,
     #[error("remote connection record is invalid")]
     InvalidRecord,
     #[error("remote connection store I/O failed: {0}")]

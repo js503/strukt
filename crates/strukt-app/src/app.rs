@@ -22,9 +22,9 @@ use strukt_fs::{
 use strukt_persistence::{
     EditorRecoveryStore, EditorSessionSnapshot, EditorTabSnapshot, LanguageSessionSnapshot,
     RecentWorkspaces, RecoveryKey, RecoveryKeyError, RecoveryKeyProvider, RecoveryMetadata,
-    RecoveryPayload, TerminalSessionSnapshot, WorkspaceStore, apply_session_migration_metadata,
-    language_contribution, session_contribution, set_language_contribution,
-    set_terminal_contribution, terminal_contribution,
+    RecoveryPayload, RemoteStore, TerminalSessionSnapshot, WorkspaceStore,
+    apply_session_migration_metadata, language_contribution, session_contribution,
+    set_language_contribution, set_terminal_contribution, terminal_contribution,
 };
 use strukt_session::{ClientHealth, PaneId, RequestBody, ResponseBody, SessionId, WindowId};
 use strukt_shell::{Activity, ShellAction, ShellState};
@@ -44,8 +44,8 @@ use crate::language::{
 };
 use crate::recovery_key::NativeRecoveryKeyProvider;
 use crate::remote::{
-    RemoteConnectCompletion, RemoteDocumentCompletion, RemoteFilesCompletion, RemoteRuntime,
-    RemoteSaveCompletion, RemoteSurfaces,
+    RemoteConnectCompletion, RemoteDocumentCompletion, RemoteFilesCompletion,
+    RemoteInstallCompletion, RemoteRuntime, RemoteSaveCompletion, RemoteSurfaces,
 };
 use crate::session::{SessionConnectCompletion, SessionRequestCompletion, SessionSurfaces};
 use crate::terminal::{TerminalSpawnCompletion, TerminalSurfaces};
@@ -213,6 +213,7 @@ pub struct StruktApp {
     pub session_error: Option<String>,
     pub remote: RemoteSurfaces,
     pub(crate) remote_runtime: Option<RemoteRuntime>,
+    remote_store: Option<RemoteStore>,
     pub session_name: String,
     pub window_name: String,
     pub session_confirmation: SessionConfirmation,
@@ -341,6 +342,19 @@ pub enum Message {
     RemoteSaveFinished(RemoteSaveCompletion),
     DisconnectRemote,
     NewRemoteTerminal,
+    ChooseRemoteHelper,
+    RemoteHelperPicked(Option<PathBuf>),
+    ConfirmRemoteHelperInstall,
+    CancelRemoteHelperInstall,
+    RemoteHelperInstalled(RemoteInstallCompletion),
+    RemoteRecordsLoaded(Result<Vec<strukt_persistence::RemoteConnectionRecord>, String>),
+    RemoteRecordSaved(Result<(), String>),
+    SelectRemoteRecord(usize),
+    ForgetRemoteRecord(String),
+    RemoteRecordForgotten {
+        connection_id: String,
+        result: Result<bool, String>,
+    },
     ToggleContext,
     ToggleDrawer,
     ToggleExplorer,
@@ -679,6 +693,7 @@ impl StruktApp {
             session_error: None,
             remote: RemoteSurfaces::default(),
             remote_runtime: None,
+            remote_store: RemoteStore::platform_default().ok(),
             session_name: String::new(),
             window_name: String::new(),
             session_confirmation: SessionConfirmation::None,
@@ -757,7 +772,19 @@ impl StruktApp {
             },
             Message::RecentWorkspaceLoaded,
         );
-        (app, restore)
+        let remote_restore = app.remote_store.clone().map_or_else(Task::none, |store| {
+            Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || {
+                        store.load().map_err(|error| error.to_string())
+                    })
+                    .await
+                    .map_err(|error| error.to_string())?
+                },
+                Message::RemoteRecordsLoaded,
+            )
+        });
+        (app, Task::batch([restore, remote_restore]))
     }
 }
 
@@ -790,10 +817,27 @@ impl StruktApp {
                     return Task::none();
                 }
                 self.remote_runtime = completion.result.ok();
-                return self
+                let refresh = self
                     .remote_runtime
                     .as_ref()
                     .map_or_else(Task::none, |_| Task::done(Message::RefreshRemoteFiles));
+                let persist = match (self.remote.current_record(), self.remote_store.clone()) {
+                    (Ok(record), Some(store)) if self.remote_runtime.is_some() => {
+                        self.remote.remember_record(record.clone());
+                        Task::perform(
+                            async move {
+                                tokio::task::spawn_blocking(move || {
+                                    store.upsert(record).map_err(|error| error.to_string())
+                                })
+                                .await
+                                .map_err(|error| error.to_string())?
+                            },
+                            Message::RemoteRecordSaved,
+                        )
+                    }
+                    _ => Task::none(),
+                };
+                return Task::batch([refresh, persist]);
             }
             Message::RefreshRemoteFiles => {
                 if !self.remote.begin_operation() {
@@ -895,6 +939,101 @@ impl StruktApp {
                         Task::none()
                     }
                 };
+            }
+            Message::ChooseRemoteHelper => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .set_title("Choose a packaged strukt Linux helper")
+                            .pick_file()
+                            .await
+                            .map(|handle| handle.path().to_path_buf())
+                    },
+                    Message::RemoteHelperPicked,
+                );
+            }
+            Message::RemoteHelperPicked(Some(path)) => {
+                if let Err(error) = self.remote.prepare_install(&path) {
+                    self.remote.error = Some(error);
+                }
+                return Task::none();
+            }
+            Message::RemoteHelperPicked(None) => return Task::none(),
+            Message::ConfirmRemoteHelperInstall => {
+                return match self.remote.begin_install() {
+                    Ok(job) => {
+                        Task::perform(async move { job.run() }, Message::RemoteHelperInstalled)
+                    }
+                    Err(error) => {
+                        self.remote.error = Some(error);
+                        Task::none()
+                    }
+                };
+            }
+            Message::CancelRemoteHelperInstall => {
+                self.remote.cancel_install();
+                return Task::none();
+            }
+            Message::RemoteHelperInstalled(completion) => {
+                let succeeded = completion.result.is_ok();
+                self.remote.finish_install(&completion);
+                return if succeeded {
+                    Task::done(Message::ConnectRemote)
+                } else {
+                    Task::none()
+                };
+            }
+            Message::RemoteRecordsLoaded(result) => {
+                match result {
+                    Ok(records) => self.remote.restore_records(records),
+                    Err(error) => self.remote.error = Some(error),
+                }
+                return Task::none();
+            }
+            Message::RemoteRecordSaved(result) => {
+                if let Err(error) = result {
+                    self.remote.error = Some(error);
+                }
+                return Task::none();
+            }
+            Message::SelectRemoteRecord(index) => {
+                if self.remote.status == crate::remote::RemoteStatus::Disconnected {
+                    self.remote.select_record(index);
+                }
+                return Task::none();
+            }
+            Message::ForgetRemoteRecord(connection_id) => {
+                let Some(store) = self.remote_store.clone() else {
+                    self.remote.forget_record(&connection_id);
+                    return Task::none();
+                };
+                let completion_id = connection_id.clone();
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            store
+                                .forget(&connection_id)
+                                .map_err(|error| error.to_string())
+                        })
+                        .await
+                        .map_err(|error| error.to_string())?
+                    },
+                    move |result| Message::RemoteRecordForgotten {
+                        connection_id: completion_id.clone(),
+                        result,
+                    },
+                );
+            }
+            Message::RemoteRecordForgotten {
+                connection_id,
+                result,
+            } => {
+                match result {
+                    Ok(true) => self.remote.forget_record(&connection_id),
+                    Ok(false) => {}
+                    Err(error) => self.remote.error = Some(error),
+                }
+                return Task::none();
             }
             Message::ConnectSessions => {
                 return match self.sessions.begin_connect() {
@@ -3454,6 +3593,16 @@ impl StruktApp {
             | Message::RemoteSaveFinished(_)
             | Message::DisconnectRemote
             | Message::NewRemoteTerminal
+            | Message::ChooseRemoteHelper
+            | Message::RemoteHelperPicked(_)
+            | Message::ConfirmRemoteHelperInstall
+            | Message::CancelRemoteHelperInstall
+            | Message::RemoteHelperInstalled(_)
+            | Message::RemoteRecordsLoaded(_)
+            | Message::RemoteRecordSaved(_)
+            | Message::SelectRemoteRecord(_)
+            | Message::ForgetRemoteRecord(_)
+            | Message::RemoteRecordForgotten { .. }
             | Message::FolderPicked(_)
             | Message::WorkspaceOpened(_)
             | Message::NewTerminal
