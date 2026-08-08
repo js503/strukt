@@ -1,17 +1,15 @@
 #![cfg(windows)]
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::io;
 use std::mem::{offset_of, size_of};
-use std::os::windows::ffi::{OsStrExt, OsStringExt};
+use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::AsRawHandle;
-use std::path::PathBuf;
 
 use cap_std::fs::{Dir, File, OpenOptions, OpenOptionsExt};
 use windows_sys::Win32::Foundation::GENERIC_WRITE;
 use windows_sys::Win32::Storage::FileSystem::{
-    DELETE, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FileRenameInfo, GetFinalPathNameByHandleW,
-    SetFileInformationByHandle, VOLUME_NAME_DOS,
+    DELETE, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FileRenameInfo, SetFileInformationByHandle,
 };
 
 /// Grants a newly-created staging file the access required for handle-relative
@@ -27,9 +25,7 @@ pub fn prepare_rename_source(options: &mut OpenOptions) {
 ///
 /// Returns the Windows error reported by `SetFileInformationByHandle`.
 pub fn atomic_replace(source: &File, parent: &Dir, destination: &OsStr) -> io::Result<()> {
-    let mut destination_path = final_path(parent)?;
-    destination_path.push(destination);
-    let name: Vec<u16> = destination_path.as_os_str().encode_wide().collect();
+    let name: Vec<u16> = destination.encode_wide().collect();
     let name_bytes = name
         .len()
         .checked_mul(size_of::<u16>())
@@ -49,7 +45,7 @@ pub fn atomic_replace(source: &File, parent: &Dir, destination: &OsStr) -> io::R
             Anonymous: FILE_RENAME_INFO_0 {
                 ReplaceIfExists: true,
             },
-            RootDirectory: std::ptr::null_mut(),
+            RootDirectory: parent.as_raw_handle(),
             FileNameLength: u32::try_from(name_bytes).map_err(|_| {
                 io::Error::new(io::ErrorKind::InvalidInput, "file name is too long")
             })?,
@@ -69,39 +65,6 @@ pub fn atomic_replace(source: &File, parent: &Dir, destination: &OsStr) -> io::R
         }
     }
     Ok(())
-}
-
-fn final_path(directory: &Dir) -> io::Result<PathBuf> {
-    let mut capacity = 512_usize;
-    loop {
-        let mut buffer = vec![0_u16; capacity];
-        // SAFETY: `buffer` is writable for `capacity` UTF-16 code units and the
-        // directory handle remains valid for the duration of the call.
-        let length = unsafe {
-            GetFinalPathNameByHandleW(
-                directory.as_raw_handle(),
-                buffer.as_mut_ptr(),
-                u32::try_from(capacity).map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "directory path is too long")
-                })?,
-                VOLUME_NAME_DOS,
-            )
-        };
-        if length == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let length = usize::try_from(length).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "directory path length is invalid",
-            )
-        })?;
-        if length < capacity {
-            buffer.truncate(length);
-            return Ok(PathBuf::from(OsString::from_wide(&buffer)));
-        }
-        capacity = length.saturating_add(1);
-    }
 }
 
 #[cfg(test)]
@@ -129,5 +92,29 @@ mod tests {
             "new"
         );
         assert!(!temporary.path().join("staged.txt").exists());
+    }
+
+    #[test]
+    fn atomic_replace_is_relative_to_a_nested_parent_handle() {
+        let temporary = tempfile::tempdir().unwrap();
+        fs::create_dir(temporary.path().join("nested")).unwrap();
+        fs::write(temporary.path().join("nested/target.txt"), "old").unwrap();
+        let root = Dir::open_ambient_dir(temporary.path(), cap_std::ambient_authority()).unwrap();
+        let parent = root.open_dir("nested").unwrap();
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        prepare_rename_source(&mut options);
+        let mut source = parent.open_with("staged.txt", &options).unwrap();
+        source.write_all(b"new").unwrap();
+        source.sync_all().unwrap();
+
+        atomic_replace(&source, &parent, OsStr::new("target.txt")).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(temporary.path().join("nested/target.txt")).unwrap(),
+            "new"
+        );
+        assert!(!temporary.path().join("nested/staged.txt").exists());
+        assert!(!temporary.path().join("target.txt").exists());
     }
 }
