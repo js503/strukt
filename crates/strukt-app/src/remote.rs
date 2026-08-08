@@ -4,6 +4,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use iced::widget::text_editor;
 use strukt_language::{FrameDecoder, FrameLimits, IncomingMessage, encode_frame, parse_message};
 use strukt_persistence::RemoteConnectionRecord;
 use strukt_remote::{
@@ -45,7 +46,7 @@ pub struct RemoteSurfaces {
     pub root_label: Option<String>,
     pub files: Vec<String>,
     pub selected_path: Option<String>,
-    pub document_text: String,
+    pub document_content: text_editor::Content,
     pub document_revision: Option<String>,
     pub document_dirty: bool,
     pub capabilities: BTreeSet<RemoteCapability>,
@@ -77,7 +78,7 @@ impl Default for RemoteSurfaces {
             root_label: None,
             files: Vec::new(),
             selected_path: None,
-            document_text: String::new(),
+            document_content: text_editor::Content::new(),
             document_revision: None,
             document_dirty: false,
             capabilities: BTreeSet::new(),
@@ -117,7 +118,7 @@ impl RemoteSurfaces {
         self.error = None;
         self.files.clear();
         self.selected_path = None;
-        self.document_text.clear();
+        self.document_content = text_editor::Content::new();
         self.document_revision = None;
         self.document_dirty = false;
         Ok(RemoteConnectJob {
@@ -352,7 +353,7 @@ impl RemoteSurfaces {
         match &completion.result {
             Ok(document) => {
                 self.selected_path = Some(document.path.clone());
-                self.document_text.clone_from(&document.text);
+                self.document_content = text_editor::Content::with_text(&document.text);
                 self.document_revision = Some(document.revision.clone());
                 self.document_dirty = false;
                 self.error = None;
@@ -361,9 +362,9 @@ impl RemoteSurfaces {
         }
     }
 
-    pub fn edit_document(&mut self, text: String) {
+    pub fn edit_document(&mut self, action: text_editor::Action) {
         if self.selected_path.is_some() {
-            self.document_text = text;
+            self.document_content.perform(action);
             self.document_dirty = true;
         }
     }
@@ -480,7 +481,7 @@ impl RemoteSurfaces {
         self.root_label = None;
         self.files.clear();
         self.selected_path = None;
-        self.document_text.clear();
+        self.document_content = text_editor::Content::new();
         self.document_revision = None;
         self.document_dirty = false;
         self.capabilities.clear();

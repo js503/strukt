@@ -557,9 +557,9 @@ fn connections_canvas(app: &StruktApp) -> Element<'_, Message> {
                             .then_some(Message::SaveRemoteDocument),
                     ),
                 ],
-                text_input("Remote UTF-8 document", &app.remote.document_text)
-                    .on_input(Message::RemoteDocumentChanged)
-                    .width(Fill),
+                text_editor(&app.remote.document_content)
+                    .on_action(Message::RemoteDocumentAction)
+                    .height(Fill),
             ]
             .spacing(6)
             .into()

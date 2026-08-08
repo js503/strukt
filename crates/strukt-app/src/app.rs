@@ -338,7 +338,7 @@ pub enum Message {
     RemoteFilesFinished(RemoteFilesCompletion),
     OpenRemoteDocument(String),
     RemoteDocumentFinished(RemoteDocumentCompletion),
-    RemoteDocumentChanged(String),
+    RemoteDocumentAction(text_editor::Action),
     SaveRemoteDocument,
     RemoteSaveFinished(RemoteSaveCompletion),
     DisconnectRemote,
@@ -890,8 +890,8 @@ impl StruktApp {
                 self.remote.finish_document(&completion);
                 return Task::none();
             }
-            Message::RemoteDocumentChanged(text) => {
-                self.remote.edit_document(text);
+            Message::RemoteDocumentAction(action) => {
+                self.remote.edit_document(action);
                 return Task::none();
             }
             Message::SaveRemoteDocument => {
@@ -906,7 +906,7 @@ impl StruktApp {
                     return Task::none();
                 };
                 let generation = self.remote.generation();
-                let text = self.remote.document_text.clone();
+                let text = self.remote.document_content.text();
                 return Task::perform(
                     async move { runtime.save_document(generation, path, revision, text) },
                     Message::RemoteSaveFinished,
@@ -1191,7 +1191,7 @@ impl StruktApp {
                         Some("open a remote text document before diagnostics".into());
                     return Task::none();
                 };
-                let text = self.remote.document_text.clone();
+                let text = self.remote.document_content.text();
                 if !self.remote.begin_operation() {
                     return Task::none();
                 }
@@ -3765,7 +3765,7 @@ impl StruktApp {
             | Message::RemoteFilesFinished(_)
             | Message::OpenRemoteDocument(_)
             | Message::RemoteDocumentFinished(_)
-            | Message::RemoteDocumentChanged(_)
+            | Message::RemoteDocumentAction(_)
             | Message::SaveRemoteDocument
             | Message::RemoteSaveFinished(_)
             | Message::DisconnectRemote
