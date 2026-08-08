@@ -505,27 +505,8 @@ pub struct RemoteConnectJob {
 impl RemoteConnectJob {
     pub fn run(self) -> RemoteConnectCompletion {
         let generation = self.generation;
-        let alias_label = self.alias.as_str().to_owned();
-        let root_label = self.root.as_str().to_owned();
-        let openssh = OpenSsh::new(self.executable);
-        let result = OpenSshClient::connect(
-            &openssh,
-            &self.alias,
-            env!("CARGO_PKG_VERSION"),
-            self.root.as_str(),
-            generation,
-        )
-        .map(|client| {
-            let capabilities = client.capabilities().cloned().unwrap_or_default();
-            let canonical_root = client.workspace_root().unwrap_or(&root_label).to_owned();
-            RemoteRuntime {
-                client: Arc::new(Mutex::new(client)),
-                alias: alias_label,
-                root: canonical_root,
-                capabilities,
-            }
-        })
-        .map_err(|error| error.to_string());
+        let result =
+            RemoteRuntime::connect(self.executable, &self.alias, self.root.as_str(), generation);
         RemoteConnectCompletion { generation, result }
     }
 }
@@ -545,6 +526,27 @@ pub struct RemoteRuntime {
 }
 
 impl RemoteRuntime {
+    pub(crate) fn connect(
+        executable: SshExecutable,
+        alias: &SshAlias,
+        root: &str,
+        generation: u64,
+    ) -> Result<Self, String> {
+        let alias_label = alias.as_str().to_owned();
+        let openssh = OpenSsh::new(executable);
+        let client =
+            OpenSshClient::connect(&openssh, alias, env!("CARGO_PKG_VERSION"), root, generation)
+                .map_err(|error| error.to_string())?;
+        let capabilities = client.capabilities().cloned().unwrap_or_default();
+        let canonical_root = client.workspace_root().unwrap_or(root).to_owned();
+        Ok(Self {
+            client: Arc::new(Mutex::new(client)),
+            alias: alias_label,
+            root: canonical_root,
+            capabilities,
+        })
+    }
+
     #[must_use]
     pub fn capabilities(&self) -> &BTreeSet<RemoteCapability> {
         &self.capabilities

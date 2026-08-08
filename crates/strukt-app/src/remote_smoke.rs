@@ -8,10 +8,12 @@ use strukt_remote::{
     OpenSsh, OpenSshClient, RemoteErrorKind, RequestBody, ResponseBody, SshAlias, SshExecutable,
 };
 
+use crate::remote::RemoteRuntime;
+
 pub fn run(root: &Path) -> Result<(), String> {
     prepare_fixture(root)?;
     let fake_ssh = sibling_binary("fake-ssh")?;
-    let openssh = OpenSsh::new(SshExecutable::from_path(fake_ssh).map_err(display)?);
+    let openssh = OpenSsh::new(SshExecutable::from_path(fake_ssh.clone()).map_err(display)?);
     let alias = SshAlias::new("fixture").map_err(display)?;
     let root_label = root.to_string_lossy();
     let mut client =
@@ -69,9 +71,41 @@ pub fn run(root: &Path) -> Result<(), String> {
         b"remote smoke updated\n",
     )?;
     reconnected.disconnect();
+    smoke_app_coordinator(&fake_ssh, root)?;
     if root.join(".strukt").exists() {
         return Err("remote smoke wrote workspace metadata".into());
     }
+    Ok(())
+}
+
+fn smoke_app_coordinator(fake_ssh: &Path, root: &Path) -> Result<(), String> {
+    let runtime = RemoteRuntime::connect(
+        SshExecutable::from_path(fake_ssh.to_path_buf()).map_err(display)?,
+        &SshAlias::new("fixture").map_err(display)?,
+        &root.to_string_lossy(),
+        3,
+    )?;
+    let search = runtime.search(3, "updated".into());
+    if search.result.as_ref().is_err() || search.result.as_ref().is_ok_and(Vec::is_empty) {
+        return Err("app remote search did not publish results".into());
+    }
+    if runtime.git_summary(3).result.is_err() {
+        return Err("app remote Git summary failed".into());
+    }
+    let fixture = sibling_binary("remote-process-fixture")?;
+    let task = runtime.run_task(
+        3,
+        fixture.to_string_lossy().into_owned(),
+        vec!["--oneshot".into()],
+    );
+    if !task
+        .result
+        .as_deref()
+        .is_ok_and(|output| output.contains("fixture:oneshot"))
+    {
+        return Err("app remote task did not publish bounded output".into());
+    }
+    runtime.disconnect();
     Ok(())
 }
 

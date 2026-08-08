@@ -3,6 +3,10 @@
 use std::io::{BufRead as _, Write as _};
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--oneshot") {
+        println!("fixture:oneshot");
+        return;
+    }
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout().lock();
     for line in stdin.lock().lines() {
