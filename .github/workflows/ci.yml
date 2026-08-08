@@ -37,6 +37,8 @@ jobs:
         run: cargo build -p strukt-language --bin language-fixture
       - name: Build persistent session helpers
         run: cargo build -p strukt-session --bin strukt-sessiond --bin session-fixture
+      - name: Build SSH remote workspace helpers
+        run: cargo build -p strukt-remote --bins
       - name: Smoke local workspace files
         if: runner.os != 'Windows'
         shell: bash
@@ -194,6 +196,114 @@ jobs:
           if (Test-Path (Join-Path $fixture ".strukt")) {
             throw "persistent session smoke created workspace metadata"
           }
+      - name: Smoke SSH remote workspace
+        if: runner.os != 'Windows'
+        shell: bash
+        timeout-minutes: 3
+        run: |
+          fixture="$(mktemp -d)"
+          cargo run -p strukt-app -- --remote-smoke "$fixture" |
+            tee remote-smoke.log
+          grep -Fx \
+            "strukt M4 remote smoke: ssh, fallback, files, edit, search, git, task, language, disconnect, and reconnect passed" \
+            remote-smoke.log
+          test ! -e "$fixture/.strukt"
+      - name: Smoke SSH remote workspace
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP ("strukt-remote-smoke-" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Force -Path $fixture | Out-Null
+          $output = & cargo run -p strukt-app -- --remote-smoke $fixture 2>&1
+          $output | Write-Output
+          if ($LASTEXITCODE -ne 0) {
+            throw "SSH remote workspace smoke exited with code $LASTEXITCODE"
+          }
+          $marker = "strukt M4 remote smoke: ssh, fallback, files, edit, search, git, task, language, disconnect, and reconnect passed"
+          if (($output -join [Environment]::NewLine) -notmatch [regex]::Escape($marker)) {
+            throw "SSH remote workspace smoke marker missing"
+          }
+          if (Test-Path (Join-Path $fixture ".strukt")) {
+            throw "SSH remote smoke created workspace metadata"
+          }
+      - name: Validate disposable real OpenSSH host
+        if: runner.os == 'Linux'
+        shell: bash
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          fixture="$(mktemp -d)"
+          remote_root="$fixture/workspace"
+          mkdir -p "$remote_root" "$HOME/.ssh"
+          printf 'strukt real ssh\n' > "$remote_root/README.md"
+
+          ssh-keygen -q -t ed25519 -N '' -f "$fixture/host_key"
+          ssh-keygen -q -t ed25519 -N '' -f "$fixture/client_key"
+          cp "$fixture/client_key.pub" "$fixture/authorized_keys"
+
+          helper="$fixture/run-helper"
+          printf '#!/usr/bin/env bash\nexec "%s/target/debug/strukt-remote" --stdio\n' \
+            "$GITHUB_WORKSPACE" > "$helper"
+          chmod 700 "$helper"
+
+          port=49222
+          user="$(id -un)"
+          config="$fixture/sshd_config"
+          printf '%s\n' \
+            "Port $port" \
+            'ListenAddress 127.0.0.1' \
+            "HostKey $fixture/host_key" \
+            "PidFile $fixture/sshd.pid" \
+            "AuthorizedKeysFile $fixture/authorized_keys" \
+            'PasswordAuthentication no' \
+            'KbdInteractiveAuthentication no' \
+            'PubkeyAuthentication yes' \
+            'PermitRootLogin no' \
+            'UsePAM no' \
+            'StrictModes no' \
+            "AllowUsers $user" \
+            "ForceCommand $helper" \
+            > "$config"
+
+          sudo mkdir -p /run/sshd
+          /usr/sbin/sshd -t -f "$config"
+          /usr/sbin/sshd -D -e -f "$config" 2> "$fixture/sshd.log" &
+          sshd_pid=$!
+          trap 'kill "$sshd_pid" 2>/dev/null || true' EXIT
+
+          for _ in {1..20}; do
+            if ssh-keyscan -T 1 -p "$port" 127.0.0.1 \
+                > "$fixture/known_hosts" 2>/dev/null; then
+              break
+            fi
+            sleep 0.1
+          done
+          test -s "$fixture/known_hosts" || {
+            cat "$fixture/sshd.log"
+            exit 1
+          }
+
+          ssh_config="$HOME/.ssh/config"
+          printf '%s\n' \
+            'Host strukt-ci-real' \
+            '  HostName 127.0.0.1' \
+            "  Port $port" \
+            "  User $user" \
+            "  IdentityFile $fixture/client_key" \
+            '  IdentitiesOnly yes' \
+            "  UserKnownHostsFile $fixture/known_hosts" \
+            '  StrictHostKeyChecking yes' \
+            '  BatchMode yes' \
+            > "$ssh_config"
+          chmod 600 "$ssh_config" "$fixture/client_key" "$fixture/authorized_keys"
+
+          STRUKT_REAL_SSH_EXECUTABLE=/usr/bin/ssh \
+          STRUKT_REAL_SSH_ALIAS=strukt-ci-real \
+          STRUKT_REAL_SSH_ROOT="$remote_root" \
+            cargo test -p strukt-remote --test native_ssh \
+              disposable_real_openssh_runs_the_helper_protocol \
+              -- --ignored --exact
       - name: Smoke launch native Windows application
         if: runner.os == 'Windows'
         shell: pwsh

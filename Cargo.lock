@@ -4096,6 +4096,7 @@ dependencies = [
  "strukt-fs",
  "strukt-language",
  "strukt-persistence",
+ "strukt-remote",
  "strukt-session",
  "strukt-shell",
  "strukt-terminal",
@@ -4185,6 +4186,27 @@ dependencies = [
  "cap-std",
  "tempfile",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "strukt-remote"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "cap-fs-ext",
+ "cap-std",
+ "ciborium",
+ "getrandom 0.4.3",
+ "serde",
+ "serde_json",
+ "sha2",
+ "strukt-editor",
+ "strukt-fs",
+ "strukt-language",
+ "strukt-terminal",
+ "strukt-workspace",
+ "tempfile",
+ "thiserror 2.0.19",
 ]
 
 [[package]]

@@ -20,13 +20,26 @@ pub fn prepare_rename_source(options: &mut OpenOptions) {
     options.access_mode(GENERIC_WRITE | DELETE);
 }
 
-/// Atomically replaces one entry in `parent` by renaming an already-open
-/// staging file to a path resolved from the retained parent directory handle.
+/// Atomically replaces one sibling entry by renaming an already-open staging
+/// file within its existing directory.
 ///
 /// # Errors
 ///
 /// Returns the Windows error reported by `SetFileInformationByHandle`.
 pub fn atomic_replace(source: &File, parent: &Dir, destination: &OsStr) -> io::Result<()> {
+    let destination_name: Vec<u16> = destination.encode_wide().collect();
+    if destination_name.is_empty()
+        || destination_name.as_slice() == [u16::from(b'.')]
+        || destination_name.as_slice() == [u16::from(b'.'), u16::from(b'.')]
+        || destination_name
+            .iter()
+            .any(|character| matches!(*character, 0 | 47 | 58 | 92))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "destination must be one ordinary file name",
+        ));
+    }
     let mut destination_path = final_path(parent)?;
     destination_path.push(destination);
     let name: Vec<u16> = destination_path.as_os_str().encode_wide().collect();
@@ -98,15 +111,35 @@ fn final_path(directory: &Dir) -> io::Result<PathBuf> {
         })?;
         if length < capacity {
             buffer.truncate(length);
-            return Ok(PathBuf::from(OsString::from_wide(&buffer)));
+            return ordinary_absolute_path(buffer);
         }
         capacity = length.saturating_add(1);
+    }
+}
+
+fn ordinary_absolute_path(mut path: Vec<u16>) -> io::Result<PathBuf> {
+    const EXTENDED_PREFIX: [u16; 4] = [92, 92, 63, 92];
+    const EXTENDED_UNC_PREFIX: [u16; 8] = [92, 92, 63, 92, 85, 78, 67, 92];
+    if path.starts_with(&EXTENDED_UNC_PREFIX) {
+        path.splice(..EXTENDED_UNC_PREFIX.len(), [92, 92]);
+    } else if path.starts_with(&EXTENDED_PREFIX) {
+        path.drain(..EXTENDED_PREFIX.len());
+    }
+    let path = PathBuf::from(OsString::from_wide(&path));
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "directory handle did not resolve to an absolute path",
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cap_std::fs::Dir;
     use std::fs;
     use std::io::Write as _;
 
@@ -129,5 +162,48 @@ mod tests {
             "new"
         );
         assert!(!temporary.path().join("staged.txt").exists());
+    }
+
+    #[test]
+    fn atomic_replace_is_relative_to_a_nested_parent_handle() {
+        let temporary = tempfile::tempdir().unwrap();
+        fs::create_dir(temporary.path().join("nested")).unwrap();
+        fs::write(temporary.path().join("nested/target.txt"), "old").unwrap();
+        let root = Dir::open_ambient_dir(temporary.path(), cap_std::ambient_authority()).unwrap();
+        let parent = root.open_dir("nested").unwrap();
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        prepare_rename_source(&mut options);
+        let mut source = parent.open_with("staged.txt", &options).unwrap();
+        source.write_all(b"new").unwrap();
+        source.sync_all().unwrap();
+
+        atomic_replace(&source, &parent, OsStr::new("target.txt")).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(temporary.path().join("nested/target.txt")).unwrap(),
+            "new"
+        );
+        assert!(!temporary.path().join("nested/staged.txt").exists());
+        assert!(!temporary.path().join("target.txt").exists());
+    }
+
+    #[test]
+    fn atomic_replace_rejects_non_sibling_destinations() {
+        let temporary = tempfile::tempdir().unwrap();
+        let parent = Dir::open_ambient_dir(temporary.path(), cap_std::ambient_authority()).unwrap();
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        prepare_rename_source(&mut options);
+        let source = parent.open_with("staged.txt", &options).unwrap();
+
+        for destination in ["", ".", "..", "../target", "nested/target", "stream:name"] {
+            assert_eq!(
+                atomic_replace(&source, &parent, OsStr::new(destination))
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::InvalidInput
+            );
+        }
     }
 }

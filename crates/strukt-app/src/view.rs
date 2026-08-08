@@ -5,6 +5,7 @@ use iced::{Background, Border, Color, Element, Fill, Length};
 use strukt_core::CapabilityId;
 use strukt_editor::{CloseDecision, DocumentStatus, FindQuery, GrammarRegistry, OpenDisposition};
 use strukt_fs::{FileEntry, FileKind};
+use strukt_remote::Capability as RemoteCapability;
 use strukt_session::{AttentionState, ClientHealth, PaneLifecycle};
 use strukt_shell::Activity;
 use strukt_terminal::{LayoutNode, PaneState, SplitAxis, TerminalPaneId};
@@ -12,6 +13,7 @@ use strukt_theme::{Rgb, ThemeTokens};
 
 use crate::app::{DocumentNotice, ExplorerDialog, Message, SessionConfirmation, StruktApp};
 use crate::language::{DiagnosticSeverity, LanguageState, ProblemFilter};
+use crate::remote::RemoteStatus;
 use crate::terminal_widget::TerminalWidget;
 
 fn color(rgb: Rgb) -> Color {
@@ -56,16 +58,25 @@ pub fn view(app: &StruktApp) -> Element<'_, Message> {
 }
 
 fn header(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Message> {
-    let workspace_label = app.workspace.as_ref().map_or_else(
-        || "No folder open".to_owned(),
-        |workspace| {
-            format!(
-                "{}  ·  {}",
-                workspace.root.display_name(),
-                workspace.root.path().display()
-            )
-        },
-    );
+    let workspace_label = if app.remote.status == RemoteStatus::Disconnected {
+        app.workspace.as_ref().map_or_else(
+            || "No folder open".to_owned(),
+            |workspace| {
+                format!(
+                    "{}  ·  {}",
+                    workspace.root.display_name(),
+                    workspace.root.path().display()
+                )
+            },
+        )
+    } else {
+        format!(
+            "SSH: {}  ·  {}  ·  {}",
+            app.remote.host_label.as_deref().unwrap_or("connecting"),
+            app.remote.root_label.as_deref().unwrap_or("remote root"),
+            app.remote.status.label()
+        )
+    };
     let open_folder = button("Open Folder…")
         .on_press_maybe((!app.folder_picker_in_flight()).then_some(Message::OpenFolder));
 
@@ -307,7 +318,21 @@ fn explorer_dialog(app: &StruktApp) -> Element<'_, Message> {
 }
 
 fn primary_canvas(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> {
-    let content: Element<'_, Message> = if app.workspace.is_none() {
+    let content: Element<'_, Message> = if app.shell.active_activity == Activity::Connections {
+        connections_canvas(app)
+    } else if app.remote.status != RemoteStatus::Disconnected
+        && app.shell.active_activity == Activity::Search
+    {
+        remote_search_canvas(app)
+    } else if app.remote.status != RemoteStatus::Disconnected
+        && app.shell.active_activity == Activity::SourceControl
+    {
+        remote_git_canvas(app)
+    } else if app.remote.status != RemoteStatus::Disconnected
+        && app.shell.active_activity == Activity::Tasks
+    {
+        remote_tasks_canvas(app)
+    } else if app.workspace.is_none() {
         welcome_canvas(app).into()
     } else if app.terminal_expanded {
         app.terminal.workspace().active_tab().map_or_else(
@@ -352,6 +377,283 @@ fn primary_canvas(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> 
         .height(Fill)
         .style(panel_style(tokens, tokens.canvas))
         .into()
+}
+
+fn remote_search_canvas(app: &StruktApp) -> Element<'_, Message> {
+    let available = app.remote.capabilities.contains(&RemoteCapability::Search);
+    let ready =
+        available && app.remote.status == RemoteStatus::Ready && !app.remote.operation_in_flight();
+    let mut results = column![].spacing(5);
+    for result in &app.remote.search_results {
+        results = results.push(text(result));
+    }
+    column![
+        text(format!(
+            "Remote Search · {}",
+            app.remote.host_label.as_deref().unwrap_or("SSH host")
+        ))
+        .size(22),
+        text(if available {
+            "Search executes inside the approved remote root."
+        } else {
+            "The connected helper does not advertise remote search."
+        }),
+        row![
+            text_input("Search remote files", &app.remote.search_input)
+                .on_input(Message::RemoteSearchChanged),
+            button("Search").on_press_maybe(
+                (ready && !app.remote.search_input.is_empty()).then_some(Message::RunRemoteSearch),
+            ),
+        ]
+        .spacing(8),
+        scrollable(results).height(Fill),
+    ]
+    .spacing(12)
+    .into()
+}
+
+fn remote_git_canvas(app: &StruktApp) -> Element<'_, Message> {
+    let available = app.remote.capabilities.contains(&RemoteCapability::Git);
+    let ready =
+        available && app.remote.status == RemoteStatus::Ready && !app.remote.operation_in_flight();
+    column![
+        text(format!(
+            "Remote Git · {}",
+            app.remote.host_label.as_deref().unwrap_or("SSH host")
+        ))
+        .size(22),
+        text("Read-only Git status for the approved remote workspace root."),
+        button("Refresh remote Git").on_press_maybe(ready.then_some(Message::RefreshRemoteGit)),
+        text(app.remote.git_summary.as_deref().unwrap_or(if available {
+            "Git summary not loaded"
+        } else {
+            "Git unavailable"
+        })),
+    ]
+    .spacing(12)
+    .into()
+}
+
+fn remote_tasks_canvas(app: &StruktApp) -> Element<'_, Message> {
+    let ready = app.remote.status == RemoteStatus::Ready && !app.remote.operation_in_flight();
+    let process_ready = ready
+        && app
+            .remote
+            .capabilities
+            .contains(&RemoteCapability::Processes);
+    let language_ready = ready
+        && app
+            .remote
+            .capabilities
+            .contains(&RemoteCapability::Language)
+        && app.remote.selected_path.is_some();
+    let task_controls: Element<'_, Message> = app.remote.task_consent.as_ref().map_or_else(
+        || {
+            column![
+                text_input("Exact task executable", &app.remote.task_executable)
+                    .on_input(Message::RemoteTaskExecutableChanged),
+                text_input(
+                    "Arguments as JSON string array",
+                    &app.remote.task_arguments_json
+                )
+                .on_input(Message::RemoteTaskArgumentsChanged),
+                button("Review exact task")
+                    .on_press_maybe(process_ready.then_some(Message::ReviewRemoteTask)),
+            ]
+            .spacing(6)
+            .into()
+        },
+        |consent| {
+            column![
+                text(consent),
+                row![
+                    button("Run exactly this task").on_press(Message::ConfirmRemoteTask),
+                    button("Cancel").on_press(Message::CancelRemoteTask),
+                ]
+                .spacing(6),
+            ]
+            .spacing(6)
+            .into()
+        },
+    );
+    column![
+        text(format!(
+            "Remote Tasks & Diagnostics · {}",
+            app.remote.host_label.as_deref().unwrap_or("SSH host")
+        ))
+        .size(22),
+        text("Tasks require exact review. Language servers start only on explicit request."),
+        text("TASK").size(13),
+        task_controls,
+        scrollable(text(&app.remote.task_output)).height(Length::Fixed(120.0)),
+        text("LANGUAGE DIAGNOSTICS").size(13),
+        text_input(
+            "Language-server executable",
+            &app.remote.language_executable
+        )
+        .on_input(Message::RemoteLanguageExecutableChanged),
+        text_input(
+            "Language-server arguments as JSON string array",
+            &app.remote.language_arguments_json
+        )
+        .on_input(Message::RemoteLanguageArgumentsChanged),
+        button("Run diagnostics for the open remote document")
+            .on_press_maybe(language_ready.then_some(Message::VerifyRemoteLanguage)),
+        text(
+            app.remote
+                .language_status
+                .as_deref()
+                .unwrap_or("Open a remote text document, then opt in to diagnostics")
+        ),
+    ]
+    .spacing(10)
+    .into()
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "the connection canvas keeps consent, status, files, and editor boundary labels together"
+)]
+fn connections_canvas(app: &StruktApp) -> Element<'_, Message> {
+    let connecting = app.remote.status == RemoteStatus::Connecting;
+    let connected = matches!(
+        app.remote.status,
+        RemoteStatus::Ready | RemoteStatus::TerminalOnly | RemoteStatus::Stale
+    );
+    let mut files = column![].spacing(4);
+    if app.remote.files.is_empty() {
+        files = files.push(text("No remote files loaded."));
+    } else {
+        for path in &app.remote.files {
+            files = files.push(
+                button(text(path)).width(Fill).on_press_maybe(
+                    (!app.remote.operation_in_flight())
+                        .then(|| Message::OpenRemoteDocument(path.clone())),
+                ),
+            );
+        }
+    }
+    let mut notices = column![].spacing(4);
+    if let Some(error) = &app.remote.error {
+        notices = notices.push(text(format!("Remote: {error}")));
+    }
+    let document: Element<'_, Message> = app.remote.selected_path.as_ref().map_or_else(
+        || column![text("Select a text file to open it.")].into(),
+        |path| {
+            column![
+                row![
+                    text(format!(
+                        "{}{}",
+                        path,
+                        if app.remote.document_dirty {
+                            " •"
+                        } else {
+                            ""
+                        }
+                    )),
+                    Space::new().width(Fill),
+                    button("Save").on_press_maybe(
+                        (app.remote.document_dirty && !app.remote.operation_in_flight())
+                            .then_some(Message::SaveRemoteDocument),
+                    ),
+                ],
+                text_editor(&app.remote.document_content)
+                    .on_action(Message::RemoteDocumentAction)
+                    .height(Fill),
+            ]
+            .spacing(6)
+            .into()
+        },
+    );
+    let install_consent: Element<'_, Message> = app.remote.install_consent.as_ref().map_or_else(
+        || column![].into(),
+        |summary| {
+            column![
+                text("Confirm remote helper installation"),
+                text(summary),
+                text("The verified artifact will be streamed over standard OpenSSH to the versioned private user-data path."),
+                row![
+                    button("Install exactly this helper")
+                        .on_press(Message::ConfirmRemoteHelperInstall),
+                    button("Cancel").on_press(Message::CancelRemoteHelperInstall),
+                ]
+                .spacing(8),
+            ]
+            .spacing(4)
+            .into()
+        },
+    );
+    let mut recent_hosts = column![text("RECENT HOSTS").size(13)].spacing(4);
+    if app.remote.records.is_empty() {
+        recent_hosts = recent_hosts.push(text("No saved SSH hosts."));
+    } else {
+        for (index, record) in app.remote.records.iter().enumerate() {
+            let root = record.recent_roots.first().map_or("", String::as_str);
+            recent_hosts = recent_hosts.push(
+                row![
+                    button(text(format!("{}  ·  {root}", record.alias))).on_press_maybe(
+                        (app.remote.status == RemoteStatus::Disconnected)
+                            .then_some(Message::SelectRemoteRecord(index)),
+                    ),
+                    button("Forget")
+                        .on_press(Message::ForgetRemoteRecord(record.connection_id.clone())),
+                ]
+                .spacing(6),
+            );
+        }
+    }
+    column![
+        text("SSH workspace").size(22),
+        text("Uses your standard OpenSSH configuration and authentication."),
+        row![
+            text_input("Host alias from ~/.ssh/config", &app.remote.alias_input)
+                .on_input(Message::RemoteAliasChanged),
+            text_input("Remote root, for example ~/src/app", &app.remote.root_input)
+                .on_input(Message::RemoteRootChanged),
+        ]
+        .spacing(8),
+        recent_hosts,
+        row![
+            button(if connecting {
+                "Connecting…"
+            } else {
+                "Connect"
+            })
+            .on_press_maybe((!connecting && !connected).then_some(Message::ConnectRemote)),
+            button("Refresh files").on_press_maybe(
+                (app.remote.status == RemoteStatus::Ready && !app.remote.operation_in_flight())
+                    .then_some(Message::RefreshRemoteFiles),
+            ),
+            button("Disconnect").on_press_maybe(connected.then_some(Message::DisconnectRemote)),
+        ]
+        .spacing(8),
+        row![
+            button("Open SSH terminal").on_press_maybe(
+                (!connecting && !app.remote.alias_input.is_empty())
+                    .then_some(Message::NewRemoteTerminal),
+            ),
+            button("Install / repair helper").on_press_maybe(
+                (!connecting && !app.remote.operation_in_flight())
+                    .then_some(Message::ChooseRemoteHelper),
+            ),
+        ]
+        .spacing(8),
+        install_consent,
+        text(format!("Status: {}", app.remote.status.label())),
+        notices,
+        row![
+            column![
+                text("REMOTE FILES · QUICK OPEN").size(13),
+                scrollable(files).height(Fill)
+            ]
+            .width(Length::Fixed(260.0)),
+            container(document).padding(8).width(Fill),
+        ]
+        .spacing(12)
+        .height(Fill),
+    ]
+    .spacing(12)
+    .into()
 }
 
 #[expect(
