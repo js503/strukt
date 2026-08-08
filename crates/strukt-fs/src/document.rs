@@ -431,11 +431,11 @@ fn atomic_replace(
 
 #[cfg(windows)]
 fn atomic_replace(
-    _parent: &Dir,
+    parent: &Dir,
     source: &StagedFile,
     destination: &std::ffi::OsStr,
 ) -> Result<(), DocumentIoError> {
-    strukt_platform::atomic_replace(&source.file, destination).map_err(DocumentIoError::Io)
+    strukt_platform::atomic_replace(&source.file, parent, destination).map_err(DocumentIoError::Io)
 }
 
 fn revision(bytes: &[u8]) -> DiskRevision {

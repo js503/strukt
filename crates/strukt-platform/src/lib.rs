@@ -1,15 +1,17 @@
 #![cfg(windows)]
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::io;
 use std::mem::{offset_of, size_of};
-use std::os::windows::ffi::OsStrExt;
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::io::AsRawHandle;
+use std::path::PathBuf;
 
-use cap_std::fs::{File, OpenOptions, OpenOptionsExt};
+use cap_std::fs::{Dir, File, OpenOptions, OpenOptionsExt};
 use windows_sys::Win32::Foundation::GENERIC_WRITE;
 use windows_sys::Win32::Storage::FileSystem::{
-    DELETE, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FileRenameInfo, SetFileInformationByHandle,
+    DELETE, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FileRenameInfo, GetFinalPathNameByHandleW,
+    SetFileInformationByHandle, VOLUME_NAME_DOS,
 };
 
 /// Grants a newly-created staging file the access required for handle-relative
@@ -24,12 +26,12 @@ pub fn prepare_rename_source(options: &mut OpenOptions) {
 /// # Errors
 ///
 /// Returns the Windows error reported by `SetFileInformationByHandle`.
-pub fn atomic_replace(source: &File, destination: &OsStr) -> io::Result<()> {
-    let name: Vec<u16> = destination.encode_wide().collect();
-    if name.is_empty()
-        || name.as_slice() == [u16::from(b'.')]
-        || name.as_slice() == [u16::from(b'.'), u16::from(b'.')]
-        || name
+pub fn atomic_replace(source: &File, parent: &Dir, destination: &OsStr) -> io::Result<()> {
+    let destination_name: Vec<u16> = destination.encode_wide().collect();
+    if destination_name.is_empty()
+        || destination_name.as_slice() == [u16::from(b'.')]
+        || destination_name.as_slice() == [u16::from(b'.'), u16::from(b'.')]
+        || destination_name
             .iter()
             .any(|character| matches!(*character, 0 | 47 | 58 | 92))
     {
@@ -38,6 +40,9 @@ pub fn atomic_replace(source: &File, destination: &OsStr) -> io::Result<()> {
             "destination must be one ordinary file name",
         ));
     }
+    let mut destination_path = final_path(parent)?;
+    destination_path.push(destination);
+    let name: Vec<u16> = destination_path.as_os_str().encode_wide().collect();
     let name_bytes = name
         .len()
         .checked_mul(size_of::<u16>())
@@ -79,6 +84,58 @@ pub fn atomic_replace(source: &File, destination: &OsStr) -> io::Result<()> {
     Ok(())
 }
 
+fn final_path(directory: &Dir) -> io::Result<PathBuf> {
+    let mut capacity = 512_usize;
+    loop {
+        let mut buffer = vec![0_u16; capacity];
+        // SAFETY: `buffer` is writable for `capacity` UTF-16 code units and the
+        // directory handle remains valid for the duration of the call.
+        let length = unsafe {
+            GetFinalPathNameByHandleW(
+                directory.as_raw_handle(),
+                buffer.as_mut_ptr(),
+                u32::try_from(capacity).map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "directory path is too long")
+                })?,
+                VOLUME_NAME_DOS,
+            )
+        };
+        if length == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let length = usize::try_from(length).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "directory path length is invalid",
+            )
+        })?;
+        if length < capacity {
+            buffer.truncate(length);
+            return ordinary_absolute_path(buffer);
+        }
+        capacity = length.saturating_add(1);
+    }
+}
+
+fn ordinary_absolute_path(mut path: Vec<u16>) -> io::Result<PathBuf> {
+    const EXTENDED_PREFIX: [u16; 4] = [92, 92, 63, 92];
+    const EXTENDED_UNC_PREFIX: [u16; 8] = [92, 92, 63, 92, 85, 78, 67, 92];
+    if path.starts_with(&EXTENDED_UNC_PREFIX) {
+        path.splice(..EXTENDED_UNC_PREFIX.len(), [92, 92]);
+    } else if path.starts_with(&EXTENDED_PREFIX) {
+        path.drain(..EXTENDED_PREFIX.len());
+    }
+    let path = PathBuf::from(OsString::from_wide(&path));
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "directory handle did not resolve to an absolute path",
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,7 +155,7 @@ mod tests {
         source.write_all(b"new").unwrap();
         source.sync_all().unwrap();
 
-        atomic_replace(&source, OsStr::new("target.txt")).unwrap();
+        atomic_replace(&source, &parent, OsStr::new("target.txt")).unwrap();
 
         assert_eq!(
             fs::read_to_string(temporary.path().join("target.txt")).unwrap(),
@@ -121,7 +178,7 @@ mod tests {
         source.write_all(b"new").unwrap();
         source.sync_all().unwrap();
 
-        atomic_replace(&source, OsStr::new("target.txt")).unwrap();
+        atomic_replace(&source, &parent, OsStr::new("target.txt")).unwrap();
 
         assert_eq!(
             fs::read_to_string(temporary.path().join("nested/target.txt")).unwrap(),
@@ -142,7 +199,7 @@ mod tests {
 
         for destination in ["", ".", "..", "../target", "nested/target", "stream:name"] {
             assert_eq!(
-                atomic_replace(&source, OsStr::new(destination))
+                atomic_replace(&source, &parent, OsStr::new(destination))
                     .unwrap_err()
                     .kind(),
                 io::ErrorKind::InvalidInput
