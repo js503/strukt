@@ -6,8 +6,9 @@ use cap_std::fs::OpenOptions;
 use serde::{Deserialize, Serialize};
 use strukt_editor::DiskRevision;
 use strukt_fs::{
-    DiscoveryOptions, DocumentIoError, DocumentKind, ReadOptions, SaveMode, SaveRequest,
-    SearchOptions, discover_report_for_root, read_document, save_document, search_content,
+    CancellationToken, DiscoveryError, DiscoveryOptions, DocumentIoError, DocumentKind,
+    ReadOptions, SaveMode, SaveRequest, SearchError, SearchOptions,
+    discover_report_for_root_cancellable, read_document, save_document, search_content_cancellable,
 };
 use strukt_workspace::{WorkspaceError, WorkspaceRoot};
 use thiserror::Error;
@@ -166,18 +167,37 @@ impl RemoteFilesystem {
         show_ignored: bool,
         limit: usize,
     ) -> Result<RemoteEnumeration, RemoteFilesystemError> {
+        self.enumerate_cancellable(show_hidden, show_ignored, limit, &CancellationToken::new())
+    }
+
+    /// Enumerates workspace files with cooperative cancellation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::enumerate`] plus cancellation.
+    pub fn enumerate_cancellable(
+        &self,
+        show_hidden: bool,
+        show_ignored: bool,
+        limit: usize,
+        cancellation: &CancellationToken,
+    ) -> Result<RemoteEnumeration, RemoteFilesystemError> {
         if limit == 0 || limit > MAX_ENUMERATED_ENTRIES {
             return Err(RemoteFilesystemError::InvalidLimit);
         }
-        let report = discover_report_for_root(
+        let report = discover_report_for_root_cancellable(
             &self.root,
             DiscoveryOptions {
                 show_hidden,
                 show_ignored,
                 max_entries: limit,
             },
+            cancellation,
         )
-        .map_err(|error| RemoteFilesystemError::Discovery(error.to_string()))?;
+        .map_err(|error| match error {
+            DiscoveryError::Cancelled => RemoteFilesystemError::Cancelled,
+            error => RemoteFilesystemError::Discovery(error.to_string()),
+        })?;
         let paths = report
             .entries
             .into_iter()
@@ -202,10 +222,25 @@ impl RemoteFilesystem {
         include_ignored: bool,
         limit: usize,
     ) -> Result<RemoteSearchResult, RemoteFilesystemError> {
+        self.search_cancellable(query, include_ignored, limit, &CancellationToken::new())
+    }
+
+    /// Searches workspace text with cooperative cancellation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::search`] plus cancellation.
+    pub fn search_cancellable(
+        &self,
+        query: &str,
+        include_ignored: bool,
+        limit: usize,
+        cancellation: &CancellationToken,
+    ) -> Result<RemoteSearchResult, RemoteFilesystemError> {
         if limit == 0 || limit > MAX_SEARCH_RESULTS {
             return Err(RemoteFilesystemError::InvalidLimit);
         }
-        let result = search_content(
+        let result = search_content_cancellable(
             &self.root,
             query,
             SearchOptions {
@@ -217,8 +252,12 @@ impl RemoteFilesystem {
                     max_entries: MAX_ENUMERATED_ENTRIES,
                 },
             },
+            cancellation,
         )
-        .map_err(|error| RemoteFilesystemError::Search(error.to_string()))?;
+        .map_err(|error| match error {
+            SearchError::Cancelled => RemoteFilesystemError::Cancelled,
+            error => RemoteFilesystemError::Search(error.to_string()),
+        })?;
         Ok(RemoteSearchResult {
             matches: result
                 .matches
@@ -426,6 +465,8 @@ pub enum RemoteFilesystemError {
     InvalidCursor,
     #[error("remote operation limit is invalid")]
     InvalidLimit,
+    #[error("remote filesystem operation was cancelled")]
+    Cancelled,
     #[error("remote discovery failed: {0}")]
     Discovery(String),
     #[error("remote search failed: {0}")]

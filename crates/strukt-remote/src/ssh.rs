@@ -130,6 +130,7 @@ pub enum SshCommandKind {
     Probe,
     Terminal,
     Helper,
+    Install,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -231,6 +232,40 @@ impl OpenSsh {
                 OsString::from("--stdio"),
             ],
             Duration::ZERO,
+            false,
+        ))
+    }
+
+    /// Builds the fixed helper bootstrap command for validated artifact metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns a validation error before constructing remote command text.
+    pub fn install_helper(
+        &self,
+        alias: &SshAlias,
+        version: &str,
+        checksum_sha256: &str,
+    ) -> Result<SshCommandSpec, OpenSshError> {
+        validate_version(version)?;
+        if checksum_sha256.len() != 64
+            || !checksum_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(OpenSshError::InvalidHelperChecksum);
+        }
+        let bootstrap = shell_quote(crate::helper_install_bootstrap());
+        let command = format!("sh -c {bootstrap} sh {version} {checksum_sha256}");
+        Ok(self.spec(
+            SshCommandKind::Install,
+            [
+                OsString::from("-T"),
+                OsString::from("-o"),
+                OsString::from("BatchMode=yes"),
+                OsString::from("--"),
+                OsString::from(alias.as_str()),
+                OsString::from(command),
+            ],
+            Duration::from_mins(1),
             false,
         ))
     }
@@ -344,6 +379,8 @@ pub enum OpenSshError {
     InvalidExecutable,
     #[error("remote helper version is invalid")]
     InvalidHelperVersion,
+    #[error("remote helper checksum is invalid")]
+    InvalidHelperChecksum,
     #[error("effective OpenSSH configuration exceeded the output bound")]
     EffectiveConfigTooLarge,
     #[error("effective OpenSSH configuration is invalid")]
@@ -364,6 +401,7 @@ impl fmt::Display for SshCommandKind {
             Self::Probe => "probe",
             Self::Terminal => "terminal",
             Self::Helper => "helper",
+            Self::Install => "install",
         })
     }
 }
@@ -392,4 +430,8 @@ fn bounded_text(value: &str, maximum: usize) -> String {
         end -= 1;
     }
     sanitized[..end].to_owned()
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }

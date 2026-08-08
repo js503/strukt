@@ -13,8 +13,11 @@ cap-std.workspace = true
 ciborium.workspace = true
 getrandom.workspace = true
 serde.workspace = true
+sha2.workspace = true
 strukt-editor.workspace = true
 strukt-fs.workspace = true
+strukt-language.workspace = true
+strukt-terminal.workspace = true
 strukt-workspace.workspace = true
 thiserror.workspace = true
 

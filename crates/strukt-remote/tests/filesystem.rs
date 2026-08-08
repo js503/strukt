@@ -1,5 +1,6 @@
 use std::fs;
 
+use strukt_fs::CancellationToken;
 use strukt_remote::{
     RemoteDocumentKind, RemoteFilesystem, RemoteFilesystemError, RemotePath, RemoteWatchInput,
     RemoteWatchSequencer,
@@ -150,4 +151,19 @@ fn watch_sequences_are_monotonic_and_overflow_requires_resync_generation() {
     let recovered = sequencer.accept(RemoteWatchInput::Changed(vec!["fresh".into()]));
     assert_eq!(recovered.generation, 2);
     assert_eq!(recovered.events[0].sequence, 0);
+}
+
+#[test]
+fn discovery_and_search_honor_cooperative_cancellation() {
+    let (_root, filesystem) = fixture();
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    assert!(matches!(
+        filesystem.enumerate_cancellable(false, false, 100, &cancellation),
+        Err(RemoteFilesystemError::Cancelled)
+    ));
+    assert!(matches!(
+        filesystem.search_cancellable("needle", false, 10, &cancellation),
+        Err(RemoteFilesystemError::Cancelled)
+    ));
 }

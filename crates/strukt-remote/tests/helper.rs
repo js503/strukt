@@ -4,10 +4,11 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io::Cursor;
 
+use strukt_fs::CancellationToken;
 use strukt_remote::{
-    Capability, ClientHello, ProtocolLimits, RequestBody, RequestEnvelope, RequestId, ResponseBody,
-    ResponseEnvelope, ServerHello, read_frame, read_preface, run_helper_stdio, write_frame,
-    write_preface,
+    Capability, ClientHello, HelperServer, ProtocolLimits, RemoteErrorKind, RequestBody,
+    RequestEnvelope, RequestId, ResponseBody, ResponseEnvelope, ServerHello, read_frame,
+    read_preface, run_helper_stdio, write_frame, write_preface,
 };
 use tempfile::tempdir;
 
@@ -79,6 +80,38 @@ fn helper_advertises_no_persistent_session_capability() {
     let capabilities = strukt_remote::HelperServer::capabilities();
     assert_eq!(
         capabilities,
-        BTreeSet::from([Capability::Files, Capability::Search])
+        BTreeSet::from([
+            Capability::Files,
+            Capability::Search,
+            Capability::Git,
+            Capability::Processes,
+            Capability::Language,
+        ])
     );
+}
+
+#[test]
+fn helper_returns_a_typed_error_for_a_cancelled_operation() {
+    let root = tempdir().unwrap();
+    let helper = HelperServer::open(root.path()).unwrap();
+    let request = RequestEnvelope {
+        request_id: RequestId::new(7).unwrap(),
+        generation: 2,
+        body: RequestBody::Search {
+            query: "needle".into(),
+            include_ignored: false,
+            limit: 10,
+        },
+    };
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+
+    let response = helper.handle_cancellable(&request, &cancellation);
+
+    assert_eq!(response.request_id, request.request_id);
+    assert_eq!(response.generation, request.generation);
+    match response.body {
+        ResponseBody::Error(error) => assert_eq!(error.kind, RemoteErrorKind::Cancelled),
+        other => panic!("unexpected helper response: {other:?}"),
+    }
 }

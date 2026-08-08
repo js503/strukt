@@ -220,6 +220,11 @@ pub enum RequestBody {
         cwd: String,
         shell: bool,
     },
+    SpawnLanguage {
+        executable: String,
+        args: Vec<String>,
+        cwd: String,
+    },
     ProcessInput {
         process_id: u64,
         bytes: Vec<u8>,
@@ -229,9 +234,25 @@ pub enum RequestBody {
         rows: u16,
         columns: u16,
     },
+    DrainProcess {
+        process_id: u64,
+        max_bytes: u32,
+    },
+    PollProcess {
+        process_id: u64,
+    },
+    TerminateProcess {
+        process_id: u64,
+    },
     LanguageInput {
         process_id: u64,
         bytes: Vec<u8>,
+    },
+    ReadLanguage {
+        process_id: u64,
+    },
+    TerminateLanguage {
+        process_id: u64,
     },
     Watch {
         path: String,
@@ -267,6 +288,13 @@ pub enum ResponseBody {
     Stream(StreamChunk),
     ProcessStarted {
         process_id: u64,
+    },
+    GitSummary {
+        branch: Option<String>,
+        detached: bool,
+        staged: usize,
+        modified: usize,
+        untracked: usize,
     },
     Completed {
         exit_code: Option<i32>,
