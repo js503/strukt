@@ -569,17 +569,15 @@ impl RemoteRuntime {
             .map_err(|_| "remote client state is unavailable".to_owned())
             .and_then(|mut client| {
                 client
-                    .request(RequestBody::ListDirectory {
-                        path: String::new(),
-                        cursor: None,
-                        limit: 1_000,
+                    .request(RequestBody::EnumerateFiles {
+                        include_ignored: false,
                     })
                     .map_err(|error| error.to_string())
             })
             .and_then(|response| match response {
                 ResponseBody::DirectoryPage { entries, .. } => Ok(entries),
                 ResponseBody::Error(error) => Err(error.detail),
-                _ => Err("remote helper returned an unexpected file response".into()),
+                _ => Err("remote helper returned an unexpected file discovery response".into()),
             });
         RemoteFilesCompletion { generation, result }
     }

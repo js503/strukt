@@ -85,6 +85,14 @@ fn smoke_app_coordinator(fake_ssh: &Path, root: &Path) -> Result<(), String> {
         &root.to_string_lossy(),
         3,
     )?;
+    let files = runtime.list_root(3);
+    if !files
+        .result
+        .as_ref()
+        .is_ok_and(|paths| paths.iter().any(|path| path == "src/main.rs"))
+    {
+        return Err("app remote Quick Open did not discover nested files".into());
+    }
     let search = runtime.search(3, "updated".into());
     if search.result.as_ref().is_err() || search.result.as_ref().is_ok_and(Vec::is_empty) {
         return Err("app remote search did not publish results".into());

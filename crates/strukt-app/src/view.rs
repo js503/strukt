@@ -642,8 +642,11 @@ fn connections_canvas(app: &StruktApp) -> Element<'_, Message> {
         text(format!("Status: {}", app.remote.status.label())),
         notices,
         row![
-            column![text("REMOTE ROOT").size(13), scrollable(files).height(Fill)]
-                .width(Length::Fixed(260.0)),
+            column![
+                text("REMOTE FILES · QUICK OPEN").size(13),
+                scrollable(files).height(Fill)
+            ]
+            .width(Length::Fixed(260.0)),
             container(document).padding(8).width(Fill),
         ]
         .spacing(12)
