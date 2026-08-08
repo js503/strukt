@@ -52,3 +52,24 @@ fn language_spawn_rejects_relative_executable_and_missing_cwd() {
             .is_err()
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn language_working_directory_rejects_symlink_escape() {
+    use std::os::unix::fs::symlink;
+
+    let root = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    symlink(outside.path(), root.path().join("escape")).unwrap();
+    let mut manager = RemoteLanguageManager::new(root.path()).unwrap();
+
+    assert!(
+        manager
+            .spawn(
+                PathBuf::from(env!("CARGO_BIN_EXE_remote-language-fixture")),
+                Vec::new(),
+                &RemotePath::new("escape").unwrap(),
+            )
+            .is_err()
+    );
+}

@@ -36,15 +36,17 @@ impl HelperServer {
     /// Returns a typed filesystem error when the root cannot be retained.
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, HelperError> {
         let path = path.into();
+        let filesystem = RemoteFilesystem::open(&path)?;
+        let canonical_root = filesystem.canonical_root().to_path_buf();
         Ok(Self {
-            filesystem: RemoteFilesystem::open(&path)?,
-            git_root: path.clone(),
+            filesystem,
+            git_root: canonical_root.clone(),
             processes: Mutex::new(
-                RemoteProcessManager::new(&path)
+                RemoteProcessManager::new(&canonical_root)
                     .map_err(|error| HelperError::Subsystem(error.to_string()))?,
             ),
             languages: Mutex::new(
-                RemoteLanguageManager::new(&path)
+                RemoteLanguageManager::new(&canonical_root)
                     .map_err(|error| HelperError::Subsystem(error.to_string()))?,
             ),
         })

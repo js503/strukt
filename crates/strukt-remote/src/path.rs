@@ -1,7 +1,8 @@
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Deserializer, Serialize};
+use strukt_workspace::WorkspaceRoot;
 use thiserror::Error;
 
 const MAX_REMOTE_PATH_BYTES: usize = 4_096;
@@ -87,4 +88,20 @@ impl<'de> Deserialize<'de> for RemotePath {
 pub enum RemotePathError {
     #[error("remote path must be a relative normalized Linux path")]
     Invalid,
+}
+
+pub(crate) fn resolve_confined_directory(
+    root: &WorkspaceRoot,
+    relative: &RemotePath,
+) -> Option<PathBuf> {
+    let mut candidate = root.path().to_path_buf();
+    for segment in relative.segments() {
+        candidate.push(segment);
+        let metadata = candidate.symlink_metadata().ok()?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return None;
+        }
+    }
+    let canonical = candidate.canonicalize().ok()?;
+    canonical.starts_with(root.path()).then_some(canonical)
 }

@@ -10,7 +10,7 @@ use strukt_terminal::{
 use strukt_workspace::{WorkspaceError, WorkspaceRoot};
 use thiserror::Error;
 
-use crate::RemotePath;
+use crate::{RemotePath, path::resolve_confined_directory};
 
 const MAX_PROCESSES: usize = 64;
 
@@ -96,10 +96,8 @@ impl RemoteProcessManager {
         if self.processes.len() >= MAX_PROCESSES {
             return Err(RemoteProcessError::CapacityReached);
         }
-        let cwd = self.root.path().join(request.cwd.as_path());
-        if !cwd.is_dir() {
-            return Err(RemoteProcessError::InvalidWorkingDirectory);
-        }
+        let cwd = resolve_confined_directory(&self.root, &request.cwd)
+            .ok_or(RemoteProcessError::InvalidWorkingDirectory)?;
         let process = PortableTransport::new()
             .spawn(SpawnRequest {
                 executable: request.executable,

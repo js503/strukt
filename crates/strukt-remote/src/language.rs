@@ -10,7 +10,7 @@ use strukt_language::{
 use strukt_workspace::{WorkspaceError, WorkspaceRoot};
 use thiserror::Error;
 
-use crate::RemotePath;
+use crate::{RemotePath, path::resolve_confined_directory};
 
 const MAX_LANGUAGE_PROCESSES: usize = 16;
 
@@ -56,10 +56,8 @@ impl RemoteLanguageManager {
         if self.processes.len() >= MAX_LANGUAGE_PROCESSES {
             return Err(RemoteLanguageError::CapacityReached);
         }
-        let cwd = self.root.path().join(cwd.as_path());
-        if !cwd.is_dir() {
-            return Err(RemoteLanguageError::InvalidWorkingDirectory);
-        }
+        let cwd = resolve_confined_directory(&self.root, cwd)
+            .ok_or(RemoteLanguageError::InvalidWorkingDirectory)?;
         let command = ResolvedCommand::new(executable, arguments)
             .map_err(|_| RemoteLanguageError::InvalidCommand)?;
         let request = SpawnRequest::new(command, cwd)

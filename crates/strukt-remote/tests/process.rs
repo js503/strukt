@@ -74,6 +74,28 @@ fn process_requests_reject_escape_nul_and_unapproved_shell_mode() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn process_working_directory_rejects_symlink_escape() {
+    use std::os::unix::fs::symlink;
+
+    let root = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    symlink(outside.path(), root.path().join("escape")).unwrap();
+    let fixture = PathBuf::from(env!("CARGO_BIN_EXE_remote-process-fixture"));
+    let request = RemoteProcessRequest::new(
+        fixture,
+        Vec::new(),
+        RemotePath::new("escape").unwrap(),
+        Vec::new(),
+        TerminalSize::new(24, 80).unwrap(),
+    )
+    .unwrap();
+    let mut manager = RemoteProcessManager::new(root.path()).unwrap();
+
+    assert!(manager.spawn(request).is_err());
+}
+
 fn drain_until(manager: &mut RemoteProcessManager, id: u64, needle: &str) -> String {
     let deadline = Instant::now() + Duration::from_secs(3);
     let mut bytes = Vec::new();
