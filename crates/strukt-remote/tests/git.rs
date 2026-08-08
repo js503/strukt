@@ -29,7 +29,11 @@ fn summarizes_branch_staged_modified_and_untracked_without_writes() {
     fs::write(root.path().join("tracked.txt"), "modified").unwrap();
     fs::write(root.path().join("staged.txt"), "staged").unwrap();
     git(root.path(), &["add", "staged.txt"]);
-    fs::write(root.path().join("odd\nname.txt"), "untracked").unwrap();
+    #[cfg(unix)]
+    let untracked_name = "odd\nname.txt";
+    #[cfg(windows)]
+    let untracked_name = "odd name.txt";
+    fs::write(root.path().join(untracked_name), "untracked").unwrap();
 
     let summary = RemoteGitSummary::read(root.path()).unwrap();
     assert!(summary.branch.is_some());
