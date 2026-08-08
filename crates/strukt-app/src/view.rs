@@ -440,6 +440,10 @@ fn connections_canvas(app: &StruktApp) -> Element<'_, Message> {
                     .then_some(Message::RefreshRemoteFiles),
             ),
             button("Disconnect").on_press_maybe(connected.then_some(Message::DisconnectRemote)),
+            button("Open SSH terminal").on_press_maybe(
+                (!connecting && !app.remote.alias_input.is_empty())
+                    .then_some(Message::NewRemoteTerminal),
+            ),
         ]
         .spacing(8),
         text(format!("Status: {}", app.remote.status.label())),

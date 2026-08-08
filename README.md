@@ -25,11 +25,11 @@ software engineering: one context, every tool, and any model.
 
 ## Status
 
-- Stage: SSH remote-workspace shaping
+- Stage: SSH remote-workspace implementation
 - Current foundation: native shell plus real local workspace, file, editor, and
   language workflows, ephemeral terminals, and native local persistent sessions
-- Milestones: M1 through M3 complete; M4 and M5 remain on the public-alpha
-  critical path
+- Milestones: M1 through M3 complete; M4 is active and M5 remains on the
+  public-alpha critical path
 
 ## Key Docs
 
@@ -77,11 +77,34 @@ Language intelligence discovers user-installed servers through one bounded,
 language-agnostic LSP client. It supports exact approval for workspace commands,
 diagnostics grouped in Problems, completion, hover, definition, persisted
 enablement, explicit restart, capability-aware saves, deadline enforcement, and
-stopped-only restoration without writing workspace metadata. SSH and persistent
-local or remote sessions belong to M4, M3, and M5 respectively. M3 now adds named
+stopped-only restoration without writing workspace metadata. M3 now adds named
 local sessions, windows, split panes, authenticated per-user IPC, live detach and
 reattach, bounded historical output, explicit batch restart/termination, and
-stopped-only machine-restart restoration. M6 onward is the post-alpha roadmap.
+stopped-only machine-restart restoration. M4 adds standard-OpenSSH remote
+workspaces with explicit host/root entry, helper capability negotiation, direct
+terminal fallback, root-confined files, revision-checked editing, search, Git,
+tasks, language transport, reconnect isolation, and secret-free records. Remote
+terminals are ephemeral in M4; persistent remote sessions belong exclusively to
+M5. M6 onward is the post-alpha roadmap.
+
+Open the **Connect** activity to enter an alias from your normal OpenSSH config and
+an absolute or `~/`-relative Linux workspace root. strukt invokes the platform
+`ssh` executable with separate validated arguments and preserves OpenSSH host-key,
+agent, keychain, and authentication behavior. It never stores passwords, private
+keys, passphrases, agent tokens, raw environments, or protocol payloads. If the
+versioned helper is unavailable, the connection is labeled **Terminal only** and
+the direct SSH terminal remains available without claiming persistence.
+
+The deterministic M4 smoke uses the repository-owned fake OpenSSH adapter and the
+real helper protocol; it requires no keys or external host:
+
+```bash
+fixture="$(mktemp -d)"
+cargo build -p strukt-remote --bins
+cargo build -p strukt-app
+cargo run -p strukt-app -- --remote-smoke "$fixture"
+test ! -e "$fixture/.strukt"
+```
 
 The deterministic M3 smoke accepts any existing folder and uses only the bundled
 session helper and fixture:

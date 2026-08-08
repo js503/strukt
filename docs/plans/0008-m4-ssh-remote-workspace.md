@@ -181,36 +181,36 @@ git commit -m "feat: define the remote helper protocol"
 - Create: `crates/strukt-remote/tests/filesystem.rs`
 - Create: `crates/strukt-remote/tests/helper.rs`
 
-- [ ] **Step 1: Write failing root-confinement tests**
+- [x] **Step 1: Write failing root-confinement tests**
 
 Cover absolute child paths, `.`, `..`, empty segments, repeated separators, NUL,
 symlink escape, symlink replacement races, root replacement, non-UTF-8 entries on
 Unix, Windows-like prefixes as hostile input, and valid nested paths.
 
-- [ ] **Step 2: Implement confined remote paths**
+- [x] **Step 2: Implement confined remote paths**
 
 Open the canonical approved root, validate lexical paths, use capability-oriented
 directory access where possible, verify followed symlinks remain inside root, and
 return escaped metadata for names not editable as UTF-8.
 
-- [ ] **Step 3: Write failing filesystem behavior tests**
+- [x] **Step 3: Write failing filesystem behavior tests**
 
 Cover deterministic paged listings, metadata/revisions, bounded chunked reads,
 binary and UTF-8 reporting, ignored/hidden discovery, Quick Open streaming, search
 limits/cancellation, conditional atomic saves, mode preservation, conflicts,
 unknown outcome hooks, watch sequences, overflow, and resync.
 
-- [ ] **Step 4: Implement helper filesystem operations**
+- [x] **Step 4: Implement helper filesystem operations**
 
 Reuse local discovery semantics without exposing local paths. Apply BLAKE3-backed
 revision identity where needed and private atomic sibling writes.
 
-- [ ] **Step 5: Add the stdio helper loop**
+- [x] **Step 5: Add the stdio helper loop**
 
 Implement handshake, bounded dispatch, independent operation cancellation, stream
 credit, graceful EOF, and deterministic shutdown in `strukt-remote --stdio`.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 ```bash
 cargo test -p strukt-remote --test path --test filesystem --test helper --locked --offline
@@ -231,40 +231,40 @@ git commit -m "feat: add the confined remote helper"
 - Create: `crates/strukt-remote/tests/language.rs`
 - Modify: `crates/strukt-remote/src/helper.rs`
 
-- [ ] **Step 1: Write failing process tests**
+- [x] **Step 1: Write failing process tests**
 
 Cover exact executable/argument spawning without a shell, explicit shell mode,
 workspace cwd confinement, sanitized environment overrides, stdin, stdout/stderr
 separation, Unicode, resize capability, output credit, cancellation, deadline,
 exit status, process-tree cleanup, and concurrent operation fairness.
 
-- [ ] **Step 2: Implement bounded ephemeral processes**
+- [x] **Step 2: Implement bounded ephemeral processes**
 
 Own children inside the helper, route independent streams, apply cancellation and
 deadlines, and guarantee helper exit does not leave unapproved process trees.
 
-- [ ] **Step 3: Write failing Git-summary tests**
+- [x] **Step 3: Write failing Git-summary tests**
 
 Cover non-repository roots, branch/detached state, modified/staged/untracked counts,
 paths with spaces/newlines, bounded output, Git absence, cancellation, and no
 write-side Git commands.
 
-- [ ] **Step 4: Implement read-only Git summary**
+- [x] **Step 4: Implement read-only Git summary**
 
 Invoke Git with fixed arguments and parse machine-oriented output defensively.
 
-- [ ] **Step 5: Write failing language-stream tests**
+- [x] **Step 5: Write failing language-stream tests**
 
 Launch the repository language fixture remotely, carry LSP bytes unchanged, bound
 queues, cancel/restart explicitly, preserve URI/path translation at the workspace
 boundary, and reject implicit launch.
 
-- [ ] **Step 6: Implement remote language transport**
+- [x] **Step 6: Implement remote language transport**
 
 Expose a transport adapter usable by `strukt-language` without embedding SSH or
 helper types into the language core.
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 ```bash
 cargo test -p strukt-remote --test process --test git --test language --locked --offline
@@ -284,38 +284,38 @@ git commit -m "feat: add remote development processes"
 - Create: `crates/strukt-remote/tests/client.rs`
 - Create: `crates/strukt-remote/tests/native_ssh.rs`
 
-- [ ] **Step 1: Write failing installer tests**
+- [x] **Step 1: Write failing installer tests**
 
 Cover Linux OS/architecture detection, exact artifact selection, missing artifacts,
 local checksum mismatch, exact consent scope, fixed install path, `umask 077`,
 temporary cleanup, atomic versioned rename, remote checksum success/failure,
 non-root behavior, incompatible versions, and no overwrite of active helpers.
 
-- [ ] **Step 2: Implement the installer plan and executor**
+- [x] **Step 2: Implement the installer plan and executor**
 
 Separate pure install planning from OpenSSH execution. Stream helper bytes through
 stdin and accept only structured results from the fixed bootstrap.
 
-- [ ] **Step 3: Write failing client lifecycle tests**
+- [x] **Step 3: Write failing client lifecycle tests**
 
 Use `fake-ssh` to cover config preview, terminal-only connection, helper handshake,
 capability snapshots, every helper operation, disconnect during transfer, stale
 generation, reconnect, old-result rejection, bounded retry, helper crash, invalid
 frame, stderr diagnostics, terminal fallback, and explicit disconnect.
 
-- [ ] **Step 4: Implement the remote client**
+- [x] **Step 4: Implement the remote client**
 
 Own OpenSSH/helper processes off the UI thread, serialize writes, read frames,
 enforce in-flight limits, publish immutable projections, cancel predictably, and
 preserve the last snapshot only as stale state.
 
-- [ ] **Step 5: Add native OpenSSH contract coverage**
+- [x] **Step 5: Add native OpenSSH contract coverage**
 
 When an opt-in disposable SSH endpoint is configured, exercise the installed
 OpenSSH executable. Otherwise test executable/config behavior without contacting a
 user host. Never read or print production key material.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 ```bash
 cargo test -p strukt-remote --test install --test client --test native_ssh --locked --offline
@@ -334,20 +334,20 @@ git commit -m "feat: connect the remote helper over OpenSSH"
 - Modify: `crates/strukt-persistence/src/workspace_store.rs`
 - Modify: `crates/strukt-persistence/tests/workspace_store.rs`
 
-- [ ] **Step 1: Write failing persistence tests**
+- [x] **Step 1: Write failing persistence tests**
 
 Cover versioned connection records, recent roots, helper metadata, deterministic
 ordering, atomic writes, mode protection, corruption fallback, schema migration,
 forget, opaque unknown fields, and explicit absence of keys, passphrases, agent
 tokens, passwords, raw environment, and protocol payloads.
 
-- [ ] **Step 2: Implement the remote store**
+- [x] **Step 2: Implement the remote store**
 
 Store only approved connection presentation metadata in the user application-data
 area. Keep remote contributions optional so disabling the module cannot make a
 workspace unreadable.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ```bash
 cargo test -p strukt-persistence --test remote_store --test workspace_store --locked --offline

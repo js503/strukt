@@ -1566,6 +1566,26 @@ mod tests {
     }
 
     #[test]
+    fn remote_smoke_requires_the_exact_flag_and_one_existing_root() {
+        let root = tempdir().unwrap();
+        let path = root.path().display().to_string();
+        assert_eq!(
+            LaunchMode::from_args(["--remote-smoke".to_owned(), path.clone()]),
+            LaunchMode::RemoteSmoke {
+                root: root.path().to_path_buf(),
+            }
+        );
+        for args in [
+            vec!["--remote-smoke".to_owned()],
+            vec!["--remote-smokes".to_owned(), path.clone()],
+            vec!["--remote-smoke".to_owned(), "missing".to_owned()],
+            vec!["--remote-smoke".to_owned(), path, "extra".to_owned()],
+        ] {
+            assert_eq!(LaunchMode::from_args(args), LaunchMode::Interactive);
+        }
+    }
+
+    #[test]
     fn terminal_smoke_submits_lines_with_portable_enter_framing() {
         assert_eq!(
             crate::app::terminal_smoke_line("héllø界"),

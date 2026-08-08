@@ -37,6 +37,8 @@ jobs:
         run: cargo build -p strukt-language --bin language-fixture
       - name: Build persistent session helpers
         run: cargo build -p strukt-session --bin strukt-sessiond --bin session-fixture
+      - name: Build SSH remote workspace helpers
+        run: cargo build -p strukt-remote --bins
       - name: Smoke local workspace files
         if: runner.os != 'Windows'
         shell: bash
@@ -193,6 +195,37 @@ jobs:
           }
           if (Test-Path (Join-Path $fixture ".strukt")) {
             throw "persistent session smoke created workspace metadata"
+          }
+      - name: Smoke SSH remote workspace
+        if: runner.os != 'Windows'
+        shell: bash
+        timeout-minutes: 3
+        run: |
+          fixture="$(mktemp -d)"
+          cargo run -p strukt-app -- --remote-smoke "$fixture" |
+            tee remote-smoke.log
+          grep -Fx \
+            "strukt M4 remote smoke: ssh, fallback, files, edit, search, git, task, language, disconnect, and reconnect passed" \
+            remote-smoke.log
+          test ! -e "$fixture/.strukt"
+      - name: Smoke SSH remote workspace
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP ("strukt-remote-smoke-" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Force -Path $fixture | Out-Null
+          $output = & cargo run -p strukt-app -- --remote-smoke $fixture 2>&1
+          $output | Write-Output
+          if ($LASTEXITCODE -ne 0) {
+            throw "SSH remote workspace smoke exited with code $LASTEXITCODE"
+          }
+          $marker = "strukt M4 remote smoke: ssh, fallback, files, edit, search, git, task, language, disconnect, and reconnect passed"
+          if (($output -join [Environment]::NewLine) -notmatch [regex]::Escape($marker)) {
+            throw "SSH remote workspace smoke marker missing"
+          }
+          if (Test-Path (Join-Path $fixture ".strukt")) {
+            throw "SSH remote smoke created workspace metadata"
           }
       - name: Smoke launch native Windows application
         if: runner.os == 'Windows'

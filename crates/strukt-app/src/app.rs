@@ -163,8 +163,8 @@ impl LaunchMode {
             | Self::TerminalSmoke { .. }
             | Self::LanguageSmoke { .. }
             | Self::M2IntegrationSmoke { .. }
-            | Self::SessionSmoke { .. } => None,
-            Self::RemoteSmoke { .. } => None,
+            | Self::SessionSmoke { .. }
+            | Self::RemoteSmoke { .. } => None,
             Self::SmokeTest => Some(SMOKE_TEST_DURATION),
         }
     }
@@ -340,6 +340,7 @@ pub enum Message {
     SaveRemoteDocument,
     RemoteSaveFinished(RemoteSaveCompletion),
     DisconnectRemote,
+    NewRemoteTerminal,
     ToggleContext,
     ToggleDrawer,
     ToggleExplorer,
@@ -863,6 +864,37 @@ impl StruktApp {
                     });
                 }
                 return Task::none();
+            }
+            Message::NewRemoteTerminal => {
+                if !self.capabilities.is_enabled(CapabilityId::TERMINAL) {
+                    return Task::none();
+                }
+                let request = match self.remote.terminal_request() {
+                    Ok(request) => request,
+                    Err(error) => {
+                        self.remote.error = Some(error);
+                        return Task::none();
+                    }
+                };
+                let root = request.working_directory.clone();
+                let pane = match self.terminal.new_tab(&root) {
+                    Ok(pane) => pane,
+                    Err(error) => {
+                        self.terminal_error = Some(error.to_string());
+                        return Task::none();
+                    }
+                };
+                let _ = self
+                    .terminal
+                    .rename_active_tab(format!("SSH: {}", self.remote.alias_input));
+                self.shell.drawer_visible = true;
+                return match self.terminal.begin_start_with_request(pane, request) {
+                    Ok(job) => start_terminal_task(job),
+                    Err(error) => {
+                        self.terminal_error = Some(error.to_string());
+                        Task::none()
+                    }
+                };
             }
             Message::ConnectSessions => {
                 return match self.sessions.begin_connect() {
@@ -3421,6 +3453,7 @@ impl StruktApp {
             | Message::SaveRemoteDocument
             | Message::RemoteSaveFinished(_)
             | Message::DisconnectRemote
+            | Message::NewRemoteTerminal
             | Message::FolderPicked(_)
             | Message::WorkspaceOpened(_)
             | Message::NewTerminal

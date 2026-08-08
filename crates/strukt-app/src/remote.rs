@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -5,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use strukt_remote::{
     OpenSsh, OpenSshClient, RemoteRoot, RequestBody, ResponseBody, SshAlias, SshExecutable,
 };
+use strukt_terminal::{SpawnRequest, TerminalSize};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum RemoteStatus {
@@ -90,6 +92,26 @@ impl RemoteSurfaces {
             alias,
             root,
             generation: self.generation,
+        })
+    }
+
+    /// Builds a direct interactive OpenSSH terminal independently of the helper.
+    ///
+    /// # Errors
+    ///
+    /// Returns alias, executable, current-directory, or terminal-size errors.
+    pub fn terminal_request(&self) -> Result<SpawnRequest, String> {
+        let alias = SshAlias::new(self.alias_input.clone()).map_err(|error| error.to_string())?;
+        let spec = OpenSsh::new(discover_ssh()?).open_terminal(&alias);
+        Ok(SpawnRequest {
+            executable: spec.program,
+            arguments: spec.args,
+            working_directory: std::env::current_dir().map_err(|error| error.to_string())?,
+            environment: vec![
+                (OsString::from("TERM"), OsString::from("xterm-256color")),
+                (OsString::from("COLORTERM"), OsString::from("truecolor")),
+            ],
+            size: TerminalSize::new(24, 80).map_err(|error| error.to_string())?,
         })
     }
 
