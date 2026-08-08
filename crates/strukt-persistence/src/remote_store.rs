@@ -260,6 +260,7 @@ fn write_document(path: &Path, document: &RemoteDocument) -> Result<(), RemoteSt
     let mut file = AtomicWriteFile::open(path).map_err(RemoteStoreError::Io)?;
     file.write_all(&bytes).map_err(RemoteStoreError::Io)?;
     file.commit().map_err(RemoteStoreError::Io)?;
+    #[cfg(unix)]
     set_private_permissions(path)?;
     Ok(())
 }
@@ -269,11 +270,6 @@ fn set_private_permissions(path: &Path) -> Result<(), RemoteStoreError> {
     use std::os::unix::fs::PermissionsExt;
 
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(RemoteStoreError::Io)
-}
-
-#[cfg(not(unix))]
-fn set_private_permissions(_path: &Path) -> Result<(), RemoteStoreError> {
-    Ok(())
 }
 
 fn valid_version(version: &str) -> bool {
