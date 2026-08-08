@@ -13,6 +13,7 @@ cap-std.workspace = true
 ciborium.workspace = true
 getrandom.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 strukt-editor.workspace = true
 strukt-fs.workspace = true
@@ -22,7 +23,6 @@ strukt-workspace.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 tempfile.workspace = true
 
 [lints]

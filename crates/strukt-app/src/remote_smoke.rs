@@ -113,6 +113,21 @@ fn smoke_app_coordinator(fake_ssh: &Path, root: &Path) -> Result<(), String> {
     {
         return Err("app remote task did not publish bounded output".into());
     }
+    let diagnostics_fixture = sibling_binary("remote-diagnostics-fixture")?;
+    let diagnostics = runtime.run_language_diagnostics(
+        3,
+        diagnostics_fixture.to_string_lossy().into_owned(),
+        Vec::new(),
+        "src/main.rs",
+        "fn main() {}\n",
+    );
+    if !diagnostics
+        .result
+        .as_deref()
+        .is_ok_and(|status| status.contains("fixture diagnostic"))
+    {
+        return Err("app remote diagnostics did not publish the host-labeled result".into());
+    }
     runtime.disconnect();
     Ok(())
 }
