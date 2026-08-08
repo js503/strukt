@@ -43,6 +43,10 @@ use crate::language::{
     discover_workspace_language, parse_publish_diagnostics, spawn_discovered_server,
 };
 use crate::recovery_key::NativeRecoveryKeyProvider;
+use crate::remote::{
+    RemoteConnectCompletion, RemoteDocumentCompletion, RemoteFilesCompletion, RemoteRuntime,
+    RemoteSaveCompletion, RemoteSurfaces,
+};
 use crate::session::{SessionConnectCompletion, SessionRequestCompletion, SessionSurfaces};
 use crate::terminal::{TerminalSpawnCompletion, TerminalSurfaces};
 use crate::terminal_widget::TerminalWidgetEvent;
@@ -59,6 +63,7 @@ pub(crate) const TERMINAL_SMOKE_SUCCESS: &str =
 pub(crate) const LANGUAGE_SMOKE_SUCCESS: &str = "strukt language smoke: discovery, sync, diagnostics, completion, hover, definition, cancellation, shutdown, and restore passed";
 pub(crate) const M2_INTEGRATION_SMOKE_SUCCESS: &str = "strukt M2 integration smoke: files, editor, terminal, language, persistence, isolation, and stopped restore passed";
 pub(crate) const SESSION_SMOKE_SUCCESS: &str = "strukt M3 session smoke: hierarchy, isolation, detach, reattach, history, termination, and stopped restore passed";
+pub(crate) const REMOTE_SMOKE_SUCCESS: &str = "strukt M4 remote smoke: ssh, fallback, files, edit, search, git, task, language, disconnect, and reconnect passed";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DocumentNotice {
@@ -87,6 +92,9 @@ pub enum LaunchMode {
         root: PathBuf,
     },
     SessionSmoke {
+        root: PathBuf,
+    },
+    RemoteSmoke {
         root: PathBuf,
     },
 }
@@ -134,6 +142,13 @@ impl LaunchMode {
                     root: PathBuf::from(root),
                 }
             }
+            [flag, root]
+                if flag == "--remote-smoke" && !root.is_empty() && Path::new(root).is_dir() =>
+            {
+                Self::RemoteSmoke {
+                    root: PathBuf::from(root),
+                }
+            }
             _ if args.iter().any(|argument| argument == "--smoke-test") => Self::SmokeTest,
             _ => Self::Interactive,
         }
@@ -149,6 +164,7 @@ impl LaunchMode {
             | Self::LanguageSmoke { .. }
             | Self::M2IntegrationSmoke { .. }
             | Self::SessionSmoke { .. } => None,
+            Self::RemoteSmoke { .. } => None,
             Self::SmokeTest => Some(SMOKE_TEST_DURATION),
         }
     }
@@ -195,6 +211,8 @@ pub struct StruktApp {
     pub terminal_error: Option<String>,
     pub(crate) sessions: SessionSurfaces,
     pub session_error: Option<String>,
+    pub remote: RemoteSurfaces,
+    pub(crate) remote_runtime: Option<RemoteRuntime>,
     pub session_name: String,
     pub window_name: String,
     pub session_confirmation: SessionConfirmation,
@@ -310,6 +328,18 @@ pub enum SessionConfirmation {
 #[derive(Clone, Debug)]
 pub enum Message {
     SelectActivity(Activity),
+    RemoteAliasChanged(String),
+    RemoteRootChanged(String),
+    ConnectRemote,
+    RemoteConnected(RemoteConnectCompletion),
+    RefreshRemoteFiles,
+    RemoteFilesFinished(RemoteFilesCompletion),
+    OpenRemoteDocument(String),
+    RemoteDocumentFinished(RemoteDocumentCompletion),
+    RemoteDocumentChanged(String),
+    SaveRemoteDocument,
+    RemoteSaveFinished(RemoteSaveCompletion),
+    DisconnectRemote,
     ToggleContext,
     ToggleDrawer,
     ToggleExplorer,
@@ -646,6 +676,8 @@ impl StruktApp {
             terminal_error: None,
             sessions: SessionSurfaces::default(),
             session_error: None,
+            remote: RemoteSurfaces::default(),
+            remote_runtime: None,
             session_name: String::new(),
             window_name: String::new(),
             session_confirmation: SessionConfirmation::None,
@@ -735,6 +767,103 @@ impl StruktApp {
     )]
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::RemoteAliasChanged(value) => {
+                self.remote.alias_input = value;
+                return Task::none();
+            }
+            Message::RemoteRootChanged(value) => {
+                self.remote.root_input = value;
+                return Task::none();
+            }
+            Message::ConnectRemote => {
+                return match self.remote.begin_connect() {
+                    Ok(job) => Task::perform(async move { job.run() }, Message::RemoteConnected),
+                    Err(error) => {
+                        self.remote.error = Some(error);
+                        Task::none()
+                    }
+                };
+            }
+            Message::RemoteConnected(completion) => {
+                if !self.remote.finish_connect(&completion) {
+                    return Task::none();
+                }
+                self.remote_runtime = completion.result.ok();
+                return self
+                    .remote_runtime
+                    .as_ref()
+                    .map_or_else(Task::none, |_| Task::done(Message::RefreshRemoteFiles));
+            }
+            Message::RefreshRemoteFiles => {
+                if !self.remote.begin_operation() {
+                    return Task::none();
+                }
+                let Some(runtime) = self.remote_runtime.clone() else {
+                    self.remote.error = Some("remote helper is not connected".into());
+                    return Task::none();
+                };
+                let generation = self.remote.generation();
+                return Task::perform(
+                    async move { runtime.list_root(generation) },
+                    Message::RemoteFilesFinished,
+                );
+            }
+            Message::RemoteFilesFinished(completion) => {
+                self.remote.finish_files(&completion);
+                return Task::none();
+            }
+            Message::OpenRemoteDocument(path) => {
+                if !self.remote.begin_operation() {
+                    return Task::none();
+                }
+                let Some(runtime) = self.remote_runtime.clone() else {
+                    return Task::none();
+                };
+                let generation = self.remote.generation();
+                return Task::perform(
+                    async move { runtime.read_document(generation, path) },
+                    Message::RemoteDocumentFinished,
+                );
+            }
+            Message::RemoteDocumentFinished(completion) => {
+                self.remote.finish_document(&completion);
+                return Task::none();
+            }
+            Message::RemoteDocumentChanged(text) => {
+                self.remote.edit_document(text);
+                return Task::none();
+            }
+            Message::SaveRemoteDocument => {
+                if !self.remote.begin_operation() {
+                    return Task::none();
+                }
+                let (Some(runtime), Some(path), Some(revision)) = (
+                    self.remote_runtime.clone(),
+                    self.remote.selected_path.clone(),
+                    self.remote.document_revision.clone(),
+                ) else {
+                    return Task::none();
+                };
+                let generation = self.remote.generation();
+                let text = self.remote.document_text.clone();
+                return Task::perform(
+                    async move { runtime.save_document(generation, path, revision, text) },
+                    Message::RemoteSaveFinished,
+                );
+            }
+            Message::RemoteSaveFinished(completion) => {
+                self.remote.finish_save(&completion);
+                return Task::none();
+            }
+            Message::DisconnectRemote => {
+                self.remote.disconnected();
+                if let Some(runtime) = self.remote_runtime.take() {
+                    return Task::perform(async move { runtime.disconnect() }, |()| {
+                        Message::SelectActivity(Activity::Connections)
+                    });
+                }
+                return Task::none();
+            }
             Message::ConnectSessions => {
                 return match self.sessions.begin_connect() {
                     Ok(job) => {
@@ -3280,6 +3409,18 @@ impl StruktApp {
             Message::ToggleExplorer => Some(ShellAction::ToggleExplorer),
             Message::ToggleTheme => Some(ShellAction::ToggleTheme),
             Message::OpenFolder
+            | Message::RemoteAliasChanged(_)
+            | Message::RemoteRootChanged(_)
+            | Message::ConnectRemote
+            | Message::RemoteConnected(_)
+            | Message::RefreshRemoteFiles
+            | Message::RemoteFilesFinished(_)
+            | Message::OpenRemoteDocument(_)
+            | Message::RemoteDocumentFinished(_)
+            | Message::RemoteDocumentChanged(_)
+            | Message::SaveRemoteDocument
+            | Message::RemoteSaveFinished(_)
+            | Message::DisconnectRemote
             | Message::FolderPicked(_)
             | Message::WorkspaceOpened(_)
             | Message::NewTerminal

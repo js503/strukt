@@ -4,6 +4,8 @@ mod app;
 mod editor;
 mod language;
 mod recovery_key;
+mod remote;
+mod remote_smoke;
 mod session;
 mod session_smoke;
 mod terminal;
@@ -70,6 +72,14 @@ fn main() -> iced::Result {
             panic!("strukt M3 session smoke failed: {error}");
         }
         println!("{}", app::SESSION_SMOKE_SUCCESS);
+        return Ok(());
+    }
+
+    if let LaunchMode::RemoteSmoke { root } = &launch_mode {
+        if let Err(error) = remote_smoke::run(root) {
+            panic!("strukt M4 remote smoke failed: {error}");
+        }
+        println!("{}", app::REMOTE_SMOKE_SUCCESS);
         return Ok(());
     }
 

@@ -18,6 +18,7 @@ strukt-editor.workspace = true
 strukt-fs.workspace = true
 strukt-language.workspace = true
 strukt-persistence.workspace = true
+strukt-remote.workspace = true
 strukt-shell.workspace = true
 strukt-session.workspace = true
 strukt-theme.workspace = true

@@ -12,6 +12,7 @@ use strukt_theme::{Rgb, ThemeTokens};
 
 use crate::app::{DocumentNotice, ExplorerDialog, Message, SessionConfirmation, StruktApp};
 use crate::language::{DiagnosticSeverity, LanguageState, ProblemFilter};
+use crate::remote::RemoteStatus;
 use crate::terminal_widget::TerminalWidget;
 
 fn color(rgb: Rgb) -> Color {
@@ -56,16 +57,25 @@ pub fn view(app: &StruktApp) -> Element<'_, Message> {
 }
 
 fn header(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Message> {
-    let workspace_label = app.workspace.as_ref().map_or_else(
-        || "No folder open".to_owned(),
-        |workspace| {
-            format!(
-                "{}  ·  {}",
-                workspace.root.display_name(),
-                workspace.root.path().display()
-            )
-        },
-    );
+    let workspace_label = if app.remote.status == RemoteStatus::Disconnected {
+        app.workspace.as_ref().map_or_else(
+            || "No folder open".to_owned(),
+            |workspace| {
+                format!(
+                    "{}  ·  {}",
+                    workspace.root.display_name(),
+                    workspace.root.path().display()
+                )
+            },
+        )
+    } else {
+        format!(
+            "SSH: {}  ·  {}  ·  {}",
+            app.remote.host_label.as_deref().unwrap_or("connecting"),
+            app.remote.root_label.as_deref().unwrap_or("remote root"),
+            app.remote.status.label()
+        )
+    };
     let open_folder = button("Open Folder…")
         .on_press_maybe((!app.folder_picker_in_flight()).then_some(Message::OpenFolder));
 
@@ -307,7 +317,9 @@ fn explorer_dialog(app: &StruktApp) -> Element<'_, Message> {
 }
 
 fn primary_canvas(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> {
-    let content: Element<'_, Message> = if app.workspace.is_none() {
+    let content: Element<'_, Message> = if app.shell.active_activity == Activity::Connections {
+        connections_canvas(app)
+    } else if app.workspace.is_none() {
         welcome_canvas(app).into()
     } else if app.terminal_expanded {
         app.terminal.workspace().active_tab().map_or_else(
@@ -352,6 +364,96 @@ fn primary_canvas(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> 
         .height(Fill)
         .style(panel_style(tokens, tokens.canvas))
         .into()
+}
+
+fn connections_canvas(app: &StruktApp) -> Element<'_, Message> {
+    let connecting = app.remote.status == RemoteStatus::Connecting;
+    let connected = matches!(
+        app.remote.status,
+        RemoteStatus::Ready | RemoteStatus::TerminalOnly | RemoteStatus::Stale
+    );
+    let mut files = column![].spacing(4);
+    if app.remote.files.is_empty() {
+        files = files.push(text("No remote files loaded."));
+    } else {
+        for path in &app.remote.files {
+            files = files.push(
+                button(text(path)).width(Fill).on_press_maybe(
+                    (!app.remote.operation_in_flight())
+                        .then(|| Message::OpenRemoteDocument(path.clone())),
+                ),
+            );
+        }
+    }
+    let mut notices = column![].spacing(4);
+    if let Some(error) = &app.remote.error {
+        notices = notices.push(text(format!("Remote: {error}")));
+    }
+    let document: Element<'_, Message> = app.remote.selected_path.as_ref().map_or_else(
+        || column![text("Select a text file to open it.")].into(),
+        |path| {
+            column![
+                row![
+                    text(format!(
+                        "{}{}",
+                        path,
+                        if app.remote.document_dirty {
+                            " •"
+                        } else {
+                            ""
+                        }
+                    )),
+                    Space::new().width(Fill),
+                    button("Save").on_press_maybe(
+                        (app.remote.document_dirty && !app.remote.operation_in_flight())
+                            .then_some(Message::SaveRemoteDocument),
+                    ),
+                ],
+                text_input("Remote UTF-8 document", &app.remote.document_text)
+                    .on_input(Message::RemoteDocumentChanged)
+                    .width(Fill),
+            ]
+            .spacing(6)
+            .into()
+        },
+    );
+
+    column![
+        text("SSH workspace").size(22),
+        text("Uses your standard OpenSSH configuration and authentication."),
+        row![
+            text_input("Host alias from ~/.ssh/config", &app.remote.alias_input)
+                .on_input(Message::RemoteAliasChanged),
+            text_input("Remote root, for example ~/src/app", &app.remote.root_input)
+                .on_input(Message::RemoteRootChanged),
+        ]
+        .spacing(8),
+        row![
+            button(if connecting {
+                "Connecting…"
+            } else {
+                "Connect"
+            })
+            .on_press_maybe((!connecting && !connected).then_some(Message::ConnectRemote)),
+            button("Refresh files").on_press_maybe(
+                (app.remote.status == RemoteStatus::Ready && !app.remote.operation_in_flight())
+                    .then_some(Message::RefreshRemoteFiles),
+            ),
+            button("Disconnect").on_press_maybe(connected.then_some(Message::DisconnectRemote)),
+        ]
+        .spacing(8),
+        text(format!("Status: {}", app.remote.status.label())),
+        notices,
+        row![
+            column![text("REMOTE ROOT").size(13), scrollable(files).height(Fill)]
+                .width(Length::Fixed(260.0)),
+            container(document).padding(8).width(Fill),
+        ]
+        .spacing(12)
+        .height(Fill),
+    ]
+    .spacing(12)
+    .into()
 }
 
 #[expect(
