@@ -1640,7 +1640,17 @@ mod tests {
         let project = tempdir().unwrap();
         std::fs::write(project.path().join("strukt-editor-smoke.txt"), "strukt\n").unwrap();
 
-        run_editor_smoke(project.path()).unwrap();
+        if let Err(error) = run_editor_smoke(project.path()) {
+            let disk_after_return =
+                std::fs::read(project.path().join("strukt-editor-smoke.txt")).unwrap();
+            let remaining_entries = std::fs::read_dir(project.path())
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect::<Vec<_>>();
+            panic!(
+                "{error}; disk after staging handles closed: {disk_after_return:?}; remaining entries: {remaining_entries:?}"
+            );
+        }
 
         assert_eq!(
             std::fs::read_to_string(project.path().join("strukt-editor-smoke.txt")).unwrap(),
