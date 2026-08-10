@@ -9,7 +9,7 @@ use std::time::Duration;
 use thiserror::Error;
 
 use crate::{
-    EndpointIdentity, LocalEndpoint, LocalStream, PaneId, PaneScreenSnapshot,
+    EndpointIdentity, LocalEndpoint, LocalStream, PaneId, PaneOutputCursor, PaneScreenSnapshot,
     ProviderCatalogSnapshot, ProviderError, RendezvousStore, RequestBody, RequestEnvelope,
     RequestIdGenerator, ResponseBody, ResponseEnvelope, ServiceInstanceId, ServiceSecret,
     decode_cbor, encode_cbor,
@@ -174,6 +174,14 @@ impl SessionClient {
             intent,
             request_id,
             expected_catalog_revision: self.catalog_revision(),
+            reconnect_cursors: self
+                .snapshots
+                .iter()
+                .filter_map(|(pane, snapshot)| {
+                    PaneOutputCursor::new(*pane, snapshot.generation(), snapshot.output_revision())
+                        .ok()
+                })
+                .collect(),
         })
     }
 
@@ -357,6 +365,7 @@ pub struct ClientConnectJob {
     intent: ClientConnectIntent,
     request_id: u64,
     expected_catalog_revision: u64,
+    reconnect_cursors: Vec<PaneOutputCursor>,
 }
 
 impl ClientConnectJob {
@@ -367,11 +376,15 @@ impl ClientConnectJob {
         let result = loop {
             match self.backend.connect() {
                 Ok(mut connection) => {
-                    let request = RequestEnvelope::new(
-                        self.request_id,
-                        self.expected_catalog_revision,
-                        RequestBody::Attach,
-                    );
+                    let body = if self.intent == ClientConnectIntent::Reconnect {
+                        RequestBody::Reconnect {
+                            cursors: self.reconnect_cursors.clone(),
+                        }
+                    } else {
+                        RequestBody::Attach
+                    };
+                    let request =
+                        RequestEnvelope::new(self.request_id, self.expected_catalog_revision, body);
                     break connection
                         .exchange(request)
                         .map(|response| (connection, response));

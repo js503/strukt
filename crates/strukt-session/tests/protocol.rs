@@ -1,7 +1,7 @@
 use strukt_session::{
-    EventEnvelope, EventGuard, FrameDecoder, FrameError, PaneId, RequestBody, RequestEnvelope,
-    RequestIdGenerator, ResponseBody, ResponseEnvelope, ServiceInstanceId, SessionId, WindowId,
-    WireError, decode_cbor, encode_cbor,
+    EventEnvelope, EventGuard, FrameDecoder, FrameError, PaneId, PaneOutputCursor, RequestBody,
+    RequestEnvelope, RequestIdGenerator, ResponseBody, ResponseEnvelope, ServiceInstanceId,
+    SessionId, WindowId, WireError, decode_cbor, encode_cbor,
 };
 
 #[test]
@@ -27,6 +27,38 @@ fn decoder_handles_fragmented_and_combined_frames() {
             .request_id(),
         2
     );
+}
+
+#[test]
+fn reconnect_cursors_are_bounded_and_generation_scoped() {
+    let pane = PaneId::new().unwrap();
+    let cursor = PaneOutputCursor::new(pane, 7, 42).unwrap();
+    assert_eq!(cursor.pane(), pane);
+    assert_eq!(cursor.generation(), 7);
+    assert_eq!(cursor.output_revision(), 42);
+
+    RequestEnvelope::new(
+        8,
+        0,
+        RequestBody::Reconnect {
+            cursors: vec![cursor],
+        },
+    )
+    .validate()
+    .expect("a bounded reconnect cursor is valid");
+
+    assert_eq!(
+        PaneOutputCursor::new(pane, 0, 42),
+        Err(WireError::InvalidBody)
+    );
+    let oversized = RequestEnvelope::new(
+        9,
+        0,
+        RequestBody::Reconnect {
+            cursors: vec![cursor; 513],
+        },
+    );
+    assert_eq!(oversized.validate(), Err(WireError::InvalidBody));
 }
 
 #[test]

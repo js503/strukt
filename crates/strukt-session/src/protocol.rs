@@ -13,6 +13,51 @@ pub const PROTOCOL_VERSION: u16 = 2;
 const MAX_NAME_CHARS: usize = 80;
 const MAX_PATH_BYTES: usize = 4_096;
 const MAX_INPUT_BYTES: usize = 256 * 1024;
+const MAX_RECONNECT_PANES: usize = 512;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PaneOutputCursor {
+    pane: PaneId,
+    generation: u64,
+    output_revision: u64,
+}
+
+impl PaneOutputCursor {
+    /// Creates a cursor for the last accepted pane output.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WireError::InvalidBody`] when the process generation is zero.
+    pub const fn new(
+        pane: PaneId,
+        generation: u64,
+        output_revision: u64,
+    ) -> Result<Self, WireError> {
+        if generation == 0 {
+            return Err(WireError::InvalidBody);
+        }
+        Ok(Self {
+            pane,
+            generation,
+            output_revision,
+        })
+    }
+
+    #[must_use]
+    pub const fn pane(self) -> PaneId {
+        self.pane
+    }
+
+    #[must_use]
+    pub const fn generation(self) -> u64 {
+        self.generation
+    }
+
+    #[must_use]
+    pub const fn output_revision(self) -> u64 {
+        self.output_revision
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum FixtureMode {
@@ -23,6 +68,9 @@ pub enum FixtureMode {
 pub enum RequestBody {
     Catalog,
     Attach,
+    Reconnect {
+        cursors: Vec<PaneOutputCursor>,
+    },
     Detach,
     CreateSession {
         name: String,
@@ -249,8 +297,12 @@ impl RequestEnvelope {
             {
                 return Err(WireError::InvalidBody);
             }
+            RequestBody::Reconnect { cursors } if !valid_reconnect_cursors(cursors) => {
+                return Err(WireError::InvalidBody);
+            }
             RequestBody::Catalog
             | RequestBody::Attach
+            | RequestBody::Reconnect { .. }
             | RequestBody::Detach
             | RequestBody::ImportStoppedCatalog { .. }
             | RequestBody::StartPane { .. }
@@ -277,6 +329,10 @@ impl RequestEnvelope {
         }
         Ok(())
     }
+}
+
+fn valid_reconnect_cursors(cursors: &[PaneOutputCursor]) -> bool {
+    cursors.len() <= MAX_RECONNECT_PANES && cursors.iter().all(|cursor| cursor.generation > 0)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

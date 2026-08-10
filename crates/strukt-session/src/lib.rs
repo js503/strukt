@@ -30,8 +30,8 @@ pub use endpoint::{
 pub use framing::{FrameDecoder, FrameError, decode_cbor, encode_cbor};
 pub use id::{IdError, PaneId, ServiceInstanceId, SessionId, WindowId};
 pub use protocol::{
-    EventEnvelope, EventGuard, FixtureMode, PROTOCOL_VERSION, RequestBody, RequestEnvelope,
-    RequestIdGenerator, ResponseBody, ResponseEnvelope, WireError,
+    EventEnvelope, EventGuard, FixtureMode, PROTOCOL_VERSION, PaneOutputCursor, RequestBody,
+    RequestEnvelope, RequestIdGenerator, ResponseBody, ResponseEnvelope, WireError,
 };
 pub use provider::{
     ProviderAction, ProviderCapabilities, ProviderError, ProviderHealth, ProviderKind,

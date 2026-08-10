@@ -146,6 +146,55 @@ fn transport_loss_freezes_catalog_and_newest_snapshots_while_stale_work_is_rejec
     assert!(client.accepts_service_instance(instance));
 }
 
+#[test]
+fn reconnect_sends_last_accepted_pane_cursors_without_starting_service() {
+    let directory = std::env::current_dir().expect("current directory");
+    let mut catalog = SessionCatalog::new();
+    let session = catalog
+        .create_session(0, "remote", directory)
+        .expect("session");
+    let pane = catalog
+        .session(session)
+        .expect("session")
+        .active_window()
+        .expect("window")
+        .focused_pane()
+        .id();
+    let instance = ServiceInstanceId::new().expect("service instance");
+    let backend = Arc::new(FakeBackend::default());
+    backend.queue_connection(FakeConnection::attached_snapshot(snapshot(
+        instance,
+        catalog.clone(),
+    )));
+    let mut client = test_client(backend.clone());
+    let attached = client
+        .begin_connect(ClientConnectIntent::ExplicitAttach)
+        .expect("attach job")
+        .run();
+    client.finish_connect(attached).expect("attach");
+    assert!(client.apply_snapshot(pane, pane_snapshot(42)));
+    client.mark_transport_lost("SSH disconnected");
+
+    backend.queue_connection(FakeConnection::attached_snapshot(snapshot(
+        instance, catalog,
+    )));
+    let reconnected = client
+        .begin_connect(ClientConnectIntent::Reconnect)
+        .expect("reconnect job")
+        .run();
+    client.finish_connect(reconnected).expect("reconnect");
+
+    assert_eq!(backend.starts(), 0);
+    assert!(matches!(
+        backend.request_bodies().last(),
+        Some(RequestBody::Reconnect { cursors })
+            if cursors.len() == 1
+                && cursors[0].pane() == pane
+                && cursors[0].generation() == 1
+                && cursors[0].output_revision() == 42
+    ));
+}
+
 fn test_client(backend: Arc<FakeBackend>) -> SessionClient {
     SessionClient::with_backend(test_application_data(), test_helper(), backend).expect("client")
 }
@@ -211,6 +260,7 @@ struct FakeBackendState {
     sleeps: Vec<Duration>,
     connections: VecDeque<FakeConnection>,
     request_ids: Arc<Mutex<Vec<u64>>>,
+    request_bodies: Arc<Mutex<Vec<RequestBody>>>,
 }
 
 impl FakeBackend {
@@ -219,7 +269,10 @@ impl FakeBackend {
     }
 
     fn queue_connection(&self, mut connection: FakeConnection) {
-        connection.request_ids = self.state.lock().expect("backend").request_ids.clone();
+        let state = self.state.lock().expect("backend");
+        connection.request_ids = state.request_ids.clone();
+        connection.request_bodies = state.request_bodies.clone();
+        drop(state);
         self.state
             .lock()
             .expect("backend")
@@ -259,6 +312,16 @@ impl FakeBackend {
             .expect("request ids")
             .clone()
     }
+
+    fn request_bodies(&self) -> Vec<RequestBody> {
+        self.state
+            .lock()
+            .expect("backend")
+            .request_bodies
+            .lock()
+            .expect("request bodies")
+            .clone()
+    }
 }
 
 impl ClientBackend for FakeBackend {
@@ -295,6 +358,7 @@ struct FakeConnection {
     instance: ServiceInstanceId,
     responses: VecDeque<ResponseBody>,
     request_ids: Arc<Mutex<Vec<u64>>>,
+    request_bodies: Arc<Mutex<Vec<RequestBody>>>,
 }
 
 impl FakeConnection {
@@ -303,6 +367,7 @@ impl FakeConnection {
             instance,
             responses,
             request_ids: Arc::new(Mutex::new(Vec::new())),
+            request_bodies: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -324,6 +389,10 @@ impl ProviderConnection for FakeConnection {
             .lock()
             .expect("request ids")
             .push(request.request_id());
+        self.request_bodies
+            .lock()
+            .expect("request bodies")
+            .push(request.body().clone());
         let response = self
             .responses
             .pop_front()

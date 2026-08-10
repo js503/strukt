@@ -22,6 +22,17 @@ impl fmt::Display for ProviderKind {
     }
 }
 
+impl ProviderKind {
+    #[must_use]
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::NativeLocal => "strukt local",
+            Self::NativeRemote => "strukt native",
+            Self::Tmux => "tmux",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ProviderAction {
     Catalog,
@@ -69,6 +80,29 @@ impl ProviderCapabilities {
             mutate_windows: true,
             mutate_panes: true,
             structured_history: true,
+            input: true,
+            resize: true,
+        }
+    }
+
+    #[must_use]
+    pub const fn native_remote() -> Self {
+        Self::native_local()
+    }
+
+    #[must_use]
+    pub const fn tmux_interop() -> Self {
+        Self {
+            catalog: true,
+            attach: true,
+            detach: true,
+            create_session: false,
+            rename_session: false,
+            duplicate_session: false,
+            terminate_session: false,
+            mutate_windows: false,
+            mutate_panes: false,
+            structured_history: false,
             input: true,
             resize: true,
         }

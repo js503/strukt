@@ -34,6 +34,39 @@ fn native_capabilities_gate_every_normalized_action() {
 }
 
 #[test]
+fn remote_provider_capability_matrix_is_explicit() {
+    assert_eq!(
+        ProviderCapabilities::native_remote(),
+        ProviderCapabilities::native_local()
+    );
+    assert_eq!(ProviderKind::NativeRemote.to_string(), "native-remote");
+    assert_eq!(ProviderKind::NativeRemote.display_name(), "strukt native");
+    assert_eq!(ProviderKind::Tmux.display_name(), "tmux");
+
+    let tmux = ProviderCapabilities::tmux_interop();
+    for action in [
+        ProviderAction::Catalog,
+        ProviderAction::Attach,
+        ProviderAction::Detach,
+        ProviderAction::Input,
+        ProviderAction::Resize,
+    ] {
+        assert!(tmux.supports(action), "missing tmux action {action:?}");
+    }
+    for action in [
+        ProviderAction::CreateSession,
+        ProviderAction::RenameSession,
+        ProviderAction::DuplicateSession,
+        ProviderAction::TerminateSession,
+        ProviderAction::MutateWindows,
+        ProviderAction::MutatePanes,
+        ProviderAction::StructuredHistory,
+    ] {
+        assert!(!tmux.supports(action), "unexpected tmux action {action:?}");
+    }
+}
+
+#[test]
 fn provider_failures_are_owned_bounded_and_redacted_by_construction() {
     let message = "x".repeat(4_096);
     let error = ProviderError::internal(message);
