@@ -42,21 +42,26 @@ pub fn atomic_replace(source: &File, parent: &Dir, destination: &OsStr) -> io::R
     }
     let mut destination_path = final_path(parent)?;
     destination_path.push(destination);
-    let name: Vec<u16> = destination_path.as_os_str().encode_wide().collect();
+    let mut name: Vec<u16> = destination_path.as_os_str().encode_wide().collect();
     let name_bytes = name
         .len()
         .checked_mul(size_of::<u16>())
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "file name is too long"))?;
-    let buffer_bytes = offset_of!(FILE_RENAME_INFO, FileName)
-        .checked_add(name_bytes)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "file name is too long"))?;
+    name.push(0);
+    let buffer_bytes =
+        offset_of!(FILE_RENAME_INFO, FileName)
+            .checked_add(name.len().checked_mul(size_of::<u16>()).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "file name is too long")
+            })?)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "file name is too long"))?;
     let words = buffer_bytes.div_ceil(size_of::<usize>());
     let mut storage = vec![0usize; words];
     let info = storage.as_mut_ptr().cast::<FILE_RENAME_INFO>();
 
     // SAFETY: `storage` is pointer-aligned and sized for the fixed header plus
     // `name_bytes`. Both handles are borrowed and valid for the duration of the
-    // call. `FileNameLength` excludes a terminator, as required by Win32.
+    // call. The copied name includes a terminator while `FileNameLength`
+    // excludes it, as required by Win32.
     unsafe {
         info.write(FILE_RENAME_INFO {
             Anonymous: FILE_RENAME_INFO_0 {
