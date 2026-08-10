@@ -26,6 +26,7 @@ pub struct HelperServer {
     git_root: PathBuf,
     processes: Mutex<RemoteProcessManager>,
     languages: Mutex<RemoteLanguageManager>,
+    native_sessions: Option<crate::NativeSessionManager>,
 }
 
 impl HelperServer {
@@ -49,6 +50,7 @@ impl HelperServer {
                 RemoteLanguageManager::new(&canonical_root)
                     .map_err(|error| HelperError::Subsystem(error.to_string()))?,
             ),
+            native_sessions: default_native_session_manager(),
         })
     }
 
@@ -61,6 +63,15 @@ impl HelperServer {
             Capability::Processes,
             Capability::Language,
         ])
+    }
+
+    #[must_use]
+    pub fn advertised_capabilities(&self) -> BTreeSet<Capability> {
+        let mut capabilities = Self::capabilities();
+        if self.native_sessions.is_some() {
+            capabilities.insert(Capability::Sessions);
+        }
+        capabilities
     }
 
     #[must_use]
@@ -252,13 +263,18 @@ impl HelperServer {
             }),
             RequestBody::Watch { .. } => unsupported("filesystem watch transport is unavailable"),
             RequestBody::SessionExchange { payload } => {
-                if payload.is_valid() {
-                    unsupported("persistent session provider is unavailable")
-                } else {
+                if !payload.is_valid() {
                     ResponseBody::Error(RemoteError::new(
                         RemoteErrorKind::InvalidRequest,
                         "persistent session payload is invalid",
                     ))
+                } else if let Some(manager) = &self.native_sessions {
+                    manager.exchange(payload).map_or_else(
+                        |error| internal_error(error.to_string()),
+                        |payload| ResponseBody::SessionExchange { payload },
+                    )
+                } else {
+                    unsupported("persistent session provider is unavailable")
                 }
             }
             RequestBody::Cancel { .. } | RequestBody::GrantCredit { .. } => {
@@ -429,9 +445,9 @@ pub fn run_helper_stdio(
         build_target: build_target(),
         workspace_root: server.canonical_root(),
         limits: ProtocolLimits::default(),
-        capabilities: HelperServer::capabilities(),
+        capabilities: server.advertised_capabilities(),
     };
-    let negotiated = negotiate(&client, &server_hello, &HelperServer::capabilities())?;
+    let negotiated = negotiate(&client, &server_hello, &server.advertised_capabilities())?;
     write_preface(writer)?;
     write_frame(writer, &server_hello, negotiated.limits.max_frame_bytes)?;
     writer.flush().map_err(FramingError::from)?;
@@ -707,4 +723,23 @@ fn internal_error(detail: impl AsRef<str>) -> ResponseBody {
 
 fn subsystem_error(error: &impl std::fmt::Display) -> ResponseBody {
     internal_error(error.to_string())
+}
+
+fn default_native_session_manager() -> Option<crate::NativeSessionManager> {
+    let executable = std::env::current_exe().ok()?;
+    let service = executable.parent()?.join(if cfg!(windows) {
+        "strukt-sessiond.exe"
+    } else {
+        "strukt-sessiond"
+    });
+    if !service.is_file() {
+        return None;
+    }
+    let home = std::env::var_os("HOME")?;
+    let application_data = PathBuf::from(home)
+        .join(".local")
+        .join("share")
+        .join("strukt")
+        .join("sessions");
+    crate::NativeSessionManager::new(application_data, service).ok()
 }

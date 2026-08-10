@@ -8,6 +8,7 @@ pub mod git;
 pub mod helper;
 pub mod install;
 pub mod language;
+pub mod native_session;
 pub mod path;
 pub mod process;
 pub mod protocol;
@@ -32,6 +33,7 @@ pub use install::{
     HelperArtifact, HelperInstallError, execute_helper_install, helper_install_bootstrap,
 };
 pub use language::{RemoteLanguageError, RemoteLanguageManager};
+pub use native_session::{NativeSessionError, NativeSessionManager};
 pub use path::{RemotePath, RemotePathError};
 pub use process::{
     RemoteProcessError, RemoteProcessManager, RemoteProcessOutput, RemoteProcessRequest,
