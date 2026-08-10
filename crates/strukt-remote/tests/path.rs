@@ -1,6 +1,8 @@
 use std::fs;
 
-use strukt_remote::{RemoteFilesystem, RemoteFilesystemError, RemotePath};
+#[cfg(unix)]
+use strukt_remote::RemoteFilesystemError;
+use strukt_remote::{RemoteFilesystem, RemotePath};
 use tempfile::tempdir;
 
 #[test]
@@ -47,6 +49,7 @@ fn followed_symlink_cannot_escape_the_retained_root() {
     ));
 }
 
+#[cfg(unix)]
 #[test]
 fn replacing_the_root_is_detected_before_operations() {
     let parent = tempdir().unwrap();
@@ -64,4 +67,23 @@ fn replacing_the_root_is_detected_before_operations() {
         filesystem.read(&RemotePath::new("file").unwrap()),
         Err(RemoteFilesystemError::WorkspaceChanged)
     ));
+}
+
+#[cfg(windows)]
+#[test]
+fn retained_root_handle_prevents_replacement_before_operations() {
+    let parent = tempdir().unwrap();
+    let root = parent.path().join("root");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("file"), "old").unwrap();
+    let filesystem = RemoteFilesystem::open(&root).unwrap();
+
+    assert!(fs::rename(&root, parent.path().join("old-root")).is_err());
+    assert_eq!(
+        filesystem
+            .read(&RemotePath::new("file").unwrap())
+            .unwrap()
+            .bytes,
+        b"old"
+    );
 }
