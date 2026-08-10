@@ -22,9 +22,9 @@ use strukt_fs::{
 use strukt_persistence::{
     EditorRecoveryStore, EditorSessionSnapshot, EditorTabSnapshot, LanguageSessionSnapshot,
     RecentWorkspaces, RecoveryKey, RecoveryKeyError, RecoveryKeyProvider, RecoveryMetadata,
-    RecoveryPayload, TerminalSessionSnapshot, WorkspaceStore, apply_session_migration_metadata,
-    language_contribution, session_contribution, set_language_contribution,
-    set_terminal_contribution, terminal_contribution,
+    RecoveryPayload, RemoteStore, TerminalSessionSnapshot, WorkspaceStore,
+    apply_session_migration_metadata, language_contribution, session_contribution,
+    set_language_contribution, set_terminal_contribution, terminal_contribution,
 };
 use strukt_session::{ClientHealth, PaneId, RequestBody, ResponseBody, SessionId, WindowId};
 use strukt_shell::{Activity, ShellAction, ShellState};
@@ -43,6 +43,11 @@ use crate::language::{
     discover_workspace_language, parse_publish_diagnostics, spawn_discovered_server,
 };
 use crate::recovery_key::NativeRecoveryKeyProvider;
+use crate::remote::{
+    RemoteConnectCompletion, RemoteDocumentCompletion, RemoteFilesCompletion,
+    RemoteInstallCompletion, RemoteLanguageCompletion, RemoteRuntime, RemoteSaveCompletion,
+    RemoteSurfaces, RemoteTaskCompletion, RemoteTextCompletion,
+};
 use crate::session::{SessionConnectCompletion, SessionRequestCompletion, SessionSurfaces};
 use crate::terminal::{TerminalSpawnCompletion, TerminalSurfaces};
 use crate::terminal_widget::TerminalWidgetEvent;
@@ -59,6 +64,7 @@ pub(crate) const TERMINAL_SMOKE_SUCCESS: &str =
 pub(crate) const LANGUAGE_SMOKE_SUCCESS: &str = "strukt language smoke: discovery, sync, diagnostics, completion, hover, definition, cancellation, shutdown, and restore passed";
 pub(crate) const M2_INTEGRATION_SMOKE_SUCCESS: &str = "strukt M2 integration smoke: files, editor, terminal, language, persistence, isolation, and stopped restore passed";
 pub(crate) const SESSION_SMOKE_SUCCESS: &str = "strukt M3 session smoke: hierarchy, isolation, detach, reattach, history, termination, and stopped restore passed";
+pub(crate) const REMOTE_SMOKE_SUCCESS: &str = "strukt M4 remote smoke: ssh, fallback, files, edit, search, git, task, language, disconnect, and reconnect passed";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DocumentNotice {
@@ -87,6 +93,9 @@ pub enum LaunchMode {
         root: PathBuf,
     },
     SessionSmoke {
+        root: PathBuf,
+    },
+    RemoteSmoke {
         root: PathBuf,
     },
 }
@@ -134,6 +143,13 @@ impl LaunchMode {
                     root: PathBuf::from(root),
                 }
             }
+            [flag, root]
+                if flag == "--remote-smoke" && !root.is_empty() && Path::new(root).is_dir() =>
+            {
+                Self::RemoteSmoke {
+                    root: PathBuf::from(root),
+                }
+            }
             _ if args.iter().any(|argument| argument == "--smoke-test") => Self::SmokeTest,
             _ => Self::Interactive,
         }
@@ -148,7 +164,8 @@ impl LaunchMode {
             | Self::TerminalSmoke { .. }
             | Self::LanguageSmoke { .. }
             | Self::M2IntegrationSmoke { .. }
-            | Self::SessionSmoke { .. } => None,
+            | Self::SessionSmoke { .. }
+            | Self::RemoteSmoke { .. } => None,
             Self::SmokeTest => Some(SMOKE_TEST_DURATION),
         }
     }
@@ -195,6 +212,9 @@ pub struct StruktApp {
     pub terminal_error: Option<String>,
     pub(crate) sessions: SessionSurfaces,
     pub session_error: Option<String>,
+    pub remote: RemoteSurfaces,
+    pub(crate) remote_runtime: Option<RemoteRuntime>,
+    remote_store: Option<RemoteStore>,
     pub session_name: String,
     pub window_name: String,
     pub session_confirmation: SessionConfirmation,
@@ -310,6 +330,47 @@ pub enum SessionConfirmation {
 #[derive(Clone, Debug)]
 pub enum Message {
     SelectActivity(Activity),
+    RemoteAliasChanged(String),
+    RemoteRootChanged(String),
+    ConnectRemote,
+    RemoteConnected(RemoteConnectCompletion),
+    RefreshRemoteFiles,
+    RemoteFilesFinished(RemoteFilesCompletion),
+    OpenRemoteDocument(String),
+    RemoteDocumentFinished(RemoteDocumentCompletion),
+    RemoteDocumentAction(text_editor::Action),
+    SaveRemoteDocument,
+    RemoteSaveFinished(RemoteSaveCompletion),
+    DisconnectRemote,
+    NewRemoteTerminal,
+    ChooseRemoteHelper,
+    RemoteHelperPicked(Option<PathBuf>),
+    ConfirmRemoteHelperInstall,
+    CancelRemoteHelperInstall,
+    RemoteHelperInstalled(RemoteInstallCompletion),
+    RemoteRecordsLoaded(Result<Vec<strukt_persistence::RemoteConnectionRecord>, String>),
+    RemoteRecordSaved(Result<(), String>),
+    SelectRemoteRecord(usize),
+    ForgetRemoteRecord(String),
+    RemoteRecordForgotten {
+        connection_id: String,
+        result: Result<bool, String>,
+    },
+    RemoteSearchChanged(String),
+    RunRemoteSearch,
+    RemoteSearchFinished(RemoteTextCompletion),
+    RefreshRemoteGit,
+    RemoteGitFinished(RemoteTextCompletion),
+    RemoteTaskExecutableChanged(String),
+    RemoteTaskArgumentsChanged(String),
+    ReviewRemoteTask,
+    ConfirmRemoteTask,
+    CancelRemoteTask,
+    RemoteTaskFinished(RemoteTaskCompletion),
+    RemoteLanguageExecutableChanged(String),
+    RemoteLanguageArgumentsChanged(String),
+    VerifyRemoteLanguage,
+    RemoteLanguageFinished(RemoteLanguageCompletion),
     ToggleContext,
     ToggleDrawer,
     ToggleExplorer,
@@ -646,6 +707,9 @@ impl StruktApp {
             terminal_error: None,
             sessions: SessionSurfaces::default(),
             session_error: None,
+            remote: RemoteSurfaces::default(),
+            remote_runtime: None,
+            remote_store: RemoteStore::platform_default().ok(),
             session_name: String::new(),
             window_name: String::new(),
             session_confirmation: SessionConfirmation::None,
@@ -724,7 +788,19 @@ impl StruktApp {
             },
             Message::RecentWorkspaceLoaded,
         );
-        (app, restore)
+        let remote_restore = app.remote_store.clone().map_or_else(Task::none, |store| {
+            Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || {
+                        store.load().map_err(|error| error.to_string())
+                    })
+                    .await
+                    .map_err(|error| error.to_string())?
+                },
+                Message::RemoteRecordsLoaded,
+            )
+        });
+        (app, Task::batch([restore, remote_restore]))
     }
 }
 
@@ -735,6 +811,407 @@ impl StruktApp {
     )]
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::RemoteAliasChanged(value) => {
+                self.remote.alias_input = value;
+                return Task::none();
+            }
+            Message::RemoteRootChanged(value) => {
+                self.remote.root_input = value;
+                return Task::none();
+            }
+            Message::ConnectRemote => {
+                return match self.remote.begin_connect() {
+                    Ok(job) => Task::perform(async move { job.run() }, Message::RemoteConnected),
+                    Err(error) => {
+                        self.remote.error = Some(error);
+                        Task::none()
+                    }
+                };
+            }
+            Message::RemoteConnected(completion) => {
+                if !self.remote.finish_connect(&completion) {
+                    return Task::none();
+                }
+                self.remote_runtime = completion.result.ok();
+                let refresh = self
+                    .remote_runtime
+                    .as_ref()
+                    .map_or_else(Task::none, |_| Task::done(Message::RefreshRemoteFiles));
+                let persist = match (self.remote.current_record(), self.remote_store.clone()) {
+                    (Ok(record), Some(store)) if self.remote_runtime.is_some() => {
+                        self.remote.remember_record(record.clone());
+                        Task::perform(
+                            async move {
+                                tokio::task::spawn_blocking(move || {
+                                    store.upsert(record).map_err(|error| error.to_string())
+                                })
+                                .await
+                                .map_err(|error| error.to_string())?
+                            },
+                            Message::RemoteRecordSaved,
+                        )
+                    }
+                    _ => Task::none(),
+                };
+                return Task::batch([refresh, persist]);
+            }
+            Message::RefreshRemoteFiles => {
+                if !self.remote.begin_operation() {
+                    return Task::none();
+                }
+                let Some(runtime) = self.remote_runtime.clone() else {
+                    self.remote.error = Some("remote helper is not connected".into());
+                    return Task::none();
+                };
+                let generation = self.remote.generation();
+                return Task::perform(
+                    async move { runtime.list_root(generation) },
+                    Message::RemoteFilesFinished,
+                );
+            }
+            Message::RemoteFilesFinished(completion) => {
+                self.remote.finish_files(&completion);
+                return Task::none();
+            }
+            Message::OpenRemoteDocument(path) => {
+                if !self.remote.begin_operation() {
+                    return Task::none();
+                }
+                let Some(runtime) = self.remote_runtime.clone() else {
+                    return Task::none();
+                };
+                let generation = self.remote.generation();
+                return Task::perform(
+                    async move { runtime.read_document(generation, path) },
+                    Message::RemoteDocumentFinished,
+                );
+            }
+            Message::RemoteDocumentFinished(completion) => {
+                self.remote.finish_document(&completion);
+                return Task::none();
+            }
+            Message::RemoteDocumentAction(action) => {
+                self.remote.edit_document(action);
+                return Task::none();
+            }
+            Message::SaveRemoteDocument => {
+                if !self.remote.begin_operation() {
+                    return Task::none();
+                }
+                let (Some(runtime), Some(path), Some(revision)) = (
+                    self.remote_runtime.clone(),
+                    self.remote.selected_path.clone(),
+                    self.remote.document_revision.clone(),
+                ) else {
+                    return Task::none();
+                };
+                let generation = self.remote.generation();
+                let text = self.remote.document_content.text();
+                return Task::perform(
+                    async move { runtime.save_document(generation, path, revision, text) },
+                    Message::RemoteSaveFinished,
+                );
+            }
+            Message::RemoteSaveFinished(completion) => {
+                self.remote.finish_save(&completion);
+                return Task::none();
+            }
+            Message::DisconnectRemote => {
+                self.remote.disconnected();
+                if let Some(runtime) = self.remote_runtime.take() {
+                    return Task::perform(async move { runtime.disconnect() }, |()| {
+                        Message::SelectActivity(Activity::Connections)
+                    });
+                }
+                return Task::none();
+            }
+            Message::NewRemoteTerminal => {
+                if !self.capabilities.is_enabled(CapabilityId::TERMINAL) {
+                    return Task::none();
+                }
+                let request = match self.remote.terminal_request() {
+                    Ok(request) => request,
+                    Err(error) => {
+                        self.remote.error = Some(error);
+                        return Task::none();
+                    }
+                };
+                let root = request.working_directory.clone();
+                let pane = match self.terminal.new_tab(&root) {
+                    Ok(pane) => pane,
+                    Err(error) => {
+                        self.terminal_error = Some(error.to_string());
+                        return Task::none();
+                    }
+                };
+                let _ = self
+                    .terminal
+                    .rename_active_tab(format!("SSH: {}", self.remote.alias_input));
+                self.shell.drawer_visible = true;
+                return match self.terminal.begin_start_with_request(pane, request) {
+                    Ok(job) => start_terminal_task(job),
+                    Err(error) => {
+                        self.terminal_error = Some(error.to_string());
+                        Task::none()
+                    }
+                };
+            }
+            Message::ChooseRemoteHelper => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .set_title("Choose a packaged strukt Linux helper")
+                            .pick_file()
+                            .await
+                            .map(|handle| handle.path().to_path_buf())
+                    },
+                    Message::RemoteHelperPicked,
+                );
+            }
+            Message::RemoteHelperPicked(Some(path)) => {
+                if let Err(error) = self.remote.prepare_install(&path) {
+                    self.remote.error = Some(error);
+                }
+                return Task::none();
+            }
+            Message::RemoteHelperPicked(None) => return Task::none(),
+            Message::ConfirmRemoteHelperInstall => {
+                return match self.remote.begin_install() {
+                    Ok(job) => {
+                        Task::perform(async move { job.run() }, Message::RemoteHelperInstalled)
+                    }
+                    Err(error) => {
+                        self.remote.error = Some(error);
+                        Task::none()
+                    }
+                };
+            }
+            Message::CancelRemoteHelperInstall => {
+                self.remote.cancel_install();
+                return Task::none();
+            }
+            Message::RemoteHelperInstalled(completion) => {
+                let succeeded = completion.result.is_ok();
+                self.remote.finish_install(&completion);
+                return if succeeded {
+                    Task::done(Message::ConnectRemote)
+                } else {
+                    Task::none()
+                };
+            }
+            Message::RemoteRecordsLoaded(result) => {
+                match result {
+                    Ok(records) => self.remote.restore_records(records),
+                    Err(error) => self.remote.error = Some(error),
+                }
+                return Task::none();
+            }
+            Message::RemoteRecordSaved(result) => {
+                if let Err(error) = result {
+                    self.remote.error = Some(error);
+                }
+                return Task::none();
+            }
+            Message::SelectRemoteRecord(index) => {
+                if self.remote.status == crate::remote::RemoteStatus::Disconnected {
+                    self.remote.select_record(index);
+                }
+                return Task::none();
+            }
+            Message::ForgetRemoteRecord(connection_id) => {
+                let Some(store) = self.remote_store.clone() else {
+                    self.remote.forget_record(&connection_id);
+                    return Task::none();
+                };
+                let completion_id = connection_id.clone();
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            store
+                                .forget(&connection_id)
+                                .map_err(|error| error.to_string())
+                        })
+                        .await
+                        .map_err(|error| error.to_string())?
+                    },
+                    move |result| Message::RemoteRecordForgotten {
+                        connection_id: completion_id.clone(),
+                        result,
+                    },
+                );
+            }
+            Message::RemoteRecordForgotten {
+                connection_id,
+                result,
+            } => {
+                match result {
+                    Ok(true) => self.remote.forget_record(&connection_id),
+                    Ok(false) => {}
+                    Err(error) => self.remote.error = Some(error),
+                }
+                return Task::none();
+            }
+            Message::RemoteSearchChanged(value) => {
+                self.remote.search_input = value;
+                return Task::none();
+            }
+            Message::RunRemoteSearch => {
+                if !self
+                    .remote
+                    .capabilities
+                    .contains(&strukt_remote::Capability::Search)
+                {
+                    return Task::none();
+                }
+                if !self.remote.begin_operation() {
+                    return Task::none();
+                }
+                let Some(runtime) = self.remote_runtime.clone() else {
+                    return Task::none();
+                };
+                let generation = self.remote.generation();
+                let query = self.remote.search_input.clone();
+                return Task::perform(
+                    async move { runtime.search(generation, query) },
+                    Message::RemoteSearchFinished,
+                );
+            }
+            Message::RemoteSearchFinished(completion) => {
+                self.remote.finish_search(&completion);
+                return Task::none();
+            }
+            Message::RefreshRemoteGit => {
+                if !self
+                    .remote
+                    .capabilities
+                    .contains(&strukt_remote::Capability::Git)
+                {
+                    return Task::none();
+                }
+                if !self.remote.begin_operation() {
+                    return Task::none();
+                }
+                let Some(runtime) = self.remote_runtime.clone() else {
+                    return Task::none();
+                };
+                let generation = self.remote.generation();
+                return Task::perform(
+                    async move { runtime.git_summary(generation) },
+                    Message::RemoteGitFinished,
+                );
+            }
+            Message::RemoteGitFinished(completion) => {
+                self.remote.finish_git(&completion);
+                return Task::none();
+            }
+            Message::RemoteTaskExecutableChanged(value) => {
+                self.remote.task_executable = value;
+                self.remote.task_consent = None;
+                return Task::none();
+            }
+            Message::RemoteTaskArgumentsChanged(value) => {
+                self.remote.task_arguments_json = value;
+                self.remote.task_consent = None;
+                return Task::none();
+            }
+            Message::ReviewRemoteTask => {
+                if !self
+                    .remote
+                    .capabilities
+                    .contains(&strukt_remote::Capability::Processes)
+                {
+                    return Task::none();
+                }
+                if let Err(error) = self.remote.prepare_task() {
+                    self.remote.error = Some(error);
+                }
+                return Task::none();
+            }
+            Message::ConfirmRemoteTask => {
+                if !self
+                    .remote
+                    .capabilities
+                    .contains(&strukt_remote::Capability::Processes)
+                {
+                    return Task::none();
+                }
+                let command = match self.remote.approved_task_command() {
+                    Ok(command) => command,
+                    Err(error) => {
+                        self.remote.error = Some(error);
+                        return Task::none();
+                    }
+                };
+                if !self.remote.begin_operation() {
+                    return Task::none();
+                }
+                self.remote.task_consent = None;
+                let Some(runtime) = self.remote_runtime.clone() else {
+                    return Task::none();
+                };
+                let generation = self.remote.generation();
+                return Task::perform(
+                    async move { runtime.run_task(generation, command.0, command.1) },
+                    Message::RemoteTaskFinished,
+                );
+            }
+            Message::CancelRemoteTask => {
+                self.remote.task_consent = None;
+                return Task::none();
+            }
+            Message::RemoteTaskFinished(completion) => {
+                self.remote.finish_task(&completion);
+                return Task::none();
+            }
+            Message::RemoteLanguageExecutableChanged(value) => {
+                self.remote.language_executable = value;
+                return Task::none();
+            }
+            Message::RemoteLanguageArgumentsChanged(value) => {
+                self.remote.language_arguments_json = value;
+                return Task::none();
+            }
+            Message::VerifyRemoteLanguage => {
+                if !self
+                    .remote
+                    .capabilities
+                    .contains(&strukt_remote::Capability::Language)
+                {
+                    return Task::none();
+                }
+                let command = match self.remote.parsed_language_command() {
+                    Ok(command) => command,
+                    Err(error) => {
+                        self.remote.error = Some(error);
+                        return Task::none();
+                    }
+                };
+                let Some(path) = self.remote.selected_path.clone() else {
+                    self.remote.error =
+                        Some("open a remote text document before diagnostics".into());
+                    return Task::none();
+                };
+                let text = self.remote.document_content.text();
+                if !self.remote.begin_operation() {
+                    return Task::none();
+                }
+                let Some(runtime) = self.remote_runtime.clone() else {
+                    return Task::none();
+                };
+                let generation = self.remote.generation();
+                return Task::perform(
+                    async move {
+                        runtime.run_language_diagnostics(
+                            generation, command.0, command.1, &path, &text,
+                        )
+                    },
+                    Message::RemoteLanguageFinished,
+                );
+            }
+            Message::RemoteLanguageFinished(completion) => {
+                self.remote.finish_language(&completion);
+                return Task::none();
+            }
             Message::ConnectSessions => {
                 return match self.sessions.begin_connect() {
                     Ok(job) => {
@@ -3280,6 +3757,44 @@ impl StruktApp {
             Message::ToggleExplorer => Some(ShellAction::ToggleExplorer),
             Message::ToggleTheme => Some(ShellAction::ToggleTheme),
             Message::OpenFolder
+            | Message::RemoteAliasChanged(_)
+            | Message::RemoteRootChanged(_)
+            | Message::ConnectRemote
+            | Message::RemoteConnected(_)
+            | Message::RefreshRemoteFiles
+            | Message::RemoteFilesFinished(_)
+            | Message::OpenRemoteDocument(_)
+            | Message::RemoteDocumentFinished(_)
+            | Message::RemoteDocumentAction(_)
+            | Message::SaveRemoteDocument
+            | Message::RemoteSaveFinished(_)
+            | Message::DisconnectRemote
+            | Message::NewRemoteTerminal
+            | Message::ChooseRemoteHelper
+            | Message::RemoteHelperPicked(_)
+            | Message::ConfirmRemoteHelperInstall
+            | Message::CancelRemoteHelperInstall
+            | Message::RemoteHelperInstalled(_)
+            | Message::RemoteRecordsLoaded(_)
+            | Message::RemoteRecordSaved(_)
+            | Message::SelectRemoteRecord(_)
+            | Message::ForgetRemoteRecord(_)
+            | Message::RemoteRecordForgotten { .. }
+            | Message::RemoteSearchChanged(_)
+            | Message::RunRemoteSearch
+            | Message::RemoteSearchFinished(_)
+            | Message::RefreshRemoteGit
+            | Message::RemoteGitFinished(_)
+            | Message::RemoteTaskExecutableChanged(_)
+            | Message::RemoteTaskArgumentsChanged(_)
+            | Message::ReviewRemoteTask
+            | Message::ConfirmRemoteTask
+            | Message::CancelRemoteTask
+            | Message::RemoteTaskFinished(_)
+            | Message::RemoteLanguageExecutableChanged(_)
+            | Message::RemoteLanguageArgumentsChanged(_)
+            | Message::VerifyRemoteLanguage
+            | Message::RemoteLanguageFinished(_)
             | Message::FolderPicked(_)
             | Message::WorkspaceOpened(_)
             | Message::NewTerminal

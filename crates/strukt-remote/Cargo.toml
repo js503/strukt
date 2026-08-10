@@ -1,33 +1,29 @@
 [package]
-name = "strukt-app"
+name = "strukt-remote"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
-directories.workspace = true
-iced.workspace = true
+blake3.workspace = true
+cap-fs-ext.workspace = true
+cap-std.workspace = true
+ciborium.workspace = true
 getrandom.workspace = true
-keyring.workspace = true
-open.workspace = true
-rfd.workspace = true
+serde.workspace = true
 serde_json.workspace = true
-strukt-core.workspace = true
+sha2.workspace = true
 strukt-editor.workspace = true
 strukt-fs.workspace = true
 strukt-language.workspace = true
-strukt-persistence.workspace = true
-strukt-remote.workspace = true
-strukt-shell.workspace = true
-strukt-session.workspace = true
-strukt-theme.workspace = true
 strukt-terminal.workspace = true
 strukt-workspace.workspace = true
-tempfile.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
-url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

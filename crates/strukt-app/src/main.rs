@@ -4,6 +4,8 @@ mod app;
 mod editor;
 mod language;
 mod recovery_key;
+mod remote;
+mod remote_smoke;
 mod session;
 mod session_smoke;
 mod terminal;
@@ -70,6 +72,14 @@ fn main() -> iced::Result {
             panic!("strukt M3 session smoke failed: {error}");
         }
         println!("{}", app::SESSION_SMOKE_SUCCESS);
+        return Ok(());
+    }
+
+    if let LaunchMode::RemoteSmoke { root } = &launch_mode {
+        if let Err(error) = remote_smoke::run(root) {
+            panic!("strukt M4 remote smoke failed: {error}");
+        }
+        println!("{}", app::REMOTE_SMOKE_SUCCESS);
         return Ok(());
     }
 
@@ -1556,6 +1566,26 @@ mod tests {
     }
 
     #[test]
+    fn remote_smoke_requires_the_exact_flag_and_one_existing_root() {
+        let root = tempdir().unwrap();
+        let path = root.path().display().to_string();
+        assert_eq!(
+            LaunchMode::from_args(["--remote-smoke".to_owned(), path.clone()]),
+            LaunchMode::RemoteSmoke {
+                root: root.path().to_path_buf(),
+            }
+        );
+        for args in [
+            vec!["--remote-smoke".to_owned()],
+            vec!["--remote-smokes".to_owned(), path.clone()],
+            vec!["--remote-smoke".to_owned(), "missing".to_owned()],
+            vec!["--remote-smoke".to_owned(), path, "extra".to_owned()],
+        ] {
+            assert_eq!(LaunchMode::from_args(args), LaunchMode::Interactive);
+        }
+    }
+
+    #[test]
     fn terminal_smoke_submits_lines_with_portable_enter_framing() {
         assert_eq!(
             crate::app::terminal_smoke_line("héllø界"),
@@ -1610,7 +1640,17 @@ mod tests {
         let project = tempdir().unwrap();
         std::fs::write(project.path().join("strukt-editor-smoke.txt"), "strukt\n").unwrap();
 
-        run_editor_smoke(project.path()).unwrap();
+        if let Err(error) = run_editor_smoke(project.path()) {
+            let disk_after_return =
+                std::fs::read(project.path().join("strukt-editor-smoke.txt")).unwrap();
+            let remaining_entries = std::fs::read_dir(project.path())
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect::<Vec<_>>();
+            panic!(
+                "{error}; disk after staging handles closed: {disk_after_return:?}; remaining entries: {remaining_entries:?}"
+            );
+        }
 
         assert_eq!(
             std::fs::read_to_string(project.path().join("strukt-editor-smoke.txt")).unwrap(),

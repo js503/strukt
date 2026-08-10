@@ -161,6 +161,23 @@ control-level accessibility, real IME composition, and human Windows visual QA
 remain Alpha gates. Full evidence is in
 [`docs/evidence/m3-local-persistent-sessions-validation.md`](../evidence/m3-local-persistent-sessions-validation.md).
 
+### M4 SSH remote-workspace revalidation
+
+M4 revalidated Iced with an explicit Connections surface, visible host/root
+boundaries, terminal-only degradation, multiline remote editing, remote search,
+Git, approved tasks, and language diagnostics. OpenSSH process ownership, helper
+framing, path confinement, capabilities, reconnect generations, and persistence
+remain outside Iced; the UI consumes immutable projections and schedules blocking
+work away from the event loop.
+
+The macOS walkthrough caught a clipped helper action at the standard 988-by-768
+window size, which was regrouped and rechecked. Hosted macOS, Ubuntu, and Windows
+jobs exercise the exact application and remote smoke, and Ubuntu additionally
+uses a disposable real OpenSSH server. Control-level accessibility, real IME
+composition, and human Windows visual certification remain explicit public-alpha
+gates. Full evidence is in
+[`docs/evidence/m4-ssh-remote-workspace-validation.md`](../evidence/m4-ssh-remote-workspace-validation.md).
+
 ## Validation gates
 
 This M1 acceptance is supported by the following completed gates:

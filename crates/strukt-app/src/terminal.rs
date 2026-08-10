@@ -191,6 +191,26 @@ impl TerminalSurfaces {
         }
     }
 
+    pub(crate) fn begin_start_with_request(
+        &mut self,
+        pane: TerminalPaneId,
+        request: SpawnRequest,
+    ) -> Result<RuntimeStartJob, TerminalSurfaceError> {
+        if self.workspace.pane(pane).is_none() {
+            return Err(TerminalWorkspaceError::PaneNotFound.into());
+        }
+        self.workspace.restart_pane(pane)?;
+        match self.runtime.begin_restart(pane, request) {
+            Ok(job) => Ok(job),
+            Err(error) => {
+                let message = error.to_string();
+                self.workspace
+                    .set_pane_state(pane, PaneState::Failed { message })?;
+                Err(error.into())
+            }
+        }
+    }
+
     pub(crate) fn finish_start(
         &mut self,
         pane: TerminalPaneId,

@@ -33,8 +33,8 @@ exit criteria are satisfied and verified, not when a target date arrives.
 | M1 | Native shell foundation | Complete | M0 | Cross-platform native shell proving capability boundaries, shell state, and semantic theming |
 | M2 | Local development workspace | Complete | M1 | Real local files, IDE-level editing, language intelligence, PTY/ConPTY terminals, terminal rendering, and workspace persistence |
 | M3 | Local persistent sessions | Complete | M2 | Named local sessions with windows, split panes, detach/reattach, and restoration |
-| M4 | SSH remote workspace | Not planned | M2 | A remote development box behaves as a first-class workspace over standard SSH |
-| M5 | Remote persistent sessions | Not planned | M3, M4 | Multiple persistent sessions per remote host, reconnect recovery, and tmux interoperability |
+| M4 | SSH remote workspace | Complete | M2 | A remote development box behaves as a first-class workspace over standard SSH |
+| M5 | Remote persistent sessions | Shaping | M3, M4 | Multiple persistent sessions per remote host, reconnect recovery, and tmux interoperability |
 | Alpha | Public alpha release | Not planned | M3, M4, M5 | Installable, documented local and remote development release for macOS and Windows with Linux in the build pipeline |
 | M6 | AI and workspace context | Post-alpha | Alpha | Optional, model-agnostic AI grounded in explicit local and remote workspace context |
 | M7 | Plugin and MCP foundation | Post-alpha | Alpha, M6 | Sandboxed extensions, MCP discovery, permissions, and host-controlled contributions |
@@ -241,7 +241,9 @@ the same workspace model used locally.
 
 ### Exit Criteria
 
-- A Linux EC2 host can be opened using standard SSH configuration.
+- A disposable Linux SSH host proves the standard configuration, authentication,
+  known-host, helper, and workspace path used by EC2; the live EC2 onboarding
+  walkthrough remains an Alpha gate.
 - Remote files and Quick Open operate on the remote filesystem.
 - Helper installation or upgrade requires explicit consent.
 - A helper failure retains usable terminal-only SSH access.
@@ -251,8 +253,16 @@ the same workspace model used locally.
 
 - Governing spec:
   [`specs/0001-workspace-shell-and-remote-development.md`](specs/0001-workspace-shell-and-remote-development.md)
-- Dedicated spec: not yet created
-- Implementation plan: not yet created
+- Dedicated spec:
+  [`specs/0008-m4-ssh-remote-workspace.md`](specs/0008-m4-ssh-remote-workspace.md)
+- Implementation plan:
+  [`plans/0008-m4-ssh-remote-workspace.md`](plans/0008-m4-ssh-remote-workspace.md)
+- Tracking issue:
+  [#13 — M4: SSH remote workspace](https://github.com/js503/strukt/issues/13)
+- Pull request:
+  [#14 — feat: add M4 SSH remote workspaces](https://github.com/js503/strukt/pull/14)
+- Validation evidence:
+  [`evidence/m4-ssh-remote-workspace-validation.md`](evidence/m4-ssh-remote-workspace-validation.md)
 - Workspace reference:
   [`mockups/workspace-shell/remote-workspace.html`](mockups/workspace-shell/remote-workspace.html)
 
@@ -285,8 +295,9 @@ tmux sessions can be discovered and attached through a common provider model.
 
 - Governing spec:
   [`specs/0001-workspace-shell-and-remote-development.md`](specs/0001-workspace-shell-and-remote-development.md)
-- Dedicated spec: not yet created
-- Implementation plan: not yet created
+- Dedicated spec: shaping begins from the merged M3 provider and M4 transport
+  contracts
+- Implementation plan: created after the dedicated spec is approved
 - Interaction reference:
   [`mockups/workspace-shell/remote-multiplexer.html`](mockups/workspace-shell/remote-multiplexer.html)
 

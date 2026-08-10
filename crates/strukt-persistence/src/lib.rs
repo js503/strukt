@@ -2,6 +2,7 @@
 
 mod editor_store;
 mod language_store;
+mod remote_store;
 mod session_store;
 mod terminal_store;
 mod workspace_store;
@@ -14,6 +15,9 @@ pub use editor_store::{
 pub use language_store::{
     ApprovalSnapshot, LANGUAGE_CONTRIBUTION_ID, LanguageSelectionSnapshot, LanguageSessionSnapshot,
     LanguageStoreError, RestoredLanguageSession, language_contribution, set_language_contribution,
+};
+pub use remote_store::{
+    RemoteConnectionRecord, RemoteHelperMetadata, RemoteStore, RemoteStoreError,
 };
 pub use session_store::{
     SESSION_CONTRIBUTION_ID, SessionContribution, SessionMigrationError, SessionMigrationOutcome,
