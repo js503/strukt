@@ -165,6 +165,28 @@ mod tests {
     }
 
     #[test]
+    fn atomic_replace_publishes_through_a_cloned_parent_handle() {
+        let temporary = tempfile::tempdir().unwrap();
+        fs::write(temporary.path().join("target.txt"), "old").unwrap();
+        let root = Dir::open_ambient_dir(temporary.path(), cap_std::ambient_authority()).unwrap();
+        let parent = root.try_clone().unwrap();
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        prepare_rename_source(&mut options);
+        let mut source = parent.open_with("staged.txt", &options).unwrap();
+        source.write_all(b"new").unwrap();
+        source.sync_all().unwrap();
+
+        atomic_replace(&source, &parent, OsStr::new("target.txt")).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(temporary.path().join("target.txt")).unwrap(),
+            "new"
+        );
+        assert!(!temporary.path().join("staged.txt").exists());
+    }
+
+    #[test]
     fn atomic_replace_is_relative_to_a_nested_parent_handle() {
         let temporary = tempfile::tempdir().unwrap();
         fs::create_dir(temporary.path().join("nested")).unwrap();
