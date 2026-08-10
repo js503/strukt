@@ -185,6 +185,8 @@ fn reconnect_sends_last_accepted_pane_cursors_without_starting_service() {
     client.finish_connect(reconnected).expect("reconnect");
 
     assert_eq!(backend.starts(), 0);
+    assert_eq!(client.take_reconnect_resync_pane(), Some(pane));
+    assert_eq!(client.take_reconnect_resync_pane(), None);
     assert!(matches!(
         backend.request_bodies().last(),
         Some(RequestBody::Reconnect { cursors })
@@ -193,6 +195,52 @@ fn reconnect_sends_last_accepted_pane_cursors_without_starting_service() {
                 && cursors[0].generation() == 1
                 && cursors[0].output_revision() == 42
     ));
+}
+
+#[test]
+fn a_replaced_service_instance_discards_frozen_pane_snapshots() {
+    let directory = std::env::current_dir().expect("current directory");
+    let mut catalog = SessionCatalog::new();
+    let session = catalog
+        .create_session(0, "remote", directory)
+        .expect("session");
+    let pane = catalog
+        .session(session)
+        .unwrap()
+        .active_window()
+        .unwrap()
+        .focused_pane()
+        .id();
+    let first = ServiceInstanceId::new().unwrap();
+    let replacement = ServiceInstanceId::new().unwrap();
+    let backend = Arc::new(FakeBackend::default());
+    backend.queue_connection(FakeConnection::attached_snapshot(snapshot(
+        first,
+        catalog.clone(),
+    )));
+    let mut client = test_client(backend.clone());
+    let attached = client
+        .begin_connect(ClientConnectIntent::ExplicitAttach)
+        .unwrap()
+        .run();
+    client.finish_connect(attached).unwrap();
+    assert!(client.apply_snapshot(pane, pane_snapshot(9)));
+    client.mark_transport_lost("service replaced");
+
+    backend.queue_connection(FakeConnection::attached_snapshot(snapshot(
+        replacement,
+        catalog,
+    )));
+    let reconnected = client
+        .begin_connect(ClientConnectIntent::Reconnect)
+        .unwrap()
+        .run();
+    client.finish_connect(reconnected).unwrap();
+
+    assert!(client.snapshot(pane).is_none());
+    assert_eq!(client.take_reconnect_resync_pane(), None);
+    assert!(client.accepts_service_instance(replacement));
+    assert!(!client.accepts_service_instance(first));
 }
 
 fn test_client(backend: Arc<FakeBackend>) -> SessionClient {

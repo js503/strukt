@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::path::{Component, PathBuf};
 use std::process::{Command, Stdio};
@@ -87,6 +87,7 @@ pub struct SessionClient {
     service_instance: Option<ServiceInstanceId>,
     catalog: Option<ProviderCatalogSnapshot>,
     snapshots: HashMap<PaneId, PaneScreenSnapshot>,
+    reconnect_resync: VecDeque<PaneId>,
 }
 
 impl SessionClient {
@@ -133,6 +134,7 @@ impl SessionClient {
             service_instance: None,
             catalog: None,
             snapshots: HashMap::new(),
+            reconnect_resync: VecDeque::new(),
         }
     }
 
@@ -195,6 +197,7 @@ impl SessionClient {
         completion: ClientConnectCompletion,
     ) -> Result<(), ClientError> {
         self.in_flight = false;
+        let intent = completion.intent;
         let (connection, response) = match completion.result {
             Ok(value) => value,
             Err(error) => {
@@ -218,6 +221,21 @@ impl SessionClient {
                 return Err(error);
             }
         };
+        let same_instance = self.service_instance == Some(instance);
+        if !same_instance {
+            self.snapshots.clear();
+        }
+        self.reconnect_resync.clear();
+        if intent == ClientConnectIntent::Reconnect && same_instance {
+            let mut panes: Vec<_> = self
+                .snapshots
+                .keys()
+                .copied()
+                .filter(|pane| snapshot.catalog().contains_pane(*pane))
+                .collect();
+            panes.sort_unstable();
+            self.reconnect_resync.extend(panes);
+        }
         self.service_instance = Some(instance);
         self.catalog = Some(snapshot);
         self.connection = Some(connection);
@@ -335,6 +353,11 @@ impl SessionClient {
         is_newer
     }
 
+    #[must_use]
+    pub fn take_reconnect_resync_pane(&mut self) -> Option<PaneId> {
+        self.reconnect_resync.pop_front()
+    }
+
     fn reserve(&mut self) -> Result<(), ClientError> {
         if self.in_flight {
             return Err(ClientError::RequestInFlight);
@@ -409,6 +432,7 @@ impl ClientConnectJob {
         };
         ClientConnectCompletion {
             request_id: self.request_id,
+            intent: self.intent,
             result,
         }
     }
@@ -416,6 +440,7 @@ impl ClientConnectJob {
 
 pub struct ClientConnectCompletion {
     request_id: u64,
+    intent: ClientConnectIntent,
     result: Result<(Box<dyn ProviderConnection>, ResponseEnvelope), ClientError>,
 }
 
