@@ -27,17 +27,17 @@ serde persistence, strict workspace lint, and deterministic repository fixtures.
 
 ## Execution constraints
 
-- [ ] Follow red-green-refactor for every behavior change.
-- [ ] Run focused tests after each step and strict format/lint before every commit.
-- [ ] Never invoke a shell to construct the local OpenSSH process.
-- [ ] Never interpolate host aliases or remote paths into remote shell text.
-- [ ] Preserve normal OpenSSH host verification and authentication policy.
-- [ ] Keep all frames, queues, streams, retries, operations, and diagnostics bounded.
-- [ ] Opening/restoring a remote workspace performs no connection or process side
+- [x] Follow red-green-refactor for every behavior change.
+- [x] Run focused tests after each step and strict format/lint before every commit.
+- [x] Never invoke a shell to construct the local OpenSSH process.
+- [x] Never interpolate host aliases or remote paths into remote shell text.
+- [x] Preserve normal OpenSSH host verification and authentication policy.
+- [x] Keep all frames, queues, streams, retries, operations, and diagnostics bounded.
+- [x] Opening/restoring a remote workspace performs no connection or process side
       effect.
-- [ ] Keep direct terminal fallback functional whenever OpenSSH itself works.
-- [ ] Do not implement persistent remote sessions or tmux before M5.
-- [ ] Use no production credentials in fixtures, logs, commits, or evidence.
+- [x] Keep direct terminal fallback functional whenever OpenSSH itself works.
+- [x] Do not implement persistent remote sessions or tmux before M5.
+- [x] Use no production credentials in fixtures, logs, commits, or evidence.
 
 ## Task 1: Establish remote identities and connection state
 
@@ -373,42 +373,42 @@ git commit -m "feat: persist remote workspace records"
 - Modify: `crates/strukt-theme/src/tokens.rs`
 - Modify: `crates/strukt-theme/tests/builtin_themes.rs`
 
-- [ ] **Step 1: Write failing app-state tests**
+- [x] **Step 1: Write failing app-state tests**
 
 Cover Connections activity, alias add/forget, recent roots, no-side-effect restore,
 explicit connect/disconnect/retry, exact install consent, terminal fallback, stale
 snapshots, generation isolation, capability-gated actions, bounded messages,
 command IDs, focus restoration, file explorer availability, and remote labels.
 
-- [ ] **Step 2: Add the remote coordinator**
+- [x] **Step 2: Add the remote coordinator**
 
 Adapt remote client projections into app messages and existing workspace/editor,
 language, terminal, Problems, and persistence contracts. Keep all blocking work in
 Iced tasks or worker threads and reject stale completions.
 
-- [ ] **Step 3: Write failing remote file/editor tests**
+- [x] **Step 3: Write failing remote file/editor tests**
 
 Cover tree paging/expansion, Quick Open, file read, binary/invalid UTF-8, dirty
 editing, conditional save, conflict, unknown outcome, remote search, watcher
 overflow, reload, and no `.strukt` metadata.
 
-- [ ] **Step 4: Connect existing surfaces to remote providers**
+- [x] **Step 4: Connect existing surfaces to remote providers**
 
 Share editor and presentation logic while dispatching filesystem/process behavior
 through the active workspace target. Do not convert remote paths into local paths.
 
-- [ ] **Step 5: Write failing task/language/terminal tests**
+- [x] **Step 5: Write failing task/language/terminal tests**
 
 Cover exact remote task approval scope, no implicit launch, remote language fixture,
 diagnostics host labels, explicit restart/cancel, direct OpenSSH terminal input and
 resize, helper failure while terminal remains offered, and no persistence claim.
 
-- [ ] **Step 6: Integrate task, language, and terminal adapters**
+- [x] **Step 6: Integrate task, language, and terminal adapters**
 
 Keep M2 behavior and limits. A direct terminal ends at disconnect and is never
 shown as an M3/M5 persistent session.
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 ```bash
 cargo test -p strukt-app --lib --locked --offline
@@ -427,26 +427,26 @@ git commit -m "feat: add the remote workspace interface"
 - Modify: `crates/strukt-app/src/remote.rs`
 - Modify: `crates/strukt-theme/src/tokens.rs`
 
-- [ ] **Step 1: Write failing view-model tests**
+- [x] **Step 1: Write failing view-model tests**
 
 Cover connected, connecting, terminal-only, helper negotiation, ready, stale,
 failed, and disconnected labels without color-only meaning; host boundary labels in
 header/explorer/editor/terminal/Problems/status; exact install summary; disabled
 capabilities; narrow width; both themes; and Connections while explorer stays open.
 
-- [ ] **Step 2: Implement the Connections view**
+- [x] **Step 2: Implement the Connections view**
 
 Add discovered/explicit hosts, recent roots, Open, Terminal, Reconnect, Disconnect,
 Forget, Install/Repair Helper, diagnostics, exact confirmation, status, and keyboard
 focus using existing native controls and semantic tokens.
 
-- [ ] **Step 3: Implement remote boundary chrome**
+- [x] **Step 3: Implement remote boundary chrome**
 
 Apply host and stale/degraded labels consistently, keep the center dominant, retain
 one-shortcut explorer access, and avoid adding visual complexity outside the
 approved mockup direction.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```bash
 cargo test -p strukt-app --lib --locked --offline
@@ -466,30 +466,30 @@ git commit -m "feat: add remote connection workspace UI"
 - Modify: `.github/workflows/ci.yml`
 - Modify: `README.md`
 
-- [ ] **Step 1: Write failing launch-mode tests**
+- [x] **Step 1: Write failing launch-mode tests**
 
 Require exact `--remote-smoke <root>` arguments, an existing fixture root, no
 interactive fallback on malformed input, and the exact success marker.
 
-- [ ] **Step 2: Implement the deterministic smoke**
+- [x] **Step 2: Implement the deterministic smoke**
 
 Use the real helper through `fake-ssh` to prove config preview, terminal-only
 fallback, handshake/capabilities, remote listing, Quick Open, edit/save/conflict,
 search, Git summary, approved task, language diagnostics, disconnect/stale state,
 reconnect/generation isolation, helper failure fallback, and no workspace metadata.
 
-- [ ] **Step 3: Add the matrix smoke**
+- [x] **Step 3: Add the matrix smoke**
 
 Build `strukt-remote` and `fake-ssh`, run the smoke on macOS, Windows, and Linux,
 retain all earlier milestone smokes, and add opt-in disposable real-SSH coverage
 without requiring production secrets.
 
-- [ ] **Step 4: Document local execution**
+- [x] **Step 4: Document local execution**
 
 Add exact commands, helper artifact expectations, security behavior, and the M4/M5
 boundary to README.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 cargo build -p strukt-remote --bin strukt-remote --bin fake-ssh --locked --offline
@@ -518,7 +518,7 @@ strukt M4 remote smoke: ssh, fallback, files, edit, search, git, task, language,
 - Modify: `docs/decisions/0001-native-ui-framework.md`
 - Modify: `README.md`
 
-- [ ] **Step 1: Run full local release gate**
+- [x] **Step 1: Run full local release gate**
 
 ```bash
 forj check /Users/jessie/Development/strukt
@@ -529,7 +529,7 @@ cargo test --workspace --all-targets --locked --offline --quiet
 cargo build -p strukt-app -p strukt-remote --bins --locked --offline
 ```
 
-- [ ] **Step 2: Complete native macOS and Windows walkthroughs**
+- [x] **Step 2: Complete native macOS and Windows walkthroughs**
 
 Exercise Connections, host/root entry, explicit connect, exact helper consent,
 remote tree/Quick Open/editor/search/Problems/task/terminal, boundary labels, both
@@ -537,7 +537,7 @@ themes, explorer shortcut, stale disconnect, retry, helper repair, terminal-only
 fallback, keyboard focus, accessibility, IME, and narrow-window behavior. Record
 what is automated, human-verified, or an explicit alpha gate.
 
-- [ ] **Step 3: Run full-slice agentic review**
+- [x] **Step 3: Run full-slice agentic review**
 
 Review command construction, config parsing, host verification, authentication
 prompts, helper artifact trust, bootstrap injection, permissions, root/symlink
@@ -547,18 +547,18 @@ storms, output fairness, UI blocking, capability isolation, M2/M3 regression, an
 M5 boundary drift. Resolve every critical or important finding with a focused
 regression.
 
-- [ ] **Step 4: Record exact local, real-SSH, and hosted evidence**
+- [x] **Step 4: Record exact local, real-SSH, and hosted evidence**
 
 Document the deterministic smoke, native walkthroughs, disposable real-OpenSSH
 result, matrix run/job links, security findings, helper install behavior, and
 accepted alpha limitations. Do not claim live EC2 verification without evidence.
 
-- [ ] **Step 5: Mark M4 complete**
+- [x] **Step 5: Mark M4 complete**
 
 Link spec, plan, issue, PR, and evidence in roadmap/tracker; update README and ADR;
 keep M5 as the remaining remote-session implementation milestone.
 
-- [ ] **Step 6: Commit completion evidence**
+- [x] **Step 6: Commit completion evidence**
 
 ```bash
 git add README.md docs/decisions/0001-native-ui-framework.md \

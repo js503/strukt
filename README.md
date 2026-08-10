@@ -25,11 +25,10 @@ software engineering: one context, every tool, and any model.
 
 ## Status
 
-- Stage: SSH remote-workspace implementation
+- Stage: remote persistent-session shaping
 - Current foundation: native shell plus real local workspace, file, editor, and
   language workflows, ephemeral terminals, and native local persistent sessions
-- Milestones: M1 through M3 complete; M4 is active and M5 remains on the
-  public-alpha critical path
+- Milestones: M1 through M4 complete; M5 remains on the public-alpha critical path
 
 ## Key Docs
 
