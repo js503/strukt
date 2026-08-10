@@ -564,13 +564,16 @@ impl RemoteRuntime {
         &self.root
     }
 
-    /// Creates a lazy native-remote session client over this helper connection.
+    /// Creates a lazy persistent-session client over this helper connection.
     ///
     /// This does not attach to or start the remote session service.
-    pub fn native_session_client(&self) -> Result<SessionClient, String> {
+    pub fn session_client(
+        &self,
+        provider: strukt_remote::PersistentProvider,
+    ) -> Result<SessionClient, String> {
         let backend = Arc::new(RemoteSessionBackend::new(
             Arc::clone(&self.client),
-            strukt_remote::PersistentProvider::Native,
+            provider,
         ));
         let root = std::env::current_dir().map_err(|error| error.to_string())?;
         SessionClient::with_backend(
@@ -579,6 +582,10 @@ impl RemoteRuntime {
             backend,
         )
         .map_err(|error| error.to_string())
+    }
+
+    pub fn native_session_client(&self) -> Result<SessionClient, String> {
+        self.session_client(strukt_remote::PersistentProvider::Native)
     }
 
     #[must_use]

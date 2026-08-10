@@ -282,7 +282,9 @@ impl HelperServer {
                             .as_ref()
                             .ok_or("tmux session provider is unavailable".to_owned())
                             .and_then(|manager| {
-                                manager.exchange(payload).map_err(|error| error.to_string())
+                                manager
+                                    .exchange_session(payload)
+                                    .map_err(|error| error.to_string())
                             }),
                     };
                     result.map_or_else(internal_error, |payload| ResponseBody::SessionExchange {

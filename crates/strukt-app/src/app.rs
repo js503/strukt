@@ -430,6 +430,7 @@ pub enum Message {
     ResolveTerminalLink(bool),
     TerminalLinkOpened(Result<(), String>),
     PollTerminal,
+    SelectRemoteSessionProvider(strukt_remote::PersistentProvider),
     ConnectSessions,
     ReconnectSessions,
     SessionsConnected(SessionConnectCompletion),
@@ -854,6 +855,7 @@ impl StruktApp {
                             runtime.alias().to_owned(),
                             std::path::PathBuf::from(runtime.root()),
                             runtime.tmux_available(),
+                            strukt_remote::PersistentProvider::Native,
                         ),
                         Err(error) => self.session_error = Some(error),
                     }
@@ -1249,6 +1251,31 @@ impl StruktApp {
                         Task::none()
                     }
                 };
+            }
+            Message::SelectRemoteSessionProvider(provider) => {
+                let Some(runtime) = &self.remote_runtime else {
+                    self.session_error = Some("connect an SSH workspace first".into());
+                    return Task::none();
+                };
+                if provider == strukt_remote::PersistentProvider::Tmux && !runtime.tmux_available()
+                {
+                    self.session_error = Some("tmux is unavailable on this remote host".into());
+                    return Task::none();
+                }
+                match runtime.session_client(provider) {
+                    Ok(client) => {
+                        self.sessions.use_remote_client(
+                            client,
+                            runtime.alias().to_owned(),
+                            PathBuf::from(runtime.root()),
+                            runtime.tmux_available(),
+                            provider,
+                        );
+                        self.session_error = None;
+                    }
+                    Err(error) => self.session_error = Some(error),
+                }
+                return Task::none();
             }
             Message::ReconnectSessions => {
                 if self.sessions.health() != ClientHealth::Stale {
@@ -3853,6 +3880,7 @@ impl StruktApp {
             | Message::ResolveTerminalLink(_)
             | Message::TerminalLinkOpened(_)
             | Message::PollTerminal
+            | Message::SelectRemoteSessionProvider(_)
             | Message::ConnectSessions
             | Message::ReconnectSessions
             | Message::SessionsConnected(_)

@@ -217,6 +217,26 @@ mod tests {
     }
 
     #[test]
+    fn session_view_distinguishes_recommended_native_from_selected_tmux() {
+        assert_eq!(
+            crate::view::session_provider_summary(
+                "strukt native",
+                true,
+                Some(strukt_remote::PersistentProvider::Native),
+            ),
+            "strukt native · recommended  |  tmux · available"
+        );
+        assert_eq!(
+            crate::view::session_provider_summary(
+                "tmux",
+                true,
+                Some(strukt_remote::PersistentProvider::Tmux),
+            ),
+            "tmux · existing sessions  |  strukt native · recommended"
+        );
+    }
+
+    #[test]
     fn persistent_session_lines_use_portable_terminal_enter_framing() {
         assert_eq!(crate::app::session_line_input("alpha".into()), b"alpha\r");
     }

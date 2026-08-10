@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::Cursor;
 use std::path::{Component, Path, PathBuf};
@@ -5,6 +6,13 @@ use std::process::Command;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
+use strukt_session::{
+    AttentionState, PaneLifecycle, PaneScreenSnapshot, ProviderCapabilities,
+    ProviderCatalogSnapshot, ProviderError, ProviderKind, RequestBody as SessionRequest,
+    RequestEnvelope as SessionRequestEnvelope, ResponseBody as SessionResponse,
+    ResponseEnvelope as SessionResponseEnvelope, ServiceInstanceId, SessionCatalog,
+};
+use strukt_terminal::{GridSize, SplitAxis, TerminalModel};
 use thiserror::Error;
 
 use crate::{PersistentProvider, SessionPayload, read_frame, write_frame};
@@ -152,6 +160,38 @@ impl TmuxProvider {
     pub fn discover(&self) -> Result<TmuxCatalog, TmuxError> {
         let output = execute_bounded(&self.discovery_command(), MAX_DISCOVERY_BYTES)?;
         self.parse_discovery(&output)
+    }
+
+    /// Sends literal bytes to one validated tmux pane.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation, process, or bounded-output errors.
+    pub fn send_input(&self, pane: &TmuxTarget, bytes: &[u8]) -> Result<(), TmuxError> {
+        execute_bounded(&self.input_command(pane, bytes)?, MAX_CONTROL_RECORD_BYTES)?;
+        Ok(())
+    }
+
+    /// Resizes one validated tmux pane.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation, process, or bounded-output errors.
+    pub fn resize(&self, pane: &TmuxTarget, rows: u16, columns: u16) -> Result<(), TmuxError> {
+        execute_bounded(
+            &self.resize_command(pane, rows, columns)?,
+            MAX_CONTROL_RECORD_BYTES,
+        )?;
+        Ok(())
+    }
+
+    /// Captures bounded visible/history text for one validated tmux pane.
+    ///
+    /// # Errors
+    ///
+    /// Returns process or bounded-output errors.
+    pub fn capture(&self, pane: &TmuxTarget) -> Result<Vec<u8>, TmuxError> {
+        execute_bounded(&self.capture_command(pane), MAX_DISCOVERY_BYTES)
     }
 
     #[must_use]
@@ -445,6 +485,7 @@ pub enum TmuxResponse {
 pub struct TmuxManager {
     provider: TmuxProvider,
     attached: Mutex<Option<TmuxTarget>>,
+    session_bridge: Mutex<TmuxSessionBridge>,
 }
 
 impl TmuxManager {
@@ -453,6 +494,7 @@ impl TmuxManager {
         Self {
             provider,
             attached: Mutex::new(None),
+            session_bridge: Mutex::new(TmuxSessionBridge::new()),
         }
     }
 
@@ -533,6 +575,35 @@ impl TmuxManager {
         SessionPayload::new(PersistentProvider::Tmux, bytes).map_err(|_| TmuxError::OutputTooLarge)
     }
 
+    /// Translates the shared M3 session protocol into capability-limited tmux
+    /// discovery, input, resize, snapshot, and detach operations.
+    ///
+    /// # Errors
+    ///
+    /// Returns framing, catalog, process, snapshot, or state errors.
+    pub fn exchange_session(&self, payload: &SessionPayload) -> Result<SessionPayload, TmuxError> {
+        if payload.provider() != PersistentProvider::Tmux {
+            return Err(TmuxError::WrongProvider);
+        }
+        let mut cursor = Cursor::new(payload.bytes());
+        let request: SessionRequestEnvelope = read_frame(&mut cursor, MAX_DISCOVERY_BYTES)?;
+        if cursor.position() != payload.bytes().len() as u64 || request.validate().is_err() {
+            return Err(TmuxError::MalformedSessionRequest);
+        }
+        let mut bridge = self
+            .session_bridge
+            .lock()
+            .map_err(|_| TmuxError::StateUnavailable)?;
+        let body = bridge.handle(&self.provider, request.body().clone());
+        let response = match body {
+            Ok(body) => SessionResponseEnvelope::ok(request.request_id(), body),
+            Err(error) => SessionResponseEnvelope::error(request.request_id(), error),
+        };
+        let mut bytes = Vec::new();
+        write_frame(&mut bytes, &response, MAX_DISCOVERY_BYTES)?;
+        SessionPayload::new(PersistentProvider::Tmux, bytes).map_err(|_| TmuxError::OutputTooLarge)
+    }
+
     fn require_attached(&self) -> Result<(), TmuxError> {
         if self
             .attached
@@ -543,6 +614,217 @@ impl TmuxManager {
             return Err(TmuxError::NotAttached);
         }
         Ok(())
+    }
+}
+
+struct TmuxSessionBridge {
+    instance: ServiceInstanceId,
+    discovered: Option<TmuxCatalog>,
+    snapshot: Option<ProviderCatalogSnapshot>,
+    panes: HashMap<strukt_session::PaneId, TmuxBridgePane>,
+    output_revisions: HashMap<strukt_session::PaneId, u64>,
+}
+
+#[derive(Clone)]
+struct TmuxBridgePane {
+    target: TmuxTarget,
+    rows: u16,
+    columns: u16,
+}
+
+impl TmuxSessionBridge {
+    fn new() -> Self {
+        Self {
+            instance: ServiceInstanceId::new().expect("OS randomness initializes tmux provider"),
+            discovered: None,
+            snapshot: None,
+            panes: HashMap::new(),
+            output_revisions: HashMap::new(),
+        }
+    }
+
+    fn handle(
+        &mut self,
+        provider: &TmuxProvider,
+        request: SessionRequest,
+    ) -> Result<SessionResponse, ProviderError> {
+        match request {
+            SessionRequest::Catalog => {
+                self.refresh(provider)?;
+                Ok(SessionResponse::Catalog(self.snapshot()?))
+            }
+            SessionRequest::Attach | SessionRequest::Reconnect { .. } => {
+                self.refresh(provider)?;
+                Ok(SessionResponse::Attached(self.snapshot()?))
+            }
+            SessionRequest::Detach => Ok(SessionResponse::Detached),
+            SessionRequest::WritePane { pane, bytes, .. } => {
+                let target = self.pane(pane)?.target.clone();
+                provider
+                    .send_input(&target, &bytes)
+                    .map_err(provider_process_error)?;
+                Ok(SessionResponse::PaneWritten)
+            }
+            SessionRequest::ResizePane {
+                pane,
+                rows,
+                columns,
+                ..
+            } => {
+                let target = self.pane(pane)?.target.clone();
+                provider
+                    .resize(&target, rows, columns)
+                    .map_err(provider_process_error)?;
+                if let Some(projection) = self.panes.get_mut(&pane) {
+                    projection.rows = rows;
+                    projection.columns = columns;
+                }
+                Ok(SessionResponse::PaneResized)
+            }
+            SessionRequest::Snapshot { pane } => {
+                let projection = self.pane(pane)?.clone();
+                let bytes = provider
+                    .capture(&projection.target)
+                    .map_err(provider_process_error)?;
+                let size = GridSize::new(
+                    usize::from(projection.rows),
+                    usize::from(projection.columns),
+                )
+                .map_err(|error| ProviderError::internal(error.to_string()))?;
+                let mut terminal = TerminalModel::new(size, 1_000);
+                terminal.advance(&bytes);
+                let revision = self
+                    .output_revisions
+                    .entry(pane)
+                    .and_modify(|revision| *revision = revision.saturating_add(1))
+                    .or_insert(1);
+                let snapshot = PaneScreenSnapshot::from_terminal(
+                    &terminal.snapshot(0),
+                    *revision,
+                    1,
+                    PaneLifecycle::Running,
+                    0,
+                    AttentionState::None,
+                )
+                .map_err(|error| ProviderError::internal(error.to_string()))?;
+                Ok(SessionResponse::PaneSnapshot(snapshot))
+            }
+            _ => Err(ProviderError::InvalidAction),
+        }
+    }
+
+    fn refresh(&mut self, provider: &TmuxProvider) -> Result<(), ProviderError> {
+        let discovered = provider.discover().map_err(provider_process_error)?;
+        if self.discovered.as_ref() == Some(&discovered) {
+            return Ok(());
+        }
+        let mut catalog = SessionCatalog::new();
+        let mut panes = HashMap::new();
+        for (session_index, discovered_session) in discovered.sessions().iter().enumerate() {
+            if session_index >= strukt_session::MAX_SESSIONS {
+                break;
+            }
+            let session_name = catalog_name(discovered_session.name(), "tmux session");
+            let session = catalog
+                .create_session(catalog.revision(), session_name, Path::new("/"))
+                .map_err(|error| ProviderError::internal(error.to_string()))?;
+            for (window_index, discovered_window) in discovered_session.windows().iter().enumerate()
+            {
+                let window = if window_index == 0 {
+                    catalog
+                        .session(session)
+                        .and_then(strukt_session::Session::active_window)
+                        .map(strukt_session::SessionWindow::id)
+                        .ok_or(ProviderError::NotFound)?
+                } else {
+                    catalog
+                        .create_window(
+                            catalog.revision(),
+                            session,
+                            catalog_name(discovered_window.name(), "tmux window"),
+                            Path::new("/"),
+                        )
+                        .map_err(|error| ProviderError::internal(error.to_string()))?
+                };
+                if window_index == 0 {
+                    catalog
+                        .rename_window(
+                            catalog.revision(),
+                            session,
+                            window,
+                            catalog_name(discovered_window.name(), "tmux window"),
+                        )
+                        .map_err(|error| ProviderError::internal(error.to_string()))?;
+                }
+                for (pane_index, discovered_pane) in discovered_window.panes().iter().enumerate() {
+                    let pane = if pane_index == 0 {
+                        catalog
+                            .session(session)
+                            .and_then(|item| item.windows().iter().find(|item| item.id() == window))
+                            .map(strukt_session::SessionWindow::focused_pane)
+                            .map(strukt_session::SessionPane::id)
+                            .ok_or(ProviderError::NotFound)?
+                    } else {
+                        catalog
+                            .activate_window(catalog.revision(), session, window)
+                            .map_err(|error| ProviderError::internal(error.to_string()))?;
+                        catalog
+                            .split_focused(catalog.revision(), session, SplitAxis::Vertical)
+                            .map_err(|error| ProviderError::internal(error.to_string()))?
+                    };
+                    let (rows, columns) = discovered_pane.dimensions();
+                    let generation = catalog
+                        .begin_pane_generation(catalog.revision(), session, pane, rows, columns)
+                        .map_err(|error| ProviderError::internal(error.to_string()))?;
+                    catalog
+                        .set_generation_lifecycle(session, pane, generation, PaneLifecycle::Running)
+                        .map_err(|error| ProviderError::internal(error.to_string()))?;
+                    panes.insert(
+                        pane,
+                        TmuxBridgePane {
+                            target: TmuxTarget::pane(discovered_pane.raw_id().to_owned())
+                                .map_err(provider_process_error)?,
+                            rows,
+                            columns,
+                        },
+                    );
+                }
+            }
+        }
+        self.discovered = Some(discovered);
+        self.panes = panes;
+        self.snapshot = Some(ProviderCatalogSnapshot::new(
+            self.instance,
+            ProviderKind::Tmux,
+            ProviderCapabilities::tmux_interop(),
+            catalog,
+        ));
+        Ok(())
+    }
+
+    fn snapshot(&self) -> Result<ProviderCatalogSnapshot, ProviderError> {
+        self.snapshot.clone().ok_or(ProviderError::Unavailable)
+    }
+
+    fn pane(&self, pane: strukt_session::PaneId) -> Result<&TmuxBridgePane, ProviderError> {
+        self.panes.get(&pane).ok_or(ProviderError::NotFound)
+    }
+}
+
+fn catalog_name(value: &str, fallback: &str) -> String {
+    let value = if value.trim().is_empty() {
+        fallback
+    } else {
+        value
+    };
+    value.chars().take(80).collect()
+}
+
+fn provider_process_error(error: TmuxError) -> ProviderError {
+    match error {
+        TmuxError::SessionNotFound | TmuxError::InvalidTarget => ProviderError::NotFound,
+        TmuxError::InvalidInput | TmuxError::InvalidDimensions => ProviderError::InvalidAction,
+        other => ProviderError::process_failed(other.to_string()),
     }
 }
 
@@ -715,6 +997,8 @@ pub enum TmuxError {
     ControlRecordTooLarge,
     #[error("tmux control record is malformed")]
     MalformedControlRecord,
+    #[error("tmux shared session request is malformed")]
+    MalformedSessionRequest,
     #[error("tmux provider payload names the wrong provider")]
     WrongProvider,
     #[error("tmux provider is not attached")]

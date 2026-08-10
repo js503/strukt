@@ -64,6 +64,22 @@ impl NativeSessionManager {
             .map_err(|_| NativeSessionError::StateUnavailable)?;
         let response = match body {
             SessionRequest::Attach | SessionRequest::Reconnect { .. } => {
+                if matches!(body, SessionRequest::Attach)
+                    && client.health() == strukt_session::ClientHealth::Ready
+                {
+                    let response = client.catalog().cloned().map_or_else(
+                        || SessionResponseEnvelope::error(request_id, ProviderError::Unavailable),
+                        |catalog| {
+                            SessionResponseEnvelope::ok(
+                                request_id,
+                                SessionResponse::Attached(remote_catalog(catalog)),
+                            )
+                        },
+                    );
+                    let bytes = encode_cbor(&response, MAX_SESSION_FRAME_BYTES)?;
+                    return SessionPayload::new(PersistentProvider::Native, bytes)
+                        .map_err(Into::into);
+                }
                 let intent = if matches!(body, SessionRequest::Reconnect { .. }) {
                     ClientConnectIntent::Reconnect
                 } else {

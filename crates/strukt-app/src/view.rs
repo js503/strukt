@@ -682,10 +682,39 @@ fn sessions_canvas(app: &StruktApp) -> Element<'_, Message> {
         || "Local machine".to_owned(),
         |host| format!("Remote host · {host}"),
     );
-    let provider_summary = if app.sessions.tmux_available() {
-        format!("{provider} · recommended  |  tmux · available")
+    let provider_summary = session_provider_summary(
+        provider,
+        app.sessions.tmux_available(),
+        app.sessions.remote_provider(),
+    );
+    let provider_selector: Element<'_, Message> = if app.sessions.remote_host().is_some() {
+        let selected = app
+            .sessions
+            .remote_provider()
+            .unwrap_or(strukt_remote::PersistentProvider::Native);
+        row![
+            text("Provider"),
+            button(if selected == strukt_remote::PersistentProvider::Native {
+                "● strukt native · recommended"
+            } else {
+                "○ strukt native · recommended"
+            })
+            .on_press(Message::SelectRemoteSessionProvider(
+                strukt_remote::PersistentProvider::Native,
+            )),
+            button(if selected == strukt_remote::PersistentProvider::Tmux {
+                "● tmux · existing sessions"
+            } else {
+                "○ tmux · existing sessions"
+            })
+            .on_press_maybe(app.sessions.tmux_available().then_some(
+                Message::SelectRemoteSessionProvider(strukt_remote::PersistentProvider::Tmux),
+            )),
+        ]
+        .spacing(6)
+        .into()
     } else {
-        provider.to_owned()
+        Space::new().height(Length::Shrink).into()
     };
     let mut controls = row![
         button("Connect").on_press_maybe(
@@ -696,8 +725,10 @@ fn sessions_canvas(app: &StruktApp) -> Element<'_, Message> {
             .then_some(Message::ConnectSessions),
         ),
         button("New session").on_press_maybe(
-            (ready && capabilities.create_session && app.workspace.is_some())
-                .then_some(Message::CreateSession),
+            (ready
+                && capabilities.create_session
+                && (app.workspace.is_some() || app.sessions.workspace_root().is_some()))
+            .then_some(Message::CreateSession),
         ),
         button("Start pane").on_press_maybe(
             (ready && capabilities.mutate_panes && app.sessions.selected_pane().is_some())
@@ -952,6 +983,7 @@ fn sessions_canvas(app: &StruktApp) -> Element<'_, Message> {
         } else {
             "Local PTYs continue in strukt-sessiond after the app detaches."
         }),
+        provider_selector,
         controls,
         hierarchy_actions,
         pane_input,
@@ -966,6 +998,21 @@ fn sessions_canvas(app: &StruktApp) -> Element<'_, Message> {
     ]
     .spacing(10)
     .into()
+}
+
+pub(crate) fn session_provider_summary(
+    provider: &str,
+    tmux_available: bool,
+    selected: Option<strukt_remote::PersistentProvider>,
+) -> String {
+    if !tmux_available {
+        return provider.to_owned();
+    }
+    if selected == Some(strukt_remote::PersistentProvider::Tmux) {
+        "tmux · existing sessions  |  strukt native · recommended".to_owned()
+    } else {
+        format!("{provider} · recommended  |  tmux · available")
+    }
 }
 
 fn confirmation_row(label: String) -> Element<'static, Message> {

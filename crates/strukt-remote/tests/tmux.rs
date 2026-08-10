@@ -5,6 +5,10 @@ use strukt_remote::{
     PersistentProvider, SessionPayload, TmuxControlEvent, TmuxManager, TmuxProvider, TmuxRequest,
     TmuxResponse, TmuxTarget, read_frame, write_frame,
 };
+use strukt_session::{
+    ProviderKind, RequestBody as SessionRequest, RequestEnvelope as SessionRequestEnvelope,
+    ResponseBody as SessionResponse, ResponseEnvelope as SessionResponseEnvelope,
+};
 
 #[test]
 fn discovery_uses_fixed_argv_and_parses_machine_records() {
@@ -145,6 +149,8 @@ fn real_tmux_discovery_uses_an_isolated_server_when_available() {
         TmuxResponse::Detached
     );
 
+    verify_shared_session_protocol(&manager);
+
     let cleanup = Command::new(executable)
         .args(["-L", &server, "kill-server"])
         .status()
@@ -152,10 +158,83 @@ fn real_tmux_discovery_uses_an_isolated_server_when_available() {
     assert!(cleanup.success());
 }
 
+fn verify_shared_session_protocol(manager: &TmuxManager) {
+    let attached = tmux_session_exchange(
+        manager,
+        &SessionRequestEnvelope::new(1, 0, SessionRequest::Attach),
+    );
+    let SessionResponse::Attached(snapshot) = attached.result().clone().unwrap() else {
+        panic!("expected shared tmux session catalog")
+    };
+    assert_eq!(snapshot.provider_kind(), ProviderKind::Tmux);
+    let refreshed = tmux_session_exchange(
+        manager,
+        &SessionRequestEnvelope::new(2, 0, SessionRequest::Catalog),
+    );
+    let SessionResponse::Catalog(refreshed) = refreshed.result().clone().unwrap() else {
+        panic!("expected refreshed shared tmux session catalog")
+    };
+    assert_eq!(
+        refreshed, snapshot,
+        "unchanged tmux topology keeps stable IDs"
+    );
+    let pane = snapshot
+        .catalog()
+        .sessions()
+        .next()
+        .unwrap()
+        .active_window()
+        .unwrap()
+        .focused_pane()
+        .id();
+    let written = tmux_session_exchange(
+        manager,
+        &SessionRequestEnvelope::new(
+            3,
+            snapshot.catalog().revision(),
+            SessionRequest::WritePane {
+                pane,
+                generation: 1,
+                bytes: b"echo M5_SHARED_PROVIDER\n".to_vec(),
+            },
+        ),
+    );
+    assert!(matches!(written.result(), Ok(SessionResponse::PaneWritten)));
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let captured = tmux_session_exchange(
+        manager,
+        &SessionRequestEnvelope::new(
+            4,
+            snapshot.catalog().revision(),
+            SessionRequest::Snapshot { pane },
+        ),
+    );
+    let SessionResponse::PaneSnapshot(screen) = captured.result().clone().unwrap() else {
+        panic!("expected shared tmux pane snapshot")
+    };
+    let screen_text = screen
+        .rows()
+        .iter()
+        .flat_map(|row| row.iter().map(strukt_terminal::Cell::text))
+        .collect::<String>();
+    assert!(screen_text.contains("M5_SHARED_PROVIDER"));
+}
+
 fn tmux_exchange(manager: &TmuxManager, request: &TmuxRequest) -> TmuxResponse {
     let mut bytes = Vec::new();
     write_frame(&mut bytes, &request, 1024 * 1024).unwrap();
     let payload = SessionPayload::new(PersistentProvider::Tmux, bytes).unwrap();
     let response = manager.exchange(&payload).unwrap();
+    read_frame(&mut std::io::Cursor::new(response.bytes()), 1024 * 1024).unwrap()
+}
+
+fn tmux_session_exchange(
+    manager: &TmuxManager,
+    request: &SessionRequestEnvelope,
+) -> SessionResponseEnvelope {
+    let mut bytes = Vec::new();
+    write_frame(&mut bytes, request, 1024 * 1024).unwrap();
+    let payload = SessionPayload::new(PersistentProvider::Tmux, bytes).unwrap();
+    let response = manager.exchange_session(&payload).unwrap();
     read_frame(&mut std::io::Cursor::new(response.bytes()), 1024 * 1024).unwrap()
 }

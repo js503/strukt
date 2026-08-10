@@ -23,6 +23,7 @@ pub(crate) struct SessionSurfaces {
     remote_host: Option<String>,
     workspace_root: Option<std::path::PathBuf>,
     tmux_available: bool,
+    remote_provider: Option<strukt_remote::PersistentProvider>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,6 +50,7 @@ impl Default for SessionSurfaces {
                 remote_host: None,
                 workspace_root: None,
                 tmux_available: false,
+                remote_provider: None,
             },
         }
     }
@@ -68,6 +70,7 @@ impl SessionSurfaces {
             remote_host: None,
             workspace_root: None,
             tmux_available: false,
+            remote_provider: None,
         }
     }
 
@@ -77,11 +80,13 @@ impl SessionSurfaces {
         host: String,
         workspace_root: std::path::PathBuf,
         tmux_available: bool,
+        provider: strukt_remote::PersistentProvider,
     ) {
         *self = Self::with_client(client);
         self.remote_host = Some(host);
         self.workspace_root = Some(workspace_root);
         self.tmux_available = tmux_available;
+        self.remote_provider = Some(provider);
     }
 
     pub(crate) fn mark_remote_disconnected(&mut self) {
@@ -102,6 +107,10 @@ impl SessionSurfaces {
 
     pub(crate) const fn tmux_available(&self) -> bool {
         self.tmux_available
+    }
+
+    pub(crate) const fn remote_provider(&self) -> Option<strukt_remote::PersistentProvider> {
+        self.remote_provider
     }
 
     pub(crate) fn health(&self) -> ClientHealth {
@@ -441,12 +450,17 @@ mod tests {
             "ec2-dev".into(),
             std::path::PathBuf::from("/srv/project"),
             true,
+            strukt_remote::PersistentProvider::Native,
         );
 
         assert_eq!(surfaces.health(), ClientHealth::Stopped);
         assert_eq!(surfaces.remote_host(), Some("ec2-dev"));
         assert_eq!(surfaces.workspace_root(), Some(Path::new("/srv/project")));
         assert!(surfaces.tmux_available());
+        assert_eq!(
+            surfaces.remote_provider(),
+            Some(strukt_remote::PersistentProvider::Native)
+        );
         assert!(surfaces.catalog().is_none());
     }
 }
