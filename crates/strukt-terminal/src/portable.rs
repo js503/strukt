@@ -184,12 +184,8 @@ impl TerminalProcess for PortableProcess {
     }
 
     fn try_wait(&mut self) -> Result<Option<ExitStatus>, TransportError> {
-        if self.cached_exit.is_some() {
-            self.finish_reader_if_ready();
-            return Ok(self
-                .reader_thread
-                .is_none()
-                .then(|| self.cached_exit.clone().expect("exit status is cached")));
+        if let Some(status) = &self.cached_exit {
+            return Ok(Some(status.clone()));
         }
         let status = self.child.try_wait().map_err(io_error)?.map(|status| {
             ExitStatus::new(
@@ -201,9 +197,6 @@ impl TerminalProcess for PortableProcess {
         if let Some(status) = &status {
             self.cached_exit = Some(status.clone());
             self.finish_reader_if_ready();
-            if self.reader_thread.is_some() {
-                return Ok(None);
-            }
         }
         Ok(status)
     }
