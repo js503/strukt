@@ -15,6 +15,7 @@ pub mod protocol;
 pub mod ssh;
 pub mod state;
 pub mod target;
+pub mod tmux;
 
 pub use client::{HelperClient, OpenSshClient, RemoteClientError};
 pub use config::{ConfigDiscovery, ConfigDiscoveryLimits, discover_aliases};
@@ -53,3 +54,7 @@ pub use state::{
     RecoveryAction, RetryPolicy, StateError,
 };
 pub use target::{ConnectionId, RemoteRoot, RemoteTargetError, RemoteWorkspaceId, SshAlias};
+pub use tmux::{
+    TmuxCatalog, TmuxCommand, TmuxControlEvent, TmuxError, TmuxManager, TmuxPane, TmuxProvider,
+    TmuxRequest, TmuxResponse, TmuxSession, TmuxTarget, TmuxWindow,
+};

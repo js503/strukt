@@ -27,6 +27,7 @@ pub struct HelperServer {
     processes: Mutex<RemoteProcessManager>,
     languages: Mutex<RemoteLanguageManager>,
     native_sessions: Option<crate::NativeSessionManager>,
+    tmux_sessions: Option<crate::TmuxManager>,
 }
 
 impl HelperServer {
@@ -51,6 +52,7 @@ impl HelperServer {
                     .map_err(|error| HelperError::Subsystem(error.to_string()))?,
             ),
             native_sessions: default_native_session_manager(),
+            tmux_sessions: default_tmux_manager(),
         })
     }
 
@@ -70,6 +72,9 @@ impl HelperServer {
         let mut capabilities = Self::capabilities();
         if self.native_sessions.is_some() {
             capabilities.insert(Capability::Sessions);
+        }
+        if self.tmux_sessions.is_some() {
+            capabilities.insert(Capability::Tmux);
         }
         capabilities
     }
@@ -263,18 +268,31 @@ impl HelperServer {
             }),
             RequestBody::Watch { .. } => unsupported("filesystem watch transport is unavailable"),
             RequestBody::SessionExchange { payload } => {
-                if !payload.is_valid() {
+                if payload.is_valid() {
+                    let result = match payload.provider() {
+                        crate::PersistentProvider::Native => self
+                            .native_sessions
+                            .as_ref()
+                            .ok_or("native session provider is unavailable".to_owned())
+                            .and_then(|manager| {
+                                manager.exchange(payload).map_err(|error| error.to_string())
+                            }),
+                        crate::PersistentProvider::Tmux => self
+                            .tmux_sessions
+                            .as_ref()
+                            .ok_or("tmux session provider is unavailable".to_owned())
+                            .and_then(|manager| {
+                                manager.exchange(payload).map_err(|error| error.to_string())
+                            }),
+                    };
+                    result.map_or_else(internal_error, |payload| ResponseBody::SessionExchange {
+                        payload,
+                    })
+                } else {
                     ResponseBody::Error(RemoteError::new(
                         RemoteErrorKind::InvalidRequest,
                         "persistent session payload is invalid",
                     ))
-                } else if let Some(manager) = &self.native_sessions {
-                    manager.exchange(payload).map_or_else(
-                        |error| internal_error(error.to_string()),
-                        |payload| ResponseBody::SessionExchange { payload },
-                    )
-                } else {
-                    unsupported("persistent session provider is unavailable")
                 }
             }
             RequestBody::Cancel { .. } | RequestBody::GrantCredit { .. } => {
@@ -742,4 +760,10 @@ fn default_native_session_manager() -> Option<crate::NativeSessionManager> {
         .join("strukt")
         .join("sessions");
     crate::NativeSessionManager::new(application_data, service).ok()
+}
+
+fn default_tmux_manager() -> Option<crate::TmuxManager> {
+    let executable = crate::TmuxProvider::discover_executable()?;
+    let provider = crate::TmuxProvider::new(executable).ok()?;
+    Some(crate::TmuxManager::new(provider))
 }
