@@ -729,6 +729,24 @@ impl RemoteRuntime {
             }
             match self.request(RequestBody::PollProcess { process_id })? {
                 ResponseBody::Completed { exit_code } => {
+                    loop {
+                        match self.request(RequestBody::DrainProcess {
+                            process_id,
+                            max_bytes: 32 * 1024,
+                        })? {
+                            ResponseBody::Stream(chunk) if chunk.bytes.is_empty() => break,
+                            ResponseBody::Stream(chunk) => output.extend_from_slice(&chunk.bytes),
+                            ResponseBody::Error(error) => return Err(error.detail),
+                            _ => {
+                                return Err(
+                                    "remote helper returned unexpected final task output".into()
+                                );
+                            }
+                        }
+                        if output.len() > 1024 * 1024 {
+                            return Err("remote task output exceeded 1 MiB".into());
+                        }
+                    }
                     return Ok(format!(
                         "exit {}\n{}",
                         exit_code.map_or_else(|| "unknown".into(), |code| code.to_string()),

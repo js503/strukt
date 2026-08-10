@@ -111,7 +111,10 @@ fn smoke_app_coordinator(fake_ssh: &Path, root: &Path) -> Result<(), String> {
         .as_deref()
         .is_ok_and(|output| output.contains("fixture:oneshot"))
     {
-        return Err("app remote task did not publish bounded output".into());
+        return Err(format!(
+            "app remote task did not publish bounded output: {:?}",
+            task.result
+        ));
     }
     let diagnostics_fixture = sibling_binary("remote-diagnostics-fixture")?;
     let diagnostics = runtime.run_language_diagnostics(
@@ -165,7 +168,7 @@ fn smoke_process(client: &mut OpenSshClient, root: &Path) -> Result<(), String> 
     }))?;
     expect_ack(client.request(RequestBody::ProcessInput {
         process_id,
-        bytes: b"hello\n".to_vec(),
+        bytes: b"hello\r".to_vec(),
     }))?;
     let _ = root;
     let mut output = Vec::new();

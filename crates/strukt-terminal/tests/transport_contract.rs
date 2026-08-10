@@ -48,6 +48,21 @@ fn native_transport_terminates_a_long_running_fixture() {
 }
 
 #[test]
+fn process_completion_does_not_overtake_final_output() {
+    let fixture = PathBuf::from(env!("CARGO_BIN_EXE_terminal-fixture"));
+    let mut child = PortableTransport::new()
+        .spawn(request(&fixture, "oneshot", 24, 80))
+        .unwrap();
+
+    assert_eq!(child.wait(Duration::from_secs(5)).unwrap().code(), Some(0));
+    assert!(read_until(
+        &mut *child,
+        "fixture-oneshot",
+        Duration::from_secs(1)
+    ));
+}
+
+#[test]
 fn transport_validates_requests_before_spawn() {
     assert!(TerminalSize::new(0, 80).is_err());
     let fixture = PathBuf::from(env!("CARGO_BIN_EXE_terminal-fixture"));

@@ -6,10 +6,16 @@ fn main() {
         Some("echo") => echo_one_line(),
         Some("echo-resize") => echo_then_wait_for_completion(),
         Some("wait") => wait_until_terminated(),
+        Some("oneshot") => write_oneshot(),
         Some("burst") => write_bounded_burst(),
         Some("stress") => write_stress_stream(),
         _ => std::process::exit(64),
     }
+}
+
+fn write_oneshot() {
+    println!("fixture-oneshot");
+    std::io::stdout().flush().unwrap();
 }
 
 fn echo_one_line() {
