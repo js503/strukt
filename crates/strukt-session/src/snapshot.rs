@@ -116,6 +116,17 @@ impl ProviderCatalogSnapshot {
     }
 
     #[must_use]
+    pub fn for_provider(
+        mut self,
+        provider_kind: ProviderKind,
+        capabilities: ProviderCapabilities,
+    ) -> Self {
+        self.provider_kind = provider_kind;
+        self.capabilities = capabilities;
+        self
+    }
+
+    #[must_use]
     pub const fn service_instance(&self) -> ServiceInstanceId {
         self.service_instance
     }

@@ -9,9 +9,10 @@ use strukt_language::{FrameDecoder, FrameLimits, IncomingMessage, encode_frame, 
 use strukt_persistence::RemoteConnectionRecord;
 use strukt_remote::{
     Capability as RemoteCapability, HelperArtifact, OpenSsh, OpenSshClient, RemoteBuildTarget,
-    RemoteRoot, RequestBody, ResponseBody, SshAlias, SshCancellation, SshCommandSpec,
-    SshExecutable, execute_helper_install,
+    RemoteRoot, RemoteSessionBackend, RequestBody, ResponseBody, SshAlias, SshCancellation,
+    SshCommandSpec, SshExecutable, execute_helper_install,
 };
+use strukt_session::SessionClient;
 use strukt_terminal::{SpawnRequest, TerminalSize};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -561,6 +562,28 @@ impl RemoteRuntime {
     #[must_use]
     pub fn root(&self) -> &str {
         &self.root
+    }
+
+    /// Creates a lazy native-remote session client over this helper connection.
+    ///
+    /// This does not attach to or start the remote session service.
+    pub fn native_session_client(&self) -> Result<SessionClient, String> {
+        let backend = Arc::new(RemoteSessionBackend::new(
+            Arc::clone(&self.client),
+            strukt_remote::PersistentProvider::Native,
+        ));
+        let root = std::env::current_dir().map_err(|error| error.to_string())?;
+        SessionClient::with_backend(
+            root.join("remote-session-data"),
+            root.join("remote-sessiond"),
+            backend,
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    #[must_use]
+    pub fn tmux_available(&self) -> bool {
+        self.capabilities.contains(&RemoteCapability::Tmux)
     }
 
     pub fn list_root(&self, generation: u64) -> RemoteFilesCompletion {

@@ -12,6 +12,7 @@ pub mod native_session;
 pub mod path;
 pub mod process;
 pub mod protocol;
+pub mod session_client;
 pub mod ssh;
 pub mod state;
 pub mod target;
@@ -45,6 +46,7 @@ pub use protocol::{
     RequestEnvelope, RequestId, ResponseBody, ResponseEnvelope, ServerHello, SessionPayload,
     StreamChunk, negotiate,
 };
+pub use session_client::RemoteSessionBackend;
 pub use ssh::{
     EffectiveConfig, OpenSsh, OpenSshError, SshCancellation, SshCommandKind, SshCommandSpec,
     SshExecutable, SshExecutor, SshOutput, parse_effective_config,

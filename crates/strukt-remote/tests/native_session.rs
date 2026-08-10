@@ -22,7 +22,12 @@ fn native_proxy_starts_only_for_explicit_attach_and_preserves_correlation() {
 
     let response = exchange(&manager, &RequestEnvelope::new(41, 0, RequestBody::Attach));
     assert_eq!(response.request_id(), 41);
-    assert!(matches!(response.result(), Ok(ResponseBody::Attached(_))));
+    assert!(matches!(
+        response.result(),
+        Ok(ResponseBody::Attached(snapshot))
+            if snapshot.provider_kind() == ProviderKind::NativeRemote
+                && snapshot.capabilities() == ProviderCapabilities::native_remote()
+    ));
     assert_eq!(backend.starts(), 1);
 }
 

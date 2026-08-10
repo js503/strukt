@@ -20,6 +20,9 @@ pub(crate) struct SessionSurfaces {
     pending: Option<PendingRequest>,
     migration_plan: Option<SessionMigrationPlan>,
     completed_migration: Option<SessionMigrationPlan>,
+    remote_host: Option<String>,
+    workspace_root: Option<std::path::PathBuf>,
+    tmux_available: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,6 +46,9 @@ impl Default for SessionSurfaces {
                 pending: None,
                 migration_plan: None,
                 completed_migration: None,
+                remote_host: None,
+                workspace_root: None,
+                tmux_available: false,
             },
         }
     }
@@ -59,7 +65,43 @@ impl SessionSurfaces {
             pending: None,
             migration_plan: None,
             completed_migration: None,
+            remote_host: None,
+            workspace_root: None,
+            tmux_available: false,
         }
+    }
+
+    pub(crate) fn use_remote_client(
+        &mut self,
+        client: SessionClient,
+        host: String,
+        workspace_root: std::path::PathBuf,
+        tmux_available: bool,
+    ) {
+        *self = Self::with_client(client);
+        self.remote_host = Some(host);
+        self.workspace_root = Some(workspace_root);
+        self.tmux_available = tmux_available;
+    }
+
+    pub(crate) fn mark_remote_disconnected(&mut self) {
+        if self.remote_host.is_some()
+            && let Some(client) = &mut self.client
+        {
+            client.mark_transport_lost("SSH connection closed");
+        }
+    }
+
+    pub(crate) fn remote_host(&self) -> Option<&str> {
+        self.remote_host.as_deref()
+    }
+
+    pub(crate) fn workspace_root(&self) -> Option<&Path> {
+        self.workspace_root.as_deref()
+    }
+
+    pub(crate) const fn tmux_available(&self) -> bool {
+        self.tmux_available
     }
 
     pub(crate) fn health(&self) -> ClientHealth {
@@ -386,5 +428,25 @@ mod tests {
         assert_eq!(surfaces.selected_session(), None);
         assert_eq!(surfaces.selected_window(), None);
         assert_eq!(surfaces.selected_pane(), None);
+    }
+
+    #[test]
+    fn remote_context_is_explicit_and_side_effect_free_until_connect() {
+        let root = std::env::current_dir().expect("current directory");
+        let client = SessionClient::new(root.join("remote-data"), root.join("remote-sessiond"))
+            .expect("client");
+        let mut surfaces = SessionSurfaces::default();
+        surfaces.use_remote_client(
+            client,
+            "ec2-dev".into(),
+            std::path::PathBuf::from("/srv/project"),
+            true,
+        );
+
+        assert_eq!(surfaces.health(), ClientHealth::Stopped);
+        assert_eq!(surfaces.remote_host(), Some("ec2-dev"));
+        assert_eq!(surfaces.workspace_root(), Some(Path::new("/srv/project")));
+        assert!(surfaces.tmux_available());
+        assert!(surfaces.catalog().is_none());
     }
 }

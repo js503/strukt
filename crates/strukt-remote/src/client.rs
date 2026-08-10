@@ -167,7 +167,16 @@ impl OpenSshClient {
             reader,
             writer,
             &hello,
-            &crate::HelperServer::capabilities(),
+            &BTreeSet::from([
+                Capability::Files,
+                Capability::Search,
+                Capability::Git,
+                Capability::Processes,
+                Capability::Language,
+                Capability::Watches,
+                Capability::Sessions,
+                Capability::Tmux,
+            ]),
             generation,
         ) {
             Ok(helper) => helper,

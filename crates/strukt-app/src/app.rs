@@ -833,6 +833,17 @@ impl StruktApp {
                     return Task::none();
                 }
                 self.remote_runtime = completion.result.ok();
+                if let Some(runtime) = &self.remote_runtime {
+                    match runtime.native_session_client() {
+                        Ok(client) => self.sessions.use_remote_client(
+                            client,
+                            runtime.alias().to_owned(),
+                            std::path::PathBuf::from(runtime.root()),
+                            runtime.tmux_available(),
+                        ),
+                        Err(error) => self.session_error = Some(error),
+                    }
+                }
                 let refresh = self
                     .remote_runtime
                     .as_ref()
@@ -918,6 +929,7 @@ impl StruktApp {
             }
             Message::DisconnectRemote => {
                 self.remote.disconnected();
+                self.sessions.mark_remote_disconnected();
                 if let Some(runtime) = self.remote_runtime.take() {
                     return Task::perform(async move { runtime.disconnect() }, |()| {
                         Message::SelectActivity(Activity::Connections)
@@ -1258,9 +1270,14 @@ impl StruktApp {
             }
             Message::CreateSession => {
                 let Some(root) = self
-                    .workspace
-                    .as_ref()
-                    .map(|workspace| workspace.root.path().to_path_buf())
+                    .sessions
+                    .workspace_root()
+                    .map(Path::to_path_buf)
+                    .or_else(|| {
+                        self.workspace
+                            .as_ref()
+                            .map(|workspace| workspace.root.path().to_path_buf())
+                    })
                 else {
                     self.session_error = Some("open a workspace before creating a session".into());
                     return Task::none();

@@ -2,9 +2,10 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use strukt_session::{
-    ClientConnectIntent, ClientError, FrameDecoder, ProviderError, RequestBody as SessionRequest,
-    RequestEnvelope as SessionRequestEnvelope, ResponseBody as SessionResponse,
-    ResponseEnvelope as SessionResponseEnvelope, SessionClient, decode_cbor, encode_cbor,
+    ClientConnectIntent, ClientError, FrameDecoder, ProviderCapabilities, ProviderError,
+    ProviderKind, RequestBody as SessionRequest, RequestEnvelope as SessionRequestEnvelope,
+    ResponseBody as SessionResponse, ResponseEnvelope as SessionResponseEnvelope, SessionClient,
+    decode_cbor, encode_cbor,
 };
 use thiserror::Error;
 
@@ -83,7 +84,7 @@ impl NativeSessionManager {
                             |catalog| {
                                 SessionResponseEnvelope::ok(
                                     request_id,
-                                    SessionResponse::Attached(catalog),
+                                    SessionResponse::Attached(remote_catalog(catalog)),
                                 )
                             },
                         ),
@@ -101,7 +102,7 @@ impl NativeSessionManager {
                 .map(strukt_session::ClientRequestJob::run)
             {
                 Ok(completion) => match client.finish_request(completion) {
-                    Ok(body) => SessionResponseEnvelope::ok(request_id, body),
+                    Ok(body) => SessionResponseEnvelope::ok(request_id, remote_response(body)),
                     Err(error) => {
                         SessionResponseEnvelope::error(request_id, provider_error(&error))
                     }
@@ -111,6 +112,26 @@ impl NativeSessionManager {
         };
         let bytes = encode_cbor(&response, MAX_SESSION_FRAME_BYTES)?;
         SessionPayload::new(PersistentProvider::Native, bytes).map_err(Into::into)
+    }
+}
+
+fn remote_catalog(
+    catalog: strukt_session::ProviderCatalogSnapshot,
+) -> strukt_session::ProviderCatalogSnapshot {
+    catalog.for_provider(
+        ProviderKind::NativeRemote,
+        ProviderCapabilities::native_remote(),
+    )
+}
+
+fn remote_response(response: SessionResponse) -> SessionResponse {
+    match response {
+        SessionResponse::Catalog(catalog) => SessionResponse::Catalog(remote_catalog(catalog)),
+        SessionResponse::Attached(catalog) => SessionResponse::Attached(remote_catalog(catalog)),
+        SessionResponse::CatalogChanged(catalog) => {
+            SessionResponse::CatalogChanged(remote_catalog(catalog))
+        }
+        other => other,
     }
 }
 

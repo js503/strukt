@@ -675,6 +675,18 @@ fn sessions_canvas(app: &StruktApp) -> Element<'_, Message> {
         .catalog()
         .map(strukt_session::ProviderCatalogSnapshot::capabilities)
         .unwrap_or_default();
+    let provider = app.sessions.catalog().map_or("strukt native", |snapshot| {
+        snapshot.provider_kind().display_name()
+    });
+    let location = app.sessions.remote_host().map_or_else(
+        || "Local machine".to_owned(),
+        |host| format!("Remote host · {host}"),
+    );
+    let provider_summary = if app.sessions.tmux_available() {
+        format!("{provider} · recommended  |  tmux · available")
+    } else {
+        provider.to_owned()
+    };
     let mut controls = row![
         button("Connect").on_press_maybe(
             matches!(
@@ -934,7 +946,12 @@ fn sessions_canvas(app: &StruktApp) -> Element<'_, Message> {
             Space::new().width(Fill),
             text(health_label).color(color(health_color))
         ],
-        text("Local PTYs continue in strukt-sessiond after the app detaches."),
+        text(format!("{location}  ·  {provider_summary}")),
+        text(if app.sessions.remote_host().is_some() {
+            "Remote PTYs continue in strukt-sessiond after SSH disconnects; Explorer remains available from the activity rail."
+        } else {
+            "Local PTYs continue in strukt-sessiond after the app detaches."
+        }),
         controls,
         hierarchy_actions,
         pane_input,
