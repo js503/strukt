@@ -37,9 +37,10 @@ pub use process::{
     RemoteProcessError, RemoteProcessManager, RemoteProcessOutput, RemoteProcessRequest,
 };
 pub use protocol::{
-    Capability, ClientHello, NegotiatedProtocol, OperationTracker, ProtocolError, ProtocolLimits,
-    RemoteBuildTarget, RemoteError, RemoteErrorKind, RequestBody, RequestEnvelope, RequestId,
-    ResponseBody, ResponseEnvelope, ServerHello, StreamChunk, negotiate,
+    Capability, ClientHello, NegotiatedProtocol, OperationTracker, PersistentProvider,
+    ProtocolError, ProtocolLimits, RemoteBuildTarget, RemoteError, RemoteErrorKind, RequestBody,
+    RequestEnvelope, RequestId, ResponseBody, ResponseEnvelope, ServerHello, SessionPayload,
+    StreamChunk, negotiate,
 };
 pub use ssh::{
     EffectiveConfig, OpenSsh, OpenSshError, SshCancellation, SshCommandKind, SshCommandSpec,

@@ -251,6 +251,16 @@ impl HelperServer {
                     .map(|()| ResponseBody::Acknowledged)
             }),
             RequestBody::Watch { .. } => unsupported("filesystem watch transport is unavailable"),
+            RequestBody::SessionExchange { payload } => {
+                if payload.is_valid() {
+                    unsupported("persistent session provider is unavailable")
+                } else {
+                    ResponseBody::Error(RemoteError::new(
+                        RemoteErrorKind::InvalidRequest,
+                        "persistent session payload is invalid",
+                    ))
+                }
+            }
             RequestBody::Cancel { .. } | RequestBody::GrantCredit { .. } => {
                 ResponseBody::Acknowledged
             }
