@@ -209,7 +209,7 @@ fn smoke_language(client: &mut OpenSshClient, _root: &Path) -> Result<(), String
         process_id,
         bytes: payload.clone(),
     }))?;
-    let mut observed = None;
+    let mut observed = Vec::new();
     for _ in 0..20 {
         thread::sleep(Duration::from_millis(25));
         match client
@@ -218,14 +218,19 @@ fn smoke_language(client: &mut OpenSshClient, _root: &Path) -> Result<(), String
         {
             ResponseBody::Acknowledged => {}
             ResponseBody::Stream(chunk) => {
-                observed = Some(chunk.bytes);
-                break;
+                observed.extend_from_slice(&chunk.bytes);
+                if observed.len() >= payload.len() {
+                    break;
+                }
             }
             other => return Err(format!("unexpected remote language output: {other:?}")),
         }
     }
-    if observed.as_deref() != Some(payload.as_slice()) {
-        return Err("remote language payload was not observed before the bounded deadline".into());
+    if observed != payload {
+        return Err(format!(
+            "remote language payload was not observed before the bounded deadline: {} bytes",
+            observed.len()
+        ));
     }
     expect_ack(client.request(RequestBody::TerminateLanguage { process_id }))
 }
