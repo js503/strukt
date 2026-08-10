@@ -29,13 +29,14 @@ fn pty_process_supports_input_output_resize_exit_and_isolated_ids() {
         .unwrap();
     let output = drain_until(&mut manager, first, "fixture:alpha");
     assert!(output.contains("fixture:alpha"));
-    assert!(
-        manager
-            .drain(second, 8, 64 * 1024)
-            .unwrap()
-            .bytes
-            .is_empty()
-    );
+    let second_startup = manager.drain(second, 8, 64 * 1024).unwrap().bytes;
+    assert!(!String::from_utf8_lossy(&second_startup).contains("fixture:alpha"));
+
+    manager.write(second, b"beta\r").unwrap();
+    let second_output = drain_until(&mut manager, second, "fixture:beta");
+    assert!(second_output.contains("fixture:beta"));
+    let first_after_second = manager.drain(first, 8, 64 * 1024).unwrap().bytes;
+    assert!(!String::from_utf8_lossy(&first_after_second).contains("fixture:beta"));
 
     manager.write(first, b"exit\r").unwrap();
     let deadline = Instant::now() + Duration::from_secs(3);
