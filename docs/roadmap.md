@@ -301,6 +301,8 @@ tmux sessions can be discovered and attached through a common provider model.
   [`plans/0009-m5-remote-persistent-sessions.md`](plans/0009-m5-remote-persistent-sessions.md)
 - Tracking issue:
   [#15 — M5: remote persistent sessions](https://github.com/js503/strukt/issues/15)
+- Pull request:
+  [#16 — feat: add M5 remote persistent sessions](https://github.com/js503/strukt/pull/16)
 - Interaction reference:
   [`mockups/workspace-shell/remote-multiplexer.html`](mockups/workspace-shell/remote-multiplexer.html)
 
