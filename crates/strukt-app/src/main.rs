@@ -5,6 +5,7 @@ mod editor;
 mod language;
 mod recovery_key;
 mod remote;
+mod remote_sessions_smoke;
 mod remote_smoke;
 mod session;
 mod session_smoke;
@@ -80,6 +81,14 @@ fn main() -> iced::Result {
             panic!("strukt M4 remote smoke failed: {error}");
         }
         println!("{}", app::REMOTE_SMOKE_SUCCESS);
+        return Ok(());
+    }
+
+    if let LaunchMode::RemoteSessionsSmoke { root } = &launch_mode {
+        if let Err(error) = remote_sessions_smoke::run(root) {
+            panic!("strukt M5 remote sessions smoke failed: {error}");
+        }
+        println!("{}", app::REMOTE_SESSIONS_SMOKE_SUCCESS);
         return Ok(());
     }
 
@@ -1580,6 +1589,30 @@ mod tests {
             vec!["--remote-smokes".to_owned(), path.clone()],
             vec!["--remote-smoke".to_owned(), "missing".to_owned()],
             vec!["--remote-smoke".to_owned(), path, "extra".to_owned()],
+        ] {
+            assert_eq!(LaunchMode::from_args(args), LaunchMode::Interactive);
+        }
+    }
+
+    #[test]
+    fn remote_sessions_smoke_requires_the_exact_flag_and_one_existing_root() {
+        let root = tempdir().unwrap();
+        let path = root.path().display().to_string();
+        assert_eq!(
+            LaunchMode::from_args(["--remote-sessions-smoke".to_owned(), path.clone()]),
+            LaunchMode::RemoteSessionsSmoke {
+                root: root.path().to_path_buf(),
+            }
+        );
+        for args in [
+            vec!["--remote-sessions-smoke".to_owned()],
+            vec!["--remote-session-smoke".to_owned(), path.clone()],
+            vec!["--remote-sessions-smoke".to_owned(), "missing".to_owned()],
+            vec![
+                "--remote-sessions-smoke".to_owned(),
+                path,
+                "extra".to_owned(),
+            ],
         ] {
             assert_eq!(LaunchMode::from_args(args), LaunchMode::Interactive);
         }

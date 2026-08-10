@@ -65,6 +65,7 @@ pub(crate) const LANGUAGE_SMOKE_SUCCESS: &str = "strukt language smoke: discover
 pub(crate) const M2_INTEGRATION_SMOKE_SUCCESS: &str = "strukt M2 integration smoke: files, editor, terminal, language, persistence, isolation, and stopped restore passed";
 pub(crate) const SESSION_SMOKE_SUCCESS: &str = "strukt M3 session smoke: hierarchy, isolation, detach, reattach, history, termination, and stopped restore passed";
 pub(crate) const REMOTE_SMOKE_SUCCESS: &str = "strukt M4 remote smoke: ssh, fallback, files, edit, search, git, task, language, disconnect, and reconnect passed";
+pub(crate) const REMOTE_SESSIONS_SMOKE_SUCCESS: &str = "strukt M5 remote session smoke: multiple native sessions, SSH detach, service identity, output, layout, and reconnect passed";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DocumentNotice {
@@ -96,6 +97,9 @@ pub enum LaunchMode {
         root: PathBuf,
     },
     RemoteSmoke {
+        root: PathBuf,
+    },
+    RemoteSessionsSmoke {
         root: PathBuf,
     },
 }
@@ -150,6 +154,15 @@ impl LaunchMode {
                     root: PathBuf::from(root),
                 }
             }
+            [flag, root]
+                if flag == "--remote-sessions-smoke"
+                    && !root.is_empty()
+                    && Path::new(root).is_dir() =>
+            {
+                Self::RemoteSessionsSmoke {
+                    root: PathBuf::from(root),
+                }
+            }
             _ if args.iter().any(|argument| argument == "--smoke-test") => Self::SmokeTest,
             _ => Self::Interactive,
         }
@@ -165,7 +178,8 @@ impl LaunchMode {
             | Self::LanguageSmoke { .. }
             | Self::M2IntegrationSmoke { .. }
             | Self::SessionSmoke { .. }
-            | Self::RemoteSmoke { .. } => None,
+            | Self::RemoteSmoke { .. }
+            | Self::RemoteSessionsSmoke { .. } => None,
             Self::SmokeTest => Some(SMOKE_TEST_DURATION),
         }
     }

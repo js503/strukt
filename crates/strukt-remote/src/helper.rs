@@ -753,12 +753,18 @@ fn default_native_session_manager() -> Option<crate::NativeSessionManager> {
     if !service.is_file() {
         return None;
     }
-    let home = std::env::var_os("HOME")?;
-    let application_data = PathBuf::from(home)
-        .join(".local")
-        .join("share")
-        .join("strukt")
-        .join("sessions");
+    let application_data = std::env::var_os("STRUKT_REMOTE_SESSION_DATA").map_or_else(
+        || {
+            std::env::var_os("HOME").map(|home| {
+                PathBuf::from(home)
+                    .join(".local")
+                    .join("share")
+                    .join("strukt")
+                    .join("sessions")
+            })
+        },
+        |path| Some(PathBuf::from(path)),
+    )?;
     crate::NativeSessionManager::new(application_data, service).ok()
 }
 
