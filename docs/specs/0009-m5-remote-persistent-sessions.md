@@ -1,6 +1,6 @@
 # M5 Remote Persistent Sessions
 
-- Status: Approved for implementation
+- Status: Complete and validated
 - Date: 2026-08-09
 - Governing spec: [`0001-workspace-shell-and-remote-development.md`](0001-workspace-shell-and-remote-development.md)
 - Depends on: [`0007-m3-local-persistent-sessions.md`](0007-m3-local-persistent-sessions.md) and [`0008-m4-ssh-remote-workspace.md`](0008-m4-ssh-remote-workspace.md)
@@ -220,7 +220,8 @@ request-response proxy adds:
 - no asynchronous provider-event queue in M5;
 - bounded reconnect attempts and fixed capped backoff;
 - round-robin pane/event draining so one noisy process cannot starve another;
-- cancellation and stale-generation rejection before projection updates.
+- outer-request cancellation plus stale-generation and response-correlation
+  rejection before projection updates.
 
 Crossing a bound produces a typed overflow/resync condition. It never permits
 unbounded allocation or blocks the app event loop.
@@ -313,7 +314,7 @@ through shell commands so workflows remain scriptable and reproducible.
 - Helper protocol negotiation, tunnel framing, bounds, cancellation, and stale
   generation rejection.
 - Native remote service explicit-start policy, private rendezvous proxying,
-  detach/reconnect, delta replay, full resync, reboot-stopped restoration, and
+  detach/reconnect, cursor-aware full resync, reboot-stopped restoration, and
   writer lease behavior.
 - Concurrent noisy sessions proving bounded queues and fair progress.
 - Fake tmux discovery/control streams covering valid, hostile, partial, malformed,
@@ -349,8 +350,9 @@ evidence is not represented as human verification.
    directories, lifecycle, and bounded history.
 2. Native session processes and PTY identity survive SSH helper disconnect and
    local application restart.
-3. Reconnect applies exact ordered deltas or an explicit full resync without
-   duplicate, missing, or cross-generation output.
+3. Reconnect applies an explicit bounded full resync without duplicate,
+   cross-provider, or cross-generation output; the cursor contract keeps ordered
+   deltas additive after M5.
 4. One noisy session cannot starve another or make file/editor interactions
    unresponsive.
 5. Remote reboot restores definitions, layouts, names, and retained history as

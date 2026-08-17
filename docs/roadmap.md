@@ -34,7 +34,7 @@ exit criteria are satisfied and verified, not when a target date arrives.
 | M2 | Local development workspace | Complete | M1 | Real local files, IDE-level editing, language intelligence, PTY/ConPTY terminals, terminal rendering, and workspace persistence |
 | M3 | Local persistent sessions | Complete | M2 | Named local sessions with windows, split panes, detach/reattach, and restoration |
 | M4 | SSH remote workspace | Complete | M2 | A remote development box behaves as a first-class workspace over standard SSH |
-| M5 | Remote persistent sessions | In progress | M3, M4 | Multiple persistent sessions per remote host, reconnect recovery, and tmux interoperability |
+| M5 | Remote persistent sessions | Complete | M3, M4 | Multiple persistent sessions per remote host, reconnect recovery, and tmux interoperability |
 | Alpha | Public alpha release | Not planned | M3, M4, M5 | Installable, documented local and remote development release for macOS and Windows with Linux in the build pipeline |
 | M6 | AI and workspace context | Post-alpha | Alpha | Optional, model-agnostic AI grounded in explicit local and remote workspace context |
 | M7 | Plugin and MCP foundation | Post-alpha | Alpha, M6 | Sandboxed extensions, MCP discovery, permissions, and host-controlled contributions |
@@ -303,6 +303,8 @@ tmux sessions can be discovered and attached through a common provider model.
   [#15 — M5: remote persistent sessions](https://github.com/js503/strukt/issues/15)
 - Pull request:
   [#16 — feat: add M5 remote persistent sessions](https://github.com/js503/strukt/pull/16)
+- Validation evidence:
+  [`evidence/m5-remote-persistent-sessions-validation.md`](evidence/m5-remote-persistent-sessions-validation.md)
 - Interaction reference:
   [`mockups/workspace-shell/remote-multiplexer.html`](mockups/workspace-shell/remote-multiplexer.html)
 
