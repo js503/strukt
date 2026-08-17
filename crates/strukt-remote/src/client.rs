@@ -17,6 +17,8 @@ use crate::{
 
 const MAX_HELPER_STDERR_BYTES: usize = 64 * 1_024;
 const STDERR_READER_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(250);
+const CHILD_EXIT_POLL_ATTEMPTS: usize = 200;
+const CHILD_EXIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 pub struct HelperClient<R, W> {
     reader: R,
@@ -228,25 +230,28 @@ impl OpenSshClient {
 
     pub fn disconnect(&mut self) {
         drop(self.helper.take());
-        let mut exited = false;
-        for _ in 0..200 {
-            match self.child.try_wait() {
-                Ok(Some(_)) => {
-                    exited = true;
-                    break;
-                }
-                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
-                Err(_) => break,
-            }
-        }
-        if !exited {
+        if !poll_child_exit(&mut self.child) {
             let _ = self.child.kill();
-            let _ = self.child.wait();
+            // Windows job or descendant handle cleanup must not turn an explicit
+            // SSH disconnect into an unbounded wait. `try_wait` still reaps the
+            // direct child whenever termination completes inside the bound.
+            let _ = poll_child_exit(&mut self.child);
         }
         if let Some(reader) = self.stderr_reader.take() {
             let _ = finish_stderr_reader(reader, STDERR_READER_SHUTDOWN_TIMEOUT);
         }
     }
+}
+
+fn poll_child_exit(child: &mut Child) -> bool {
+    for _ in 0..CHILD_EXIT_POLL_ATTEMPTS {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) => std::thread::sleep(CHILD_EXIT_POLL_INTERVAL),
+            Err(_) => return false,
+        }
+    }
+    false
 }
 
 impl Drop for OpenSshClient {
