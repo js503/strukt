@@ -100,8 +100,11 @@ pub fn run(root: &Path) -> Result<(), String> {
         let _ = request(&mut reconnected, RequestBody::TerminateSession { session })?;
         let _ = request(&mut reconnected, RequestBody::Catalog)?;
     }
-    progress("detach provider and disconnect replacement helper");
-    let _ = request(&mut reconnected, RequestBody::Detach)?;
+    progress("shutdown disposable provider service and disconnect replacement helper");
+    match request(&mut reconnected, RequestBody::Shutdown)? {
+        ResponseBody::ShuttingDown => {}
+        other => return Err(format!("unexpected remote service shutdown: {other:?}")),
+    }
     reconnected_runtime.disconnect();
     if root.join(".strukt").exists() {
         return Err("M5 smoke wrote workspace metadata".into());
