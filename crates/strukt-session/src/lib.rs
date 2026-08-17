@@ -1,5 +1,7 @@
 //! Provider-independent persistent session domain.
 
+extern crate self as strukt_session;
+
 mod auth;
 mod catalog;
 mod client;
@@ -12,6 +14,13 @@ mod rendezvous;
 mod service;
 mod snapshot;
 mod store;
+
+#[doc(hidden)]
+#[path = "bin/strukt-sessiond.rs"]
+mod daemon;
+
+#[doc(hidden)]
+pub use daemon::main as run_daemon_from_env;
 
 pub use auth::{AuthenticationError, AuthenticationProof, HandshakeChallenge, ServiceSecret};
 pub use catalog::{
@@ -30,8 +39,8 @@ pub use endpoint::{
 pub use framing::{FrameDecoder, FrameError, decode_cbor, encode_cbor};
 pub use id::{IdError, PaneId, ServiceInstanceId, SessionId, WindowId};
 pub use protocol::{
-    EventEnvelope, EventGuard, FixtureMode, PROTOCOL_VERSION, RequestBody, RequestEnvelope,
-    RequestIdGenerator, ResponseBody, ResponseEnvelope, WireError,
+    EventEnvelope, EventGuard, FixtureMode, PROTOCOL_VERSION, PaneOutputCursor, RequestBody,
+    RequestEnvelope, RequestIdGenerator, ResponseBody, ResponseEnvelope, WireError,
 };
 pub use provider::{
     ProviderAction, ProviderCapabilities, ProviderError, ProviderHealth, ProviderKind,

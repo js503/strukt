@@ -1,8 +1,10 @@
 use std::collections::BTreeSet;
 use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use thiserror::Error;
 
@@ -14,6 +16,9 @@ use crate::{
 };
 
 const MAX_HELPER_STDERR_BYTES: usize = 64 * 1_024;
+const STDERR_READER_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(250);
+const CHILD_EXIT_POLL_ATTEMPTS: usize = 200;
+const CHILD_EXIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 pub struct HelperClient<R, W> {
     reader: R,
@@ -112,7 +117,7 @@ pub struct OpenSshClient {
     helper: Option<HelperClient<ChildStdout, ChildStdin>>,
     child: Child,
     diagnostics: Arc<Mutex<Vec<u8>>>,
-    stderr_thread: Option<JoinHandle<()>>,
+    stderr_reader: Option<StderrReader>,
 }
 
 impl OpenSshClient {
@@ -149,7 +154,7 @@ impl OpenSshClient {
             .take()
             .ok_or(RemoteClientError::MissingChildPipe)?;
         let diagnostics = Arc::new(Mutex::new(Vec::new()));
-        let stderr_thread = Some(read_stderr(stderr, Arc::clone(&diagnostics)));
+        let stderr_reader = Some(read_stderr(stderr, Arc::clone(&diagnostics)));
         let mut nonce = [0_u8; 32];
         if getrandom::fill(&mut nonce).is_err() {
             let _ = child.kill();
@@ -167,7 +172,16 @@ impl OpenSshClient {
             reader,
             writer,
             &hello,
-            &crate::HelperServer::capabilities(),
+            &BTreeSet::from([
+                Capability::Files,
+                Capability::Search,
+                Capability::Git,
+                Capability::Processes,
+                Capability::Language,
+                Capability::Watches,
+                Capability::Sessions,
+                Capability::Tmux,
+            ]),
             generation,
         ) {
             Ok(helper) => helper,
@@ -181,7 +195,7 @@ impl OpenSshClient {
             helper: Some(helper),
             child,
             diagnostics,
-            stderr_thread,
+            stderr_reader,
         })
     }
 
@@ -216,25 +230,28 @@ impl OpenSshClient {
 
     pub fn disconnect(&mut self) {
         drop(self.helper.take());
-        let mut exited = false;
-        for _ in 0..200 {
-            match self.child.try_wait() {
-                Ok(Some(_)) => {
-                    exited = true;
-                    break;
-                }
-                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
-                Err(_) => break,
-            }
-        }
-        if !exited {
+        if !poll_child_exit(&mut self.child) {
             let _ = self.child.kill();
-            let _ = self.child.wait();
+            // Windows job or descendant handle cleanup must not turn an explicit
+            // SSH disconnect into an unbounded wait. `try_wait` still reaps the
+            // direct child whenever termination completes inside the bound.
+            let _ = poll_child_exit(&mut self.child);
         }
-        if let Some(thread) = self.stderr_thread.take() {
-            let _ = thread.join();
+        if let Some(reader) = self.stderr_reader.take() {
+            let _ = finish_stderr_reader(reader, STDERR_READER_SHUTDOWN_TIMEOUT);
         }
     }
+}
+
+fn poll_child_exit(child: &mut Child) -> bool {
+    for _ in 0..CHILD_EXIT_POLL_ATTEMPTS {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) => std::thread::sleep(CHILD_EXIT_POLL_INTERVAL),
+            Err(_) => return false,
+        }
+    }
+    false
 }
 
 impl Drop for OpenSshClient {
@@ -246,8 +263,9 @@ impl Drop for OpenSshClient {
 fn read_stderr(
     mut stderr: std::process::ChildStderr,
     diagnostics: Arc<Mutex<Vec<u8>>>,
-) -> JoinHandle<()> {
-    std::thread::spawn(move || {
+) -> StderrReader {
+    let (finished_sender, finished) = mpsc::sync_channel(1);
+    let thread = std::thread::spawn(move || {
         let mut buffer = [0_u8; 4_096];
         while let Ok(read) = stderr.read(&mut buffer) {
             if read == 0 {
@@ -262,7 +280,24 @@ fn read_stderr(
                 break;
             }
         }
-    })
+        let _ = finished_sender.send(());
+    });
+    StderrReader { thread, finished }
+}
+
+struct StderrReader {
+    thread: JoinHandle<()>,
+    finished: Receiver<()>,
+}
+
+fn finish_stderr_reader(reader: StderrReader, timeout: Duration) -> bool {
+    match reader.finished.recv_timeout(timeout) {
+        Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+            let _ = reader.thread.join();
+            true
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => false,
+    }
 }
 
 #[derive(Debug, Error)]
@@ -289,4 +324,31 @@ pub enum RemoteClientError {
     MismatchedRequestId,
     #[error("remote helper returned stale generation {actual}; expected {expected}")]
     StaleGeneration { expected: u64, actual: u64 },
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    use super::{StderrReader, finish_stderr_reader};
+
+    #[test]
+    fn diagnostic_reader_shutdown_is_bounded_when_a_descendant_retains_the_pipe() {
+        let (finished_sender, finished_receiver) = mpsc::sync_channel(1);
+        let (release_sender, release_receiver) = mpsc::sync_channel(1);
+        let thread = std::thread::spawn(move || {
+            let _ = release_receiver.recv();
+            let _ = finished_sender.send(());
+        });
+        let reader = StderrReader {
+            thread,
+            finished: finished_receiver,
+        };
+
+        let started = Instant::now();
+        assert!(!finish_stderr_reader(reader, Duration::from_millis(25)));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        let _ = release_sender.send(());
+    }
 }

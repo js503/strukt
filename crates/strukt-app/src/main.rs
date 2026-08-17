@@ -5,6 +5,7 @@ mod editor;
 mod language;
 mod recovery_key;
 mod remote;
+mod remote_sessions_smoke;
 mod remote_smoke;
 mod session;
 mod session_smoke;
@@ -80,6 +81,14 @@ fn main() -> iced::Result {
             panic!("strukt M4 remote smoke failed: {error}");
         }
         println!("{}", app::REMOTE_SMOKE_SUCCESS);
+        return Ok(());
+    }
+
+    if let LaunchMode::RemoteSessionsSmoke { root } = &launch_mode {
+        if let Err(error) = remote_sessions_smoke::run(root) {
+            panic!("strukt M5 remote sessions smoke failed: {error}");
+        }
+        println!("{}", app::REMOTE_SESSIONS_SMOKE_SUCCESS);
         return Ok(());
     }
 
@@ -205,6 +214,60 @@ mod tests {
         app.shell.explorer_visible = true;
         assert!(app.shell.explorer_visible);
         assert_eq!(app.shell.active_activity, Activity::Sessions);
+    }
+
+    #[test]
+    fn session_view_distinguishes_recommended_native_from_selected_tmux() {
+        assert_eq!(
+            crate::view::session_provider_summary(
+                "strukt native",
+                true,
+                Some(strukt_remote::PersistentProvider::Native),
+            ),
+            "strukt native · recommended  |  tmux · available"
+        );
+        assert_eq!(
+            crate::view::session_provider_summary(
+                "tmux",
+                true,
+                Some(strukt_remote::PersistentProvider::Tmux),
+            ),
+            "tmux · existing sessions  |  strukt native · recommended"
+        );
+    }
+
+    #[test]
+    fn remote_session_controls_wait_for_ssh_and_the_single_request_lane() {
+        let root = std::env::current_dir().expect("current directory");
+        let client = strukt_session::SessionClient::new(
+            root.join("remote-data"),
+            root.join("remote-sessiond"),
+        )
+        .expect("client");
+        let mut app = StruktApp::default();
+        app.sessions.use_remote_client(
+            client,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            "ec2-dev".into(),
+            PathBuf::from("/srv/project"),
+            true,
+            strukt_remote::PersistentProvider::Native,
+        );
+
+        let _ = app.update(Message::ConnectSessions);
+        assert_eq!(
+            app.session_error.as_deref(),
+            Some("reconnect the SSH workspace before its persistent sessions")
+        );
+
+        let _connect = app.sessions.begin_connect().expect("connect job");
+        let _ = app.update(Message::SelectRemoteSessionProvider(
+            strukt_remote::PersistentProvider::Tmux,
+        ));
+        assert_eq!(
+            app.session_error.as_deref(),
+            Some("wait for the current persistent-session operation to finish")
+        );
     }
 
     #[test]
@@ -1580,6 +1643,30 @@ mod tests {
             vec!["--remote-smokes".to_owned(), path.clone()],
             vec!["--remote-smoke".to_owned(), "missing".to_owned()],
             vec!["--remote-smoke".to_owned(), path, "extra".to_owned()],
+        ] {
+            assert_eq!(LaunchMode::from_args(args), LaunchMode::Interactive);
+        }
+    }
+
+    #[test]
+    fn remote_sessions_smoke_requires_the_exact_flag_and_one_existing_root() {
+        let root = tempdir().unwrap();
+        let path = root.path().display().to_string();
+        assert_eq!(
+            LaunchMode::from_args(["--remote-sessions-smoke".to_owned(), path.clone()]),
+            LaunchMode::RemoteSessionsSmoke {
+                root: root.path().to_path_buf(),
+            }
+        );
+        for args in [
+            vec!["--remote-sessions-smoke".to_owned()],
+            vec!["--remote-session-smoke".to_owned(), path.clone()],
+            vec!["--remote-sessions-smoke".to_owned(), "missing".to_owned()],
+            vec![
+                "--remote-sessions-smoke".to_owned(),
+                path,
+                "extra".to_owned(),
+            ],
         ] {
             assert_eq!(LaunchMode::from_args(args), LaunchMode::Interactive);
         }

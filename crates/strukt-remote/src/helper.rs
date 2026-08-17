@@ -26,6 +26,8 @@ pub struct HelperServer {
     git_root: PathBuf,
     processes: Mutex<RemoteProcessManager>,
     languages: Mutex<RemoteLanguageManager>,
+    native_sessions: Option<crate::NativeSessionManager>,
+    tmux_sessions: Option<crate::TmuxManager>,
 }
 
 impl HelperServer {
@@ -49,6 +51,8 @@ impl HelperServer {
                 RemoteLanguageManager::new(&canonical_root)
                     .map_err(|error| HelperError::Subsystem(error.to_string()))?,
             ),
+            native_sessions: default_native_session_manager(),
+            tmux_sessions: default_tmux_manager(),
         })
     }
 
@@ -61,6 +65,18 @@ impl HelperServer {
             Capability::Processes,
             Capability::Language,
         ])
+    }
+
+    #[must_use]
+    pub fn advertised_capabilities(&self) -> BTreeSet<Capability> {
+        let mut capabilities = Self::capabilities();
+        if self.native_sessions.is_some() {
+            capabilities.insert(Capability::Sessions);
+        }
+        if self.tmux_sessions.is_some() {
+            capabilities.insert(Capability::Tmux);
+        }
+        capabilities
     }
 
     #[must_use]
@@ -251,6 +267,36 @@ impl HelperServer {
                     .map(|()| ResponseBody::Acknowledged)
             }),
             RequestBody::Watch { .. } => unsupported("filesystem watch transport is unavailable"),
+            RequestBody::SessionExchange { payload } => {
+                if payload.is_valid() {
+                    let result = match payload.provider() {
+                        crate::PersistentProvider::Native => self
+                            .native_sessions
+                            .as_ref()
+                            .ok_or("native session provider is unavailable".to_owned())
+                            .and_then(|manager| {
+                                manager.exchange(payload).map_err(|error| error.to_string())
+                            }),
+                        crate::PersistentProvider::Tmux => self
+                            .tmux_sessions
+                            .as_ref()
+                            .ok_or("tmux session provider is unavailable".to_owned())
+                            .and_then(|manager| {
+                                manager
+                                    .exchange_session(payload)
+                                    .map_err(|error| error.to_string())
+                            }),
+                    };
+                    result.map_or_else(internal_error, |payload| ResponseBody::SessionExchange {
+                        payload,
+                    })
+                } else {
+                    ResponseBody::Error(RemoteError::new(
+                        RemoteErrorKind::InvalidRequest,
+                        "persistent session payload is invalid",
+                    ))
+                }
+            }
             RequestBody::Cancel { .. } | RequestBody::GrantCredit { .. } => {
                 ResponseBody::Acknowledged
             }
@@ -419,9 +465,9 @@ pub fn run_helper_stdio(
         build_target: build_target(),
         workspace_root: server.canonical_root(),
         limits: ProtocolLimits::default(),
-        capabilities: HelperServer::capabilities(),
+        capabilities: server.advertised_capabilities(),
     };
-    let negotiated = negotiate(&client, &server_hello, &HelperServer::capabilities())?;
+    let negotiated = negotiate(&client, &server_hello, &server.advertised_capabilities())?;
     write_preface(writer)?;
     write_frame(writer, &server_hello, negotiated.limits.max_frame_bytes)?;
     writer.flush().map_err(FramingError::from)?;
@@ -697,4 +743,47 @@ fn internal_error(detail: impl AsRef<str>) -> ResponseBody {
 
 fn subsystem_error(error: &impl std::fmt::Display) -> ResponseBody {
     internal_error(error.to_string())
+}
+
+fn default_native_session_manager() -> Option<crate::NativeSessionManager> {
+    let executable = std::env::current_exe().ok()?;
+    let sibling_service = executable.parent()?.join(if cfg!(windows) {
+        "strukt-sessiond.exe"
+    } else {
+        "strukt-sessiond"
+    });
+    let installed_helper_name = if cfg!(windows) {
+        "strukt-remote.exe"
+    } else {
+        "strukt-remote"
+    };
+    let service = if executable
+        .file_name()
+        .is_some_and(|name| name == installed_helper_name)
+    {
+        executable
+    } else if sibling_service.is_file() {
+        sibling_service
+    } else {
+        return None;
+    };
+    let application_data = std::env::var_os("STRUKT_REMOTE_SESSION_DATA").map_or_else(
+        || {
+            std::env::var_os("HOME").map(|home| {
+                PathBuf::from(home)
+                    .join(".local")
+                    .join("share")
+                    .join("strukt")
+                    .join("sessions")
+            })
+        },
+        |path| Some(PathBuf::from(path)),
+    )?;
+    crate::NativeSessionManager::new(application_data, service).ok()
+}
+
+fn default_tmux_manager() -> Option<crate::TmuxManager> {
+    let executable = crate::TmuxProvider::discover_executable()?;
+    let provider = crate::TmuxProvider::new(executable).ok()?;
+    Some(crate::TmuxManager::new(provider))
 }

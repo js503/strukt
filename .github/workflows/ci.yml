@@ -23,6 +23,12 @@ jobs:
           toolchain: 1.97.1
           components: clippy,rustfmt
       - uses: Swatinem/rust-cache@v2
+      - name: Require real tmux integration prerequisite
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          command -v tmux
+          tmux -V
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
@@ -227,6 +233,41 @@ jobs:
           if (Test-Path (Join-Path $fixture ".strukt")) {
             throw "SSH remote smoke created workspace metadata"
           }
+      - name: Smoke remote persistent sessions
+        if: runner.os != 'Windows'
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          scripts/m5-remote-sessions-smoke.sh |
+            tee remote-sessions-smoke.log
+          grep -Fx \
+            "strukt M5 remote session smoke: multiple native sessions, SSH detach, service identity, output, layout, and reconnect passed" \
+            remote-sessions-smoke.log
+      - name: Smoke remote persistent sessions
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP ("strukt-m5-smoke-" + [guid]::NewGuid())
+          $sessionData = Join-Path $env:RUNNER_TEMP ("strukt-m5-sessions-" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Force -Path $fixture, $sessionData | Out-Null
+          $env:STRUKT_REMOTE_SESSION_DATA = $sessionData
+          cargo build -p strukt-session --bin strukt-sessiond -p strukt-remote --bin fake-ssh --locked --offline
+          if ($LASTEXITCODE -ne 0) {
+            throw "M5 support binary build exited with code $LASTEXITCODE"
+          }
+          & cargo run -p strukt-app --locked --offline -- --remote-sessions-smoke $fixture 2>&1 |
+            Tee-Object -Variable output
+          if ($LASTEXITCODE -ne 0) {
+            throw "M5 remote session smoke exited with code $LASTEXITCODE"
+          }
+          $marker = "strukt M5 remote session smoke: multiple native sessions, SSH detach, service identity, output, layout, and reconnect passed"
+          if (($output -join [Environment]::NewLine) -notmatch [regex]::Escape($marker)) {
+            throw "M5 remote session smoke marker missing"
+          }
+          if (Test-Path (Join-Path $fixture ".strukt")) {
+            throw "M5 remote session smoke created workspace metadata"
+          }
       - name: Validate disposable real OpenSSH host
         if: runner.os == 'Linux'
         shell: bash
@@ -242,9 +283,11 @@ jobs:
           ssh-keygen -q -t ed25519 -N '' -f "$fixture/client_key"
           cp "$fixture/client_key.pub" "$fixture/authorized_keys"
 
+          session_data="$fixture/sessions"
+          mkdir -p "$session_data"
           helper="$fixture/run-helper"
-          printf '#!/usr/bin/env bash\nexec "%s/target/debug/strukt-remote" --stdio\n' \
-            "$GITHUB_WORKSPACE" > "$helper"
+          printf '#!/usr/bin/env bash\nexport STRUKT_REMOTE_SESSION_DATA="%s"\nexec "%s/target/debug/strukt-remote" --stdio\n' \
+            "$session_data" "$GITHUB_WORKSPACE" > "$helper"
           chmod 700 "$helper"
 
           port=49222

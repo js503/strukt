@@ -83,6 +83,7 @@ fn smoke_app_coordinator(fake_ssh: &Path, root: &Path) -> Result<(), String> {
         SshExecutable::from_path(fake_ssh.to_path_buf()).map_err(display)?,
         &SshAlias::new("fixture").map_err(display)?,
         &root.to_string_lossy(),
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
         3,
     )?;
     let files = runtime.list_root(3);

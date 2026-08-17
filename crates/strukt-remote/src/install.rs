@@ -113,7 +113,7 @@ impl HelperArtifact {
             RemoteBuildTarget::LinuxAarch64 => "Linux aarch64",
         };
         format!(
-            "Install strukt remote helper {} for {target} at ~/.{} (SHA-256 {})",
+            "Install strukt remote runtime {} for {target} at ~/.{} (includes the native persistent-session service; SHA-256 {})",
             self.version,
             self.install_path(),
             self.checksum

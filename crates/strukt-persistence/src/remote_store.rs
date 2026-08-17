@@ -10,6 +10,13 @@ use thiserror::Error;
 
 const CURRENT_SCHEMA: u32 = 1;
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RemoteSessionProviderPreference {
+    Native,
+    Tmux,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RemoteHelperMetadata {
     pub version: String,
@@ -58,6 +65,8 @@ pub struct RemoteConnectionRecord {
     pub display_name: Option<String>,
     pub recent_roots: Vec<String>,
     pub helper: Option<RemoteHelperMetadata>,
+    #[serde(default)]
+    pub preferred_session_provider: Option<RemoteSessionProviderPreference>,
     #[serde(flatten)]
     pub extensions: BTreeMap<String, serde_json::Value>,
 }
@@ -82,10 +91,17 @@ impl RemoteConnectionRecord {
             display_name,
             recent_roots,
             helper,
+            preferred_session_provider: None,
             extensions: BTreeMap::new(),
         };
         value.validate()?;
         Ok(value)
+    }
+
+    #[must_use]
+    pub fn with_session_provider(mut self, provider: RemoteSessionProviderPreference) -> Self {
+        self.preferred_session_provider = Some(provider);
+        self
     }
 
     fn validate(&self) -> Result<(), RemoteStoreError> {

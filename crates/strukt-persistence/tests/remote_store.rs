@@ -1,6 +1,8 @@
 use std::fs;
 
-use strukt_persistence::{RemoteConnectionRecord, RemoteHelperMetadata, RemoteStore};
+use strukt_persistence::{
+    RemoteConnectionRecord, RemoteHelperMetadata, RemoteSessionProviderPreference, RemoteStore,
+};
 use tempfile::tempdir;
 
 fn record(id: &str, alias: &str, root: &str) -> RemoteConnectionRecord {
@@ -43,6 +45,23 @@ fn remote_records_round_trip_in_deterministic_order_without_secrets() {
         "SSH_AUTH_SOCK",
         "protocol_payload",
     ] {
+        assert!(!persisted.contains(forbidden));
+    }
+}
+
+#[test]
+fn remote_session_provider_preference_round_trips_without_runtime_state() {
+    let data = tempdir().unwrap();
+    let store = RemoteStore::at(data.path());
+    let selected = record("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "alpha", "~/src")
+        .with_session_provider(RemoteSessionProviderPreference::Tmux);
+
+    store.upsert(selected.clone()).unwrap();
+
+    assert_eq!(store.load().unwrap(), vec![selected]);
+    let persisted = fs::read_to_string(store.current_path()).unwrap();
+    assert!(persisted.contains("\"preferred_session_provider\": \"tmux\""));
+    for forbidden in ["session_id", "pane_id", "command", "input", "secret"] {
         assert!(!persisted.contains(forbidden));
     }
 }

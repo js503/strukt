@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::path::{Component, PathBuf};
 use std::process::{Command, Stdio};
@@ -9,7 +9,7 @@ use std::time::Duration;
 use thiserror::Error;
 
 use crate::{
-    EndpointIdentity, LocalEndpoint, LocalStream, PaneId, PaneScreenSnapshot,
+    EndpointIdentity, LocalEndpoint, LocalStream, PaneId, PaneOutputCursor, PaneScreenSnapshot,
     ProviderCatalogSnapshot, ProviderError, RendezvousStore, RequestBody, RequestEnvelope,
     RequestIdGenerator, ResponseBody, ResponseEnvelope, ServiceInstanceId, ServiceSecret,
     decode_cbor, encode_cbor,
@@ -87,6 +87,7 @@ pub struct SessionClient {
     service_instance: Option<ServiceInstanceId>,
     catalog: Option<ProviderCatalogSnapshot>,
     snapshots: HashMap<PaneId, PaneScreenSnapshot>,
+    reconnect_resync: VecDeque<PaneId>,
 }
 
 impl SessionClient {
@@ -133,12 +134,18 @@ impl SessionClient {
             service_instance: None,
             catalog: None,
             snapshots: HashMap::new(),
+            reconnect_resync: VecDeque::new(),
         }
     }
 
     #[must_use]
     pub const fn health(&self) -> ClientHealth {
         self.health
+    }
+
+    #[must_use]
+    pub const fn request_in_flight(&self) -> bool {
+        self.in_flight
     }
 
     #[must_use]
@@ -149,6 +156,29 @@ impl SessionClient {
     #[must_use]
     pub fn snapshot(&self, pane: PaneId) -> Option<&PaneScreenSnapshot> {
         self.snapshots.get(&pane)
+    }
+
+    /// Replaces a lost provider transport without discarding immutable catalog
+    /// and pane projections.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error while another client operation is in flight.
+    pub fn rebind_backend<B: ClientBackend + 'static>(
+        &mut self,
+        backend: Arc<B>,
+    ) -> Result<(), ClientError> {
+        if self.in_flight {
+            return Err(ClientError::RequestInFlight);
+        }
+        self.backend = backend;
+        self.connection = None;
+        self.health = if self.catalog.is_some() {
+            ClientHealth::Stale
+        } else {
+            ClientHealth::Stopped
+        };
+        Ok(())
     }
 
     #[must_use]
@@ -174,6 +204,14 @@ impl SessionClient {
             intent,
             request_id,
             expected_catalog_revision: self.catalog_revision(),
+            reconnect_cursors: self
+                .snapshots
+                .iter()
+                .filter_map(|(pane, snapshot)| {
+                    PaneOutputCursor::new(*pane, snapshot.generation(), snapshot.output_revision())
+                        .ok()
+                })
+                .collect(),
         })
     }
 
@@ -187,6 +225,7 @@ impl SessionClient {
         completion: ClientConnectCompletion,
     ) -> Result<(), ClientError> {
         self.in_flight = false;
+        let intent = completion.intent;
         let (connection, response) = match completion.result {
             Ok(value) => value,
             Err(error) => {
@@ -210,6 +249,24 @@ impl SessionClient {
                 return Err(error);
             }
         };
+        let same_instance = self.service_instance == Some(instance);
+        if same_instance {
+            self.snapshots
+                .retain(|pane, _| snapshot.catalog().contains_pane(*pane));
+        } else {
+            self.snapshots.clear();
+        }
+        self.reconnect_resync.clear();
+        if intent == ClientConnectIntent::Reconnect && same_instance {
+            let mut panes: Vec<_> = self
+                .snapshots
+                .keys()
+                .copied()
+                .filter(|pane| snapshot.catalog().contains_pane(*pane))
+                .collect();
+            panes.sort_unstable();
+            self.reconnect_resync.extend(panes);
+        }
         self.service_instance = Some(instance);
         self.catalog = Some(snapshot);
         self.connection = Some(connection);
@@ -285,6 +342,8 @@ impl SessionClient {
                     self.mark_transport_lost("stale service response");
                     return Err(ClientError::StaleService);
                 }
+                self.snapshots
+                    .retain(|pane, _| snapshot.catalog().contains_pane(*pane));
                 self.service_instance = Some(snapshot.service_instance());
                 self.catalog = Some(snapshot.clone());
             }
@@ -327,6 +386,11 @@ impl SessionClient {
         is_newer
     }
 
+    #[must_use]
+    pub fn take_reconnect_resync_pane(&mut self) -> Option<PaneId> {
+        self.reconnect_resync.pop_front()
+    }
+
     fn reserve(&mut self) -> Result<(), ClientError> {
         if self.in_flight {
             return Err(ClientError::RequestInFlight);
@@ -357,6 +421,7 @@ pub struct ClientConnectJob {
     intent: ClientConnectIntent,
     request_id: u64,
     expected_catalog_revision: u64,
+    reconnect_cursors: Vec<PaneOutputCursor>,
 }
 
 impl ClientConnectJob {
@@ -367,11 +432,15 @@ impl ClientConnectJob {
         let result = loop {
             match self.backend.connect() {
                 Ok(mut connection) => {
-                    let request = RequestEnvelope::new(
-                        self.request_id,
-                        self.expected_catalog_revision,
-                        RequestBody::Attach,
-                    );
+                    let body = if self.intent == ClientConnectIntent::Reconnect {
+                        RequestBody::Reconnect {
+                            cursors: self.reconnect_cursors.clone(),
+                        }
+                    } else {
+                        RequestBody::Attach
+                    };
+                    let request =
+                        RequestEnvelope::new(self.request_id, self.expected_catalog_revision, body);
                     break connection
                         .exchange(request)
                         .map(|response| (connection, response));
@@ -396,6 +465,7 @@ impl ClientConnectJob {
         };
         ClientConnectCompletion {
             request_id: self.request_id,
+            intent: self.intent,
             result,
         }
     }
@@ -403,6 +473,7 @@ impl ClientConnectJob {
 
 pub struct ClientConnectCompletion {
     request_id: u64,
+    intent: ClientConnectIntent,
     result: Result<(Box<dyn ProviderConnection>, ResponseEnvelope), ClientError>,
 }
 
@@ -453,15 +524,19 @@ impl ClientBackend for LocalClientBackend {
     }
 
     fn start_service(&self) -> Result<(), ClientError> {
-        Command::new(&self.helper)
+        let mut command = Command::new(&self.helper);
+        command
             .arg("--app-data")
             .arg(&self.application_data)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map(|_| ())
-            .map_err(ClientError::Io)
+            .stderr(Stdio::null());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt as _;
+            command.process_group(0);
+        }
+        command.spawn().map(|_| ()).map_err(ClientError::Io)
     }
 
     fn wait(&self, duration: Duration) {

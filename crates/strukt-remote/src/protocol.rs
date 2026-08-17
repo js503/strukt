@@ -6,6 +6,7 @@ use thiserror::Error;
 const MAX_ERROR_DETAIL_BYTES: usize = 1_024;
 const HARD_MAX_FRAME_BYTES: usize = 16 * 1_024 * 1_024;
 const HARD_MAX_IN_FLIGHT: usize = 1_024;
+const MAX_SESSION_PAYLOAD_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub enum Capability {
@@ -15,6 +16,52 @@ pub enum Capability {
     Processes,
     Language,
     Watches,
+    Sessions,
+    Tmux,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum PersistentProvider {
+    Native,
+    Tmux,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SessionPayload {
+    provider: PersistentProvider,
+    bytes: Vec<u8>,
+}
+
+impl SessionPayload {
+    /// Creates a nonempty, bounded persistent-provider payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns a protocol error for empty or oversized payloads.
+    pub fn new(provider: PersistentProvider, bytes: Vec<u8>) -> Result<Self, ProtocolError> {
+        if bytes.is_empty() {
+            return Err(ProtocolError::InvalidSessionPayload);
+        }
+        if bytes.len() > MAX_SESSION_PAYLOAD_BYTES {
+            return Err(ProtocolError::SessionPayloadTooLarge);
+        }
+        Ok(Self { provider, bytes })
+    }
+
+    #[must_use]
+    pub const fn provider(&self) -> PersistentProvider {
+        self.provider
+    }
+
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    #[must_use]
+    pub(crate) fn is_valid(&self) -> bool {
+        !self.bytes.is_empty() && self.bytes.len() <= MAX_SESSION_PAYLOAD_BYTES
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -264,6 +311,9 @@ pub enum RequestBody {
         request_id: RequestId,
         bytes: u32,
     },
+    SessionExchange {
+        payload: SessionPayload,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -298,6 +348,9 @@ pub enum ResponseBody {
     },
     Completed {
         exit_code: Option<i32>,
+    },
+    SessionExchange {
+        payload: SessionPayload,
     },
     Error(RemoteError),
 }
@@ -493,6 +546,10 @@ pub enum ProtocolError {
     ChunkTooLarge,
     #[error("remote helper stream exceeded granted credit")]
     CreditExceeded,
+    #[error("remote session payload is empty or invalid")]
+    InvalidSessionPayload,
+    #[error("remote session payload exceeds the 1 MiB bound")]
+    SessionPayloadTooLarge,
 }
 
 const fn min_usize(left: usize, right: usize) -> usize {

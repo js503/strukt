@@ -1,13 +1,48 @@
 use std::collections::BTreeSet;
 
 use strukt_remote::{
-    Capability, ClientHello, NegotiatedProtocol, OperationTracker, ProtocolError, ProtocolLimits,
-    RemoteBuildTarget, RemoteError, RemoteErrorKind, RequestBody, RequestEnvelope, RequestId,
-    ResponseBody, ResponseEnvelope, ServerHello, StreamChunk, negotiate,
+    Capability, ClientHello, NegotiatedProtocol, OperationTracker, PersistentProvider,
+    ProtocolError, ProtocolLimits, RemoteBuildTarget, RemoteError, RemoteErrorKind, RequestBody,
+    RequestEnvelope, RequestId, ResponseBody, ResponseEnvelope, ServerHello, SessionPayload,
+    StreamChunk, negotiate,
 };
 
 fn capabilities(values: &[Capability]) -> BTreeSet<Capability> {
     values.iter().copied().collect()
+}
+
+#[test]
+fn persistent_provider_capabilities_negotiate_independently() {
+    let (client, mut server) = hello(1, 3);
+    server
+        .capabilities
+        .extend([Capability::Sessions, Capability::Tmux]);
+    let supported = capabilities(&[Capability::Files, Capability::Sessions]);
+    let negotiated = negotiate(&client, &server, &supported).unwrap();
+    assert!(negotiated.capabilities.contains(&Capability::Sessions));
+    assert!(!negotiated.capabilities.contains(&Capability::Tmux));
+}
+
+#[test]
+fn session_tunnel_payloads_are_nonempty_and_bounded() {
+    let payload = SessionPayload::new(PersistentProvider::Native, vec![1, 2, 3]).unwrap();
+    assert_eq!(payload.provider(), PersistentProvider::Native);
+    assert_eq!(payload.bytes(), &[1, 2, 3]);
+    assert_eq!(
+        SessionPayload::new(PersistentProvider::Tmux, Vec::new()),
+        Err(ProtocolError::InvalidSessionPayload)
+    );
+    assert_eq!(
+        SessionPayload::new(PersistentProvider::Native, vec![0; 1024 * 1024 + 1]),
+        Err(ProtocolError::SessionPayloadTooLarge)
+    );
+
+    let request = RequestEnvelope {
+        request_id: RequestId::new(12).unwrap(),
+        generation: 9,
+        body: RequestBody::SessionExchange { payload },
+    };
+    assert_eq!(request.generation, 9);
 }
 
 fn hello(major: u16, minor: u16) -> (ClientHello, ServerHello) {

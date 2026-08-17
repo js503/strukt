@@ -25,10 +25,11 @@ software engineering: one context, every tool, and any model.
 
 ## Status
 
-- Stage: remote persistent-session shaping
+- Stage: public-alpha release preparation
 - Current foundation: native shell plus real local workspace, file, editor, and
-  language workflows, ephemeral terminals, and native local persistent sessions
-- Milestones: M1 through M4 complete; M5 remains on the public-alpha critical path
+  language workflows, ephemeral terminals, native local persistent sessions,
+  first-class SSH workspaces, native remote persistence, and tmux interoperability
+- Milestones: M1 through M5 complete; the Public Alpha release gate is next
 
 ## Key Docs
 
@@ -83,8 +84,12 @@ stopped-only machine-restart restoration. M4 adds standard-OpenSSH remote
 workspaces with explicit host/root entry, helper capability negotiation, direct
 terminal fallback, root-confined files, revision-checked editing, search, Git,
 tasks, language transport, reconnect isolation, and secret-free records. Remote
-terminals are ephemeral in M4; persistent remote sessions belong exclusively to
-M5. M6 onward is the post-alpha roadmap.
+terminals remain available as an ephemeral fallback. M5 adds host-scoped native
+remote sessions with multiple sessions, windows, and split panes; explicit lazy
+service startup; bounded full resync after SSH interruption; retained process,
+layout, and output identity; capability-limited existing-tmux attachment; visible
+host/provider/stale boundaries; and secret-free provider preferences. M6 onward is
+the post-alpha roadmap.
 
 Open the **Connect** activity to enter an alias from your normal OpenSSH config and
 an absolute or `~/`-relative Linux workspace root. strukt invokes the platform
@@ -103,6 +108,15 @@ cargo build -p strukt-remote --bins
 cargo build -p strukt-app
 cargo run -p strukt-app -- --remote-smoke "$fixture"
 test ! -e "$fixture/.strukt"
+```
+
+The deterministic M5 smoke composes the same SSH path with the packaged native
+session service, creates multiple remote session hierarchies and a split layout,
+replaces the SSH helper, and verifies service identity, running PTYs, retained
+output, cleanup, and absence of workspace metadata:
+
+```bash
+bash scripts/m5-remote-sessions-smoke.sh
 ```
 
 The deterministic M3 smoke accepts any existing folder and uses only the bundled
@@ -162,6 +176,10 @@ cargo run -p strukt-app -- --m2-integration-smoke "$fixture"
   cross-platform integration, native walkthrough, and full M2 review evidence.
 - See `docs/evidence/m3-local-persistent-sessions-validation.md` for session
   service, protocol, lifecycle, security, native walkthrough, and matrix evidence.
+- See `docs/evidence/m4-ssh-remote-workspace-validation.md` for OpenSSH, helper,
+  remote workspace, fallback, security, and matrix evidence.
+- See `docs/evidence/m5-remote-persistent-sessions-validation.md` for native remote
+  persistence, real tmux, reconnect, security review, and matrix evidence.
 
 ## Pull Request Expectations
 

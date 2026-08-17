@@ -23,7 +23,7 @@ const TICK_INTERVAL: Duration = Duration::from_millis(10);
 const PERSIST_INTERVAL: Duration = Duration::from_millis(100);
 const TERMINATION_GRACE: Duration = Duration::from_millis(500);
 
-fn main() {
+pub fn main() {
     if let Err(error) = run() {
         eprintln!("strukt-sessiond: {error}");
         std::process::exit(1);
@@ -227,7 +227,7 @@ fn handle_request(
     let body = request.body().clone();
     let response = match body {
         RequestBody::Catalog => ResponseBody::Catalog(catalog_snapshot(service)),
-        RequestBody::Attach => {
+        RequestBody::Attach | RequestBody::Reconnect { .. } => {
             if controlling_client.is_some_and(|owner| owner != client) {
                 return Err(ServiceError::WriterAlreadyAttached);
             }
@@ -434,7 +434,10 @@ fn handle_controlled_request(
             }
             return Ok((ResponseBody::ShuttingDown, true));
         }
-        RequestBody::Catalog | RequestBody::Attach | RequestBody::Detach => {
+        RequestBody::Catalog
+        | RequestBody::Attach
+        | RequestBody::Reconnect { .. }
+        | RequestBody::Detach => {
             return Err(ServiceError::InvalidWireRequest);
         }
     };
