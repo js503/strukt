@@ -1,8 +1,8 @@
 # M5 Remote Persistent Sessions Validation
 
 - Date: 2026-08-17
-- Candidate implementation head: `1128643`
-- Hosted implementation run: [32051173499](https://github.com/js503/strukt/actions/runs/32051173499) (in progress)
+- Candidate implementation head: `f3628b0`
+- Hosted implementation run: [32051943900](https://github.com/js503/strukt/actions/runs/32051943900) (in progress)
 - Issue: [#15](https://github.com/js503/strukt/issues/15)
 - Pull request: [#16](https://github.com/js503/strukt/pull/16)
 - Spec: [`../specs/0009-m5-remote-persistent-sessions.md`](../specs/0009-m5-remote-persistent-sessions.md)
@@ -88,7 +88,7 @@ rejected, and removes only the exact private server it created.
 ## Hosted platform matrix
 
 GitHub Actions run
-[32051173499](https://github.com/js503/strukt/actions/runs/32051173499) is the
+[32051943900](https://github.com/js503/strukt/actions/runs/32051943900) is the
 candidate implementation-head validation on macOS 14, Ubuntu 24.04, and Windows
 Server 2022. Every
 job runs formatting, strict Clippy, the full workspace test suite, required binary
@@ -118,16 +118,16 @@ and CI workflow. It found and resolved these material issues:
 - real tmux could silently skip when absent from the Ubuntu runner;
 - deterministic tmux executable fixtures used a Unix-only absolute path on
   Windows;
-- an SSH helper descendant could retain the diagnostic pipe on Windows, causing
-  disconnect to wait forever for the diagnostic reader thread;
+- an SSH helper descendant could retain process or diagnostic handles on Windows;
+  disconnect used blocking waits that could therefore freeze forever;
 - the approved spec overstated a delta/event-queue design that M5 does not ship.
 
 Focused regressions cover durable connection identity, the single request lane,
-removed-pane pruning, platform-native executable validation, bounded diagnostic
-reader shutdown, explicit start, provider correlation, process-output bounds, and
-packaged service mode. Hosted Windows runs exposed both the fixture-path and
-descendant-held-pipe issues; each corrected focused suite and the local M5 smoke
-passed before its replacement matrix ran.
+removed-pane pruning, platform-native executable validation, bounded helper
+process and diagnostic-reader shutdown, explicit start, provider correlation,
+process-output bounds, and packaged service mode. Hosted Windows runs exposed both
+the fixture-path and descendant-held-handle issues; each corrected focused suite
+and the local M5 smoke passed before its replacement matrix ran.
 
 No unresolved critical or important implementation finding remains. The known
 validation gaps below belong to the explicit Alpha gate, not to a hidden M5 claim.
