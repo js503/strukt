@@ -12,9 +12,10 @@ use strukt_session::{
 
 #[test]
 fn discovery_uses_fixed_argv_and_parses_machine_records() {
-    let provider = TmuxProvider::new(PathBuf::from("/usr/bin/tmux")).unwrap();
+    let executable = synthetic_tmux_executable();
+    let provider = TmuxProvider::new(executable.clone()).unwrap();
     let spec = provider.discovery_command();
-    assert_eq!(spec.program(), PathBuf::from("/usr/bin/tmux"));
+    assert_eq!(spec.program(), executable);
     assert_eq!(
         spec.arguments(),
         [
@@ -36,7 +37,7 @@ $2\\037api;$(touch nope)\\037@3\\037editor\\037%5\\0370\\03780\\03724\n";
 
 #[test]
 fn hostile_or_oversized_discovery_is_rejected() {
-    let provider = TmuxProvider::new(PathBuf::from("/usr/bin/tmux")).unwrap();
+    let provider = TmuxProvider::new(synthetic_tmux_executable()).unwrap();
     assert!(
         provider
             .parse_discovery(b"$(id)\\037name\\037@1\\037win\\037%1\\0371\\03780\\03724\n")
@@ -69,7 +70,7 @@ fn process_output_is_killed_at_the_bound_instead_of_buffered_without_limit() {
 
 #[test]
 fn attach_input_resize_and_capture_never_use_a_shell() {
-    let provider = TmuxProvider::new(PathBuf::from("/usr/bin/tmux")).unwrap();
+    let provider = TmuxProvider::new(synthetic_tmux_executable()).unwrap();
     let session = TmuxTarget::session("$12").unwrap();
     let pane = TmuxTarget::pane("%7").unwrap();
     assert_eq!(
@@ -278,4 +279,12 @@ fn tmux_session_exchange(
     let payload = SessionPayload::new(PersistentProvider::Tmux, bytes).unwrap();
     let response = manager.exchange_session(&payload).unwrap();
     read_frame(&mut std::io::Cursor::new(response.bytes()), 1024 * 1024).unwrap()
+}
+
+fn synthetic_tmux_executable() -> PathBuf {
+    if cfg!(windows) {
+        PathBuf::from(r"C:\Program Files\strukt-fixtures\tmux.exe")
+    } else {
+        PathBuf::from("/usr/bin/tmux")
+    }
 }
