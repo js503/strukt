@@ -237,6 +237,40 @@ mod tests {
     }
 
     #[test]
+    fn remote_session_controls_wait_for_ssh_and_the_single_request_lane() {
+        let root = std::env::current_dir().expect("current directory");
+        let client = strukt_session::SessionClient::new(
+            root.join("remote-data"),
+            root.join("remote-sessiond"),
+        )
+        .expect("client");
+        let mut app = StruktApp::default();
+        app.sessions.use_remote_client(
+            client,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            "ec2-dev".into(),
+            PathBuf::from("/srv/project"),
+            true,
+            strukt_remote::PersistentProvider::Native,
+        );
+
+        let _ = app.update(Message::ConnectSessions);
+        assert_eq!(
+            app.session_error.as_deref(),
+            Some("reconnect the SSH workspace before its persistent sessions")
+        );
+
+        let _connect = app.sessions.begin_connect().expect("connect job");
+        let _ = app.update(Message::SelectRemoteSessionProvider(
+            strukt_remote::PersistentProvider::Tmux,
+        ));
+        assert_eq!(
+            app.session_error.as_deref(),
+            Some("wait for the current persistent-session operation to finish")
+        );
+    }
+
+    #[test]
     fn persistent_session_lines_use_portable_terminal_enter_framing() {
         assert_eq!(crate::app::session_line_input("alpha".into()), b"alpha\r");
     }

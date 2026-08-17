@@ -5,7 +5,9 @@ use std::time::Duration;
 use strukt_remote::{SshAlias, SshExecutable};
 use strukt_session::{
     ClientConnectIntent, PaneLifecycle, RequestBody, ResponseBody, SessionClient, SessionId,
+    WindowId,
 };
+use strukt_terminal::SplitAxis;
 
 use crate::remote::RemoteRuntime;
 
@@ -14,12 +16,20 @@ pub fn run(root: &Path) -> Result<(), String> {
     let alias = SshAlias::new("fixture").map_err(display)?;
     let executable = SshExecutable::from_path(fake_ssh).map_err(display)?;
     let root_label = root.to_string_lossy();
-    let runtime = RemoteRuntime::connect(executable.clone(), &alias, &root_label, 21)?;
+    let connection_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned();
+    let runtime = RemoteRuntime::connect(
+        executable.clone(),
+        &alias,
+        &root_label,
+        connection_id.clone(),
+        21,
+    )?;
     let mut client = runtime.native_session_client()?;
     connect(&mut client, ClientConnectIntent::ExplicitAttach)?;
 
     let first = create_session(&mut client, "api", root)?;
     let second = create_session(&mut client, "worker", root)?;
+    let (logs_window, logs_split) = create_remote_layout(&mut client, first, root)?;
     let first_pane = session_first_pane(&client, first)?;
     let second_pane = session_first_pane(&client, second)?;
     start_and_mark(&mut client, first, first_pane, b"echo M5_API_MARKER\r")?;
@@ -37,7 +47,8 @@ pub fn run(root: &Path) -> Result<(), String> {
         return Err("SSH disconnect did not freeze the session projection as stale".into());
     }
 
-    let reconnected_runtime = RemoteRuntime::connect(executable, &alias, &root_label, 22)?;
+    let reconnected_runtime =
+        RemoteRuntime::connect(executable, &alias, &root_label, connection_id, 22)?;
     let mut reconnected = reconnected_runtime.native_session_client()?;
     connect(&mut reconnected, ClientConnectIntent::Reconnect)?;
     let catalog = reconnected
@@ -48,6 +59,21 @@ pub fn run(root: &Path) -> Result<(), String> {
     }
     if catalog.catalog().sessions().count() != 2 {
         return Err("reconnect did not restore both remote session hierarchies".into());
+    }
+    let restored_logs = catalog
+        .catalog()
+        .session(first)
+        .and_then(|session| {
+            session
+                .windows()
+                .iter()
+                .find(|window| window.id() == logs_window)
+        })
+        .ok_or_else(|| "reconnect did not restore the remote logs window".to_owned())?;
+    if restored_logs.panes().all(|pane| pane.id() != logs_split)
+        || restored_logs.panes().count() != 2
+    {
+        return Err("reconnect did not restore the remote split-pane layout".into());
     }
     for session in [first, second] {
         let pane = session_first_pane(&reconnected, session)?;
@@ -72,6 +98,37 @@ pub fn run(root: &Path) -> Result<(), String> {
         return Err("M5 smoke wrote workspace metadata".into());
     }
     Ok(())
+}
+
+fn create_remote_layout(
+    client: &mut SessionClient,
+    session: SessionId,
+    root: &Path,
+) -> Result<(WindowId, strukt_session::PaneId), String> {
+    let window = match request(
+        client,
+        RequestBody::CreateWindow {
+            session,
+            name: "logs".to_owned(),
+            working_directory: root.to_path_buf(),
+        },
+    )? {
+        ResponseBody::WindowCreated(window) => window,
+        other => return Err(format!("unexpected remote window creation: {other:?}")),
+    };
+    let _ = request(client, RequestBody::Catalog)?;
+    let split = match request(
+        client,
+        RequestBody::SplitPane {
+            session,
+            axis: SplitAxis::Horizontal,
+        },
+    )? {
+        ResponseBody::PaneSplit(pane) => pane,
+        other => return Err(format!("unexpected remote pane split: {other:?}")),
+    };
+    let _ = request(client, RequestBody::Catalog)?;
+    Ok((window, split))
 }
 
 fn connect(client: &mut SessionClient, intent: ClientConnectIntent) -> Result<(), String> {

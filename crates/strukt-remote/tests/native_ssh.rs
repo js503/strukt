@@ -1,7 +1,17 @@
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
-use strukt_remote::{OpenSsh, OpenSshClient, RequestBody, ResponseBody, SshAlias, SshExecutable};
+use strukt_remote::{
+    OpenSsh, OpenSshClient, PersistentProvider, RemoteSessionBackend, RequestBody, ResponseBody,
+    SshAlias, SshExecutable,
+};
+use strukt_session::{
+    ClientConnectIntent, PaneId, RequestBody as SessionRequest, ResponseBody as SessionResponse,
+    SessionClient, SessionId,
+};
 use tempfile::tempdir;
 
 #[test]
@@ -56,5 +66,130 @@ fn disposable_real_openssh_runs_the_helper_protocol() {
         })
         .unwrap();
     assert!(matches!(response, ResponseBody::DirectoryPage { .. }));
-    client.disconnect();
+    let transport = Arc::new(Mutex::new(client));
+    let mut sessions = remote_session_client(Arc::clone(&transport));
+    connect_sessions(&mut sessions, ClientConnectIntent::ExplicitAttach);
+    let first_instance = sessions.catalog().unwrap().service_instance();
+    let session = create_remote_session(&mut sessions, &root);
+    let pane = first_pane(&sessions, session);
+    start_and_mark(&mut sessions, session, pane);
+    assert_remote_marker(&mut sessions, pane);
+
+    transport.lock().unwrap().disconnect();
+    sessions.mark_transport_lost("real SSH helper disconnected");
+
+    let reconnected =
+        OpenSshClient::connect(&openssh, &alias, env!("CARGO_PKG_VERSION"), &root, 2).unwrap();
+    let reconnected = Arc::new(Mutex::new(reconnected));
+    let mut sessions = remote_session_client(Arc::clone(&reconnected));
+    connect_sessions(&mut sessions, ClientConnectIntent::Reconnect);
+    assert_eq!(
+        sessions.catalog().unwrap().service_instance(),
+        first_instance
+    );
+    assert_remote_marker(&mut sessions, pane);
+    request_session(&mut sessions, SessionRequest::TerminateSession { session });
+    request_session(&mut sessions, SessionRequest::Catalog);
+    request_session(&mut sessions, SessionRequest::RemoveSession { session });
+    assert!(matches!(
+        request_session(&mut sessions, SessionRequest::Shutdown),
+        SessionResponse::ShuttingDown
+    ));
+    reconnected.lock().unwrap().disconnect();
+}
+
+fn remote_session_client(client: Arc<Mutex<OpenSshClient>>) -> SessionClient {
+    let root = std::env::current_dir().unwrap();
+    SessionClient::with_backend(
+        root.join("m5-real-ssh-session-data"),
+        root.join("m5-real-ssh-session-service"),
+        Arc::new(RemoteSessionBackend::new(
+            client,
+            PersistentProvider::Native,
+        )),
+    )
+    .unwrap()
+}
+
+fn connect_sessions(client: &mut SessionClient, intent: ClientConnectIntent) {
+    let completion = client.begin_connect(intent).unwrap().run();
+    client.finish_connect(completion).unwrap();
+}
+
+fn request_session(client: &mut SessionClient, body: SessionRequest) -> SessionResponse {
+    let completion = client.begin_request(body).unwrap().run();
+    client.finish_request(completion).unwrap()
+}
+
+fn create_remote_session(client: &mut SessionClient, root: &str) -> SessionId {
+    let SessionResponse::SessionCreated(session) = request_session(
+        client,
+        SessionRequest::CreateSession {
+            name: "real-ssh-m5".into(),
+            working_directory: PathBuf::from(root),
+        },
+    ) else {
+        panic!("expected remote session creation")
+    };
+    request_session(client, SessionRequest::Catalog);
+    session
+}
+
+fn first_pane(client: &SessionClient, session: SessionId) -> PaneId {
+    client
+        .catalog()
+        .unwrap()
+        .catalog()
+        .session(session)
+        .unwrap()
+        .active_window()
+        .unwrap()
+        .focused_pane()
+        .id()
+}
+
+fn start_and_mark(client: &mut SessionClient, session: SessionId, pane: PaneId) {
+    let SessionResponse::PaneStarted { generation, .. } = request_session(
+        client,
+        SessionRequest::StartPane {
+            session,
+            pane,
+            rows: 24,
+            columns: 80,
+        },
+    ) else {
+        panic!("expected remote pane start")
+    };
+    request_session(client, SessionRequest::Catalog);
+    assert!(matches!(
+        request_session(
+            client,
+            SessionRequest::WritePane {
+                pane,
+                generation,
+                bytes: b"echo STRUKT_REAL_SSH_M5\r".to_vec(),
+            },
+        ),
+        SessionResponse::PaneWritten
+    ));
+}
+
+fn assert_remote_marker(client: &mut SessionClient, pane: PaneId) {
+    for _ in 0..80 {
+        thread::sleep(Duration::from_millis(25));
+        let SessionResponse::PaneSnapshot(snapshot) =
+            request_session(client, SessionRequest::Snapshot { pane })
+        else {
+            panic!("expected remote pane snapshot")
+        };
+        let text = snapshot
+            .rows()
+            .iter()
+            .flat_map(|row| row.iter().map(strukt_terminal::Cell::text))
+            .collect::<String>();
+        if text.contains("STRUKT_REAL_SSH_M5") {
+            return;
+        }
+    }
+    panic!("real SSH remote session marker was not observed")
 }

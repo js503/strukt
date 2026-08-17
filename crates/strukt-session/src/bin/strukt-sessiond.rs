@@ -23,7 +23,7 @@ const TICK_INTERVAL: Duration = Duration::from_millis(10);
 const PERSIST_INTERVAL: Duration = Duration::from_millis(100);
 const TERMINATION_GRACE: Duration = Duration::from_millis(500);
 
-fn main() {
+pub fn main() {
     if let Err(error) = run() {
         eprintln!("strukt-sessiond: {error}");
         std::process::exit(1);

@@ -1,9 +1,12 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
-use std::sync::Mutex;
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use strukt_session::{
@@ -22,6 +25,8 @@ const MAX_CONTROL_RECORD_BYTES: usize = 64 * 1024;
 const MAX_RECORDS: usize = 1024;
 const MAX_NAME_BYTES: usize = 256;
 const MAX_INPUT_BYTES: usize = 256 * 1024;
+const MAX_INPUT_CHUNK_BYTES: usize = 4 * 1024;
+const PROCESS_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TmuxCommand {
@@ -168,7 +173,12 @@ impl TmuxProvider {
     ///
     /// Returns validation, process, or bounded-output errors.
     pub fn send_input(&self, pane: &TmuxTarget, bytes: &[u8]) -> Result<(), TmuxError> {
-        execute_bounded(&self.input_command(pane, bytes)?, MAX_CONTROL_RECORD_BYTES)?;
+        if bytes.is_empty() || bytes.len() > MAX_INPUT_BYTES {
+            return Err(TmuxError::InvalidInput);
+        }
+        for chunk in bytes.chunks(MAX_INPUT_CHUNK_BYTES) {
+            execute_bounded(&self.input_command(pane, chunk)?, MAX_CONTROL_RECORD_BYTES)?;
+        }
         Ok(())
     }
 
@@ -282,7 +292,8 @@ impl TmuxProvider {
     ///
     /// Returns an error for the wrong target or an empty/oversized input.
     pub fn input_command(&self, pane: &TmuxTarget, bytes: &[u8]) -> Result<TmuxCommand, TmuxError> {
-        if pane.kind != TargetKind::Pane || bytes.is_empty() || bytes.len() > MAX_INPUT_BYTES {
+        if pane.kind != TargetKind::Pane || bytes.is_empty() || bytes.len() > MAX_INPUT_CHUNK_BYTES
+        {
             return Err(TmuxError::InvalidInput);
         }
         let mut arguments = vec![
@@ -533,10 +544,7 @@ impl TmuxManager {
             TmuxRequest::Input { pane, bytes } => {
                 self.require_attached()?;
                 let target = TmuxTarget::pane(pane)?;
-                execute_bounded(
-                    &self.provider.input_command(&target, &bytes)?,
-                    MAX_CONTROL_RECORD_BYTES,
-                )?;
+                self.provider.send_input(&target, &bytes)?;
                 TmuxResponse::Acknowledged
             }
             TmuxRequest::Resize {
@@ -618,7 +626,8 @@ impl TmuxManager {
 }
 
 struct TmuxSessionBridge {
-    instance: ServiceInstanceId,
+    instance: Option<ServiceInstanceId>,
+    attached: bool,
     discovered: Option<TmuxCatalog>,
     snapshot: Option<ProviderCatalogSnapshot>,
     panes: HashMap<strukt_session::PaneId, TmuxBridgePane>,
@@ -635,7 +644,8 @@ struct TmuxBridgePane {
 impl TmuxSessionBridge {
     fn new() -> Self {
         Self {
-            instance: ServiceInstanceId::new().expect("OS randomness initializes tmux provider"),
+            instance: None,
+            attached: false,
             discovered: None,
             snapshot: None,
             panes: HashMap::new(),
@@ -655,10 +665,15 @@ impl TmuxSessionBridge {
             }
             SessionRequest::Attach | SessionRequest::Reconnect { .. } => {
                 self.refresh(provider)?;
+                self.attached = true;
                 Ok(SessionResponse::Attached(self.snapshot()?))
             }
-            SessionRequest::Detach => Ok(SessionResponse::Detached),
+            SessionRequest::Detach => {
+                self.attached = false;
+                Ok(SessionResponse::Detached)
+            }
             SessionRequest::WritePane { pane, bytes, .. } => {
+                self.require_attached()?;
                 let target = self.pane(pane)?.target.clone();
                 provider
                     .send_input(&target, &bytes)
@@ -671,6 +686,7 @@ impl TmuxSessionBridge {
                 columns,
                 ..
             } => {
+                self.require_attached()?;
                 let target = self.pane(pane)?.target.clone();
                 provider
                     .resize(&target, rows, columns)
@@ -682,6 +698,7 @@ impl TmuxSessionBridge {
                 Ok(SessionResponse::PaneResized)
             }
             SessionRequest::Snapshot { pane } => {
+                self.require_attached()?;
                 let projection = self.pane(pane)?.clone();
                 let bytes = provider
                     .capture(&projection.target)
@@ -791,10 +808,18 @@ impl TmuxSessionBridge {
                 }
             }
         }
+        let instance = if let Some(instance) = self.instance {
+            instance
+        } else {
+            let instance = ServiceInstanceId::new()
+                .map_err(|error| ProviderError::internal(error.to_string()))?;
+            self.instance = Some(instance);
+            instance
+        };
         self.discovered = Some(discovered);
         self.panes = panes;
         self.snapshot = Some(ProviderCatalogSnapshot::new(
-            self.instance,
+            instance,
             ProviderKind::Tmux,
             ProviderCapabilities::tmux_interop(),
             catalog,
@@ -808,6 +833,12 @@ impl TmuxSessionBridge {
 
     fn pane(&self, pane: strukt_session::PaneId) -> Result<&TmuxBridgePane, ProviderError> {
         self.panes.get(&pane).ok_or(ProviderError::NotFound)
+    }
+
+    fn require_attached(&self) -> Result<(), ProviderError> {
+        self.attached
+            .then_some(())
+            .ok_or(ProviderError::Unavailable)
     }
 }
 
@@ -960,19 +991,90 @@ fn decode_control_bytes(encoded: &[u8]) -> Result<Vec<u8>, TmuxError> {
 }
 
 fn execute_bounded(command: &TmuxCommand, maximum: usize) -> Result<Vec<u8>, TmuxError> {
-    let output = Command::new(command.program())
+    let mut child = Command::new(command.program())
         .args(command.arguments().iter().map(OsString::from))
-        .output()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(TmuxError::Io)?;
-    if output.stdout.len() > maximum || output.stderr.len() > MAX_CONTROL_RECORD_BYTES {
+    let stdout = child.stdout.take().ok_or(TmuxError::MissingChildPipe)?;
+    let stderr = child.stderr.take().ok_or(TmuxError::MissingChildPipe)?;
+    let overflow = Arc::new(AtomicBool::new(false));
+    let stdout_thread = drain_bounded(stdout, maximum, Arc::clone(&overflow));
+    let stderr_thread = drain_bounded(stderr, MAX_CONTROL_RECORD_BYTES, Arc::clone(&overflow));
+    let started = Instant::now();
+    let mut exit_status = None;
+    let status = loop {
+        if overflow.load(Ordering::Acquire) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(TmuxError::OutputTooLarge);
+        }
+        if started.elapsed() >= PROCESS_TIMEOUT {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(TmuxError::ProcessTimedOut);
+        }
+        if exit_status.is_none() {
+            match child.try_wait() {
+                Ok(status) => exit_status = status,
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(TmuxError::Io(error));
+                }
+            }
+        }
+        if let Some(status) = exit_status
+            && stdout_thread.is_finished()
+            && stderr_thread.is_finished()
+        {
+            break status;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let stdout = join_output(stdout_thread)?;
+    let stderr = join_output(stderr_thread)?;
+    if overflow.load(Ordering::Acquire) {
         return Err(TmuxError::OutputTooLarge);
     }
-    if !output.status.success() {
-        let mut detail = String::from_utf8_lossy(&output.stderr).into_owned();
+    if !status.success() {
+        let mut detail = String::from_utf8_lossy(&stderr).into_owned();
         detail.truncate(detail.floor_char_boundary(1024));
         return Err(TmuxError::ProcessFailed(detail));
     }
-    Ok(output.stdout)
+    Ok(stdout)
+}
+
+fn drain_bounded(
+    mut reader: impl Read + Send + 'static,
+    maximum: usize,
+    overflow: Arc<AtomicBool>,
+) -> JoinHandle<Result<Vec<u8>, std::io::Error>> {
+    std::thread::spawn(move || {
+        let mut output = Vec::new();
+        let mut buffer = [0_u8; 8 * 1024];
+        loop {
+            let read = reader.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            let remaining = maximum.saturating_sub(output.len());
+            output.extend_from_slice(&buffer[..read.min(remaining)]);
+            if read > remaining {
+                overflow.store(true, Ordering::Release);
+            }
+        }
+        Ok(output)
+    })
+}
+
+fn join_output(thread: JoinHandle<Result<Vec<u8>, std::io::Error>>) -> Result<Vec<u8>, TmuxError> {
+    thread
+        .join()
+        .map_err(|_| TmuxError::OutputReaderFailed)?
+        .map_err(TmuxError::Io)
 }
 
 #[derive(Debug, Error)]
@@ -1009,6 +1111,12 @@ pub enum TmuxError {
     StateUnavailable,
     #[error("tmux process failed: {0}")]
     ProcessFailed(String),
+    #[error("tmux process exceeded its deadline")]
+    ProcessTimedOut,
+    #[error("tmux process did not expose a required stdio pipe")]
+    MissingChildPipe,
+    #[error("tmux output reader failed")]
+    OutputReaderFailed,
     #[error("tmux process IO failed: {0}")]
     Io(#[source] std::io::Error),
     #[error("tmux framing failed: {0}")]

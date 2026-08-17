@@ -64,6 +64,28 @@ fn native_proxy_rejects_wrong_provider_and_trailing_frames() {
     assert!(manager.exchange(&combined).is_err());
 }
 
+#[test]
+fn packaged_remote_helper_can_host_its_native_session_service() {
+    let data = tempfile::tempdir().unwrap();
+    let manager = NativeSessionManager::new(
+        data.path(),
+        PathBuf::from(env!("CARGO_BIN_EXE_strukt-remote")),
+    )
+    .unwrap();
+
+    let attached = exchange(&manager, &RequestEnvelope::new(1, 0, RequestBody::Attach));
+    assert!(
+        matches!(
+            attached.result(),
+            Ok(ResponseBody::Attached(snapshot))
+                if snapshot.provider_kind() == ProviderKind::NativeRemote
+        ),
+        "unexpected packaged runtime attach response: {attached:?}"
+    );
+    let shutdown = exchange(&manager, &RequestEnvelope::new(2, 0, RequestBody::Shutdown));
+    assert!(matches!(shutdown.result(), Ok(ResponseBody::ShuttingDown)));
+}
+
 fn manager(backend: Arc<FakeBackend>) -> NativeSessionManager {
     let client = SessionClient::with_backend(test_path("data"), test_path("sessiond"), backend)
         .expect("client");

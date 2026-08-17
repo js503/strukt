@@ -406,7 +406,7 @@ git commit -m "test: add M5 remote session integration"
 - [ ] **Step 1: Run the full release gate**
 
 ```bash
-forj check /Users/jessie/Development/strukt/.worktrees/m5-sessions
+forj check /Users/jessie/Development/strukt
 git diff --check
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked --offline -- -D warnings
@@ -451,4 +451,3 @@ command restart, real existing tmux sessions can be discovered and attached,
 provider differences are enforced and visible, Explorer and M4 fallback remain
 usable, security invariants hold, all earlier milestone smokes remain green, and
 the exact final PR head passes the hosted platform matrix.
-

@@ -835,6 +835,13 @@ impl StruktApp {
                 return Task::none();
             }
             Message::ConnectRemote => {
+                if self.sessions.remote_host().is_some() && self.sessions.request_in_flight() {
+                    self.remote.error = Some(
+                        "wait for the current persistent-session operation before reconnecting SSH"
+                            .into(),
+                    );
+                    return Task::none();
+                }
                 return match self.remote.begin_connect() {
                     Ok(job) => Task::perform(async move { job.run() }, Message::RemoteConnected),
                     Err(error) => {
@@ -848,24 +855,56 @@ impl StruktApp {
                     return Task::none();
                 }
                 self.remote_runtime = completion.result.ok();
+                let mut rebound_sessions = false;
                 if let Some(runtime) = &self.remote_runtime {
-                    match runtime.native_session_client() {
-                        Ok(client) => self.sessions.use_remote_client(
-                            client,
-                            runtime.alias().to_owned(),
-                            std::path::PathBuf::from(runtime.root()),
-                            runtime.tmux_available(),
-                            strukt_remote::PersistentProvider::Native,
-                        ),
-                        Err(error) => self.session_error = Some(error),
+                    let provider = match self.remote.preferred_session_provider() {
+                        Some(strukt_persistence::RemoteSessionProviderPreference::Tmux) => {
+                            strukt_remote::PersistentProvider::Tmux
+                        }
+                        Some(strukt_persistence::RemoteSessionProviderPreference::Native)
+                        | None => strukt_remote::PersistentProvider::Native,
+                    };
+                    match self.sessions.rebind_remote_backend(
+                        runtime.session_backend(provider),
+                        runtime.connection_id(),
+                        runtime.alias(),
+                        std::path::PathBuf::from(runtime.root()),
+                        runtime.tmux_available(),
+                        provider,
+                    ) {
+                        Ok(true) => rebound_sessions = true,
+                        Ok(false) => match runtime.session_client(provider) {
+                            Ok(client) => self.sessions.use_remote_client(
+                                client,
+                                runtime.connection_id().to_owned(),
+                                runtime.alias().to_owned(),
+                                std::path::PathBuf::from(runtime.root()),
+                                runtime.tmux_available(),
+                                provider,
+                            ),
+                            Err(error) => self.session_error = Some(error),
+                        },
+                        Err(error) => self.session_error = Some(error.to_string()),
+                    }
+                    if provider == strukt_remote::PersistentProvider::Tmux
+                        && !runtime.tmux_available()
+                    {
+                        self.session_error = Some(
+                            "saved tmux provider is unavailable; select strukt native to continue"
+                                .into(),
+                        );
                     }
                 }
                 let refresh = self
                     .remote_runtime
                     .as_ref()
                     .map_or_else(Task::none, |_| Task::done(Message::RefreshRemoteFiles));
-                let persist = match (self.remote.current_record(), self.remote_store.clone()) {
-                    (Ok(record), Some(store)) if self.remote_runtime.is_some() => {
+                let active_record = self
+                    .remote_runtime
+                    .as_ref()
+                    .map(|runtime| self.remote.current_record_for(runtime.connection_id()));
+                let persist = match (active_record, self.remote_store.clone()) {
+                    (Some(Ok(record)), Some(store)) => {
                         self.remote.remember_record(record.clone());
                         Task::perform(
                             async move {
@@ -880,7 +919,12 @@ impl StruktApp {
                     }
                     _ => Task::none(),
                 };
-                return Task::batch([refresh, persist]);
+                let reconnect = if rebound_sessions {
+                    Task::done(Message::ReconnectSessions)
+                } else {
+                    Task::none()
+                };
+                return Task::batch([refresh, persist, reconnect]);
             }
             Message::RefreshRemoteFiles => {
                 if !self.remote.begin_operation() {
@@ -1241,6 +1285,11 @@ impl StruktApp {
                 return Task::none();
             }
             Message::ConnectSessions => {
+                if self.sessions.remote_host().is_some() && self.remote_runtime.is_none() {
+                    self.session_error =
+                        Some("reconnect the SSH workspace before its persistent sessions".into());
+                    return Task::none();
+                }
                 return match self.sessions.begin_connect() {
                     Ok(job) => {
                         self.session_error = None;
@@ -1253,6 +1302,11 @@ impl StruktApp {
                 };
             }
             Message::SelectRemoteSessionProvider(provider) => {
+                if !self.sessions.can_switch_remote_provider() {
+                    self.session_error =
+                        Some("wait for the current persistent-session operation to finish".into());
+                    return Task::none();
+                }
                 let Some(runtime) = &self.remote_runtime else {
                     self.session_error = Some("connect an SSH workspace first".into());
                     return Task::none();
@@ -1266,12 +1320,41 @@ impl StruktApp {
                     Ok(client) => {
                         self.sessions.use_remote_client(
                             client,
+                            runtime.connection_id().to_owned(),
                             runtime.alias().to_owned(),
                             PathBuf::from(runtime.root()),
                             runtime.tmux_available(),
                             provider,
                         );
                         self.session_error = None;
+                        let preference = match provider {
+                            strukt_remote::PersistentProvider::Native => {
+                                strukt_persistence::RemoteSessionProviderPreference::Native
+                            }
+                            strukt_remote::PersistentProvider::Tmux => {
+                                strukt_persistence::RemoteSessionProviderPreference::Tmux
+                            }
+                        };
+                        return match (
+                            self.remote.remember_session_provider(preference),
+                            self.remote_store.clone(),
+                        ) {
+                            (Ok(record), Some(store)) => Task::perform(
+                                async move {
+                                    tokio::task::spawn_blocking(move || {
+                                        store.upsert(record).map_err(|error| error.to_string())
+                                    })
+                                    .await
+                                    .map_err(|error| error.to_string())?
+                                },
+                                Message::RemoteRecordSaved,
+                            ),
+                            (Err(error), _) => {
+                                self.session_error = Some(error);
+                                Task::none()
+                            }
+                            (Ok(_), None) => Task::none(),
+                        };
                     }
                     Err(error) => self.session_error = Some(error),
                 }
@@ -1293,7 +1376,17 @@ impl StruktApp {
                 match self.sessions.finish_connect(&completion) {
                     Ok(()) => {
                         self.session_error = None;
-                        if let Some(workspace) = &self.workspace {
+                        match self.sessions.begin_next_reconnect_resync() {
+                            Ok(Some(job)) => return session_request_task(job),
+                            Ok(None) => {}
+                            Err(error) => {
+                                self.session_error = Some(error.to_string());
+                                return Task::none();
+                            }
+                        }
+                        if self.sessions.remote_host().is_none()
+                            && let Some(workspace) = &self.workspace
+                        {
                             match self.sessions.begin_migration(workspace) {
                                 Ok(Some(job)) => return session_request_task(job),
                                 Ok(None) => {}
@@ -1405,11 +1498,21 @@ impl StruktApp {
                         | ResponseBody::SessionDuplicated(_)
                         | ResponseBody::WindowCreated(_)
                         | ResponseBody::WindowDuplicated(_)
-                        | ResponseBody::PaneSplit(_)
-                        | ResponseBody::PaneSnapshot(_),
+                        | ResponseBody::PaneSplit(_),
                     ) => {
                         self.session_error = None;
                         return Task::done(Message::RefreshSessions);
+                    }
+                    Ok(ResponseBody::PaneSnapshot(_)) => {
+                        self.session_error = None;
+                        return match self.sessions.begin_next_reconnect_resync() {
+                            Ok(Some(job)) => session_request_task(job),
+                            Ok(None) => Task::done(Message::RefreshSessions),
+                            Err(error) => {
+                                self.session_error = Some(error.to_string());
+                                Task::none()
+                            }
+                        };
                     }
                     Ok(ResponseBody::SessionRestarted {
                         restarted, failed, ..
@@ -1443,6 +1546,9 @@ impl StruktApp {
                         .catalog()
                         .and_then(|snapshot| snapshot.catalog().session(session))
                         .map_or_else(String::new, |target| target.name().to_owned());
+                    if self.sessions.selection_is_local_only() {
+                        return Task::done(Message::PollSessions);
+                    }
                     return self.start_session_request(RequestBody::ActivateSession { session });
                 }
                 self.session_error = Some("persistent session selection is stale".into());
@@ -1459,6 +1565,9 @@ impl StruktApp {
                         .and_then(|snapshot| snapshot.catalog().session(session))
                         .and_then(|target| target.windows().iter().find(|item| item.id() == window))
                         .map_or_else(String::new, |target| target.name().to_owned());
+                    if self.sessions.selection_is_local_only() {
+                        return Task::done(Message::PollSessions);
+                    }
                     return self
                         .start_session_request(RequestBody::ActivateWindow { session, window });
                 }
@@ -1467,6 +1576,9 @@ impl StruktApp {
             }
             Message::SelectSessionPane(pane) => {
                 if self.sessions.select_pane(pane) {
+                    if self.sessions.selection_is_local_only() {
+                        return Task::done(Message::PollSessions);
+                    }
                     let Some(session) = self.sessions.selected_session() else {
                         return Task::none();
                     };
@@ -5081,7 +5193,9 @@ impl StruktApp {
             subscriptions
                 .push(time::every(Duration::from_millis(250)).map(|_| Message::PollSessions));
         }
-        if self.sessions.health() == ClientHealth::Stale {
+        if self.sessions.health() == ClientHealth::Stale
+            && (self.sessions.remote_host().is_none() || self.remote_runtime.is_some())
+        {
             subscriptions
                 .push(time::every(Duration::from_secs(2)).map(|_| Message::ReconnectSessions));
         }

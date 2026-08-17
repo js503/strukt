@@ -23,6 +23,12 @@ jobs:
           toolchain: 1.97.1
           components: clippy,rustfmt
       - uses: Swatinem/rust-cache@v2
+      - name: Require real tmux integration prerequisite
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          command -v tmux
+          tmux -V
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
@@ -277,9 +283,11 @@ jobs:
           ssh-keygen -q -t ed25519 -N '' -f "$fixture/client_key"
           cp "$fixture/client_key.pub" "$fixture/authorized_keys"
 
+          session_data="$fixture/sessions"
+          mkdir -p "$session_data"
           helper="$fixture/run-helper"
-          printf '#!/usr/bin/env bash\nexec "%s/target/debug/strukt-remote" --stdio\n' \
-            "$GITHUB_WORKSPACE" > "$helper"
+          printf '#!/usr/bin/env bash\nexport STRUKT_REMOTE_SESSION_DATA="%s"\nexec "%s/target/debug/strukt-remote" --stdio\n' \
+            "$session_data" "$GITHUB_WORKSPACE" > "$helper"
           chmod 700 "$helper"
 
           port=49222

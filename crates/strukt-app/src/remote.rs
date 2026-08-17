@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use iced::widget::text_editor;
 use strukt_language::{FrameDecoder, FrameLimits, IncomingMessage, encode_frame, parse_message};
-use strukt_persistence::RemoteConnectionRecord;
+use strukt_persistence::{RemoteConnectionRecord, RemoteSessionProviderPreference};
 use strukt_remote::{
     Capability as RemoteCapability, HelperArtifact, OpenSsh, OpenSshClient, RemoteBuildTarget,
     RemoteRoot, RemoteSessionBackend, RequestBody, ResponseBody, SshAlias, SshCancellation,
@@ -113,6 +113,18 @@ impl RemoteSurfaces {
     pub fn begin_connect(&mut self) -> Result<RemoteConnectJob, String> {
         let alias = SshAlias::new(self.alias_input.clone()).map_err(|error| error.to_string())?;
         let root = RemoteRoot::new(self.root_input.clone()).map_err(|error| error.to_string())?;
+        let connection_id = self
+            .records
+            .iter()
+            .find(|record| record.alias == self.alias_input)
+            .map_or_else(
+                || {
+                    strukt_remote::ConnectionId::new()
+                        .map(|id| id.to_string())
+                        .map_err(|error| error.to_string())
+                },
+                |record| Ok(record.connection_id.clone()),
+            )?;
         let executable = discover_ssh()?;
         self.generation = self.generation.saturating_add(1).max(1);
         self.status = RemoteStatus::Connecting;
@@ -126,6 +138,7 @@ impl RemoteSurfaces {
             executable,
             alias,
             root,
+            connection_id,
             generation: self.generation,
         })
     }
@@ -287,18 +300,35 @@ impl RemoteSurfaces {
     ///
     /// Returns an identity or record validation error.
     pub fn current_record(&self) -> Result<RemoteConnectionRecord, String> {
-        let connection_id = self
+        let existing = self
             .records
             .iter()
-            .find(|record| record.alias == self.alias_input)
-            .map_or_else(
-                || {
-                    strukt_remote::ConnectionId::new()
-                        .map(|id| id.to_string())
-                        .map_err(|error| error.to_string())
-                },
-                |record| Ok(record.connection_id.clone()),
-            )?;
+            .find(|record| record.alias == self.alias_input);
+        let connection_id = existing.map_or_else(
+            || {
+                strukt_remote::ConnectionId::new()
+                    .map(|id| id.to_string())
+                    .map_err(|error| error.to_string())
+            },
+            |record| Ok(record.connection_id.clone()),
+        )?;
+        self.current_record_for(&connection_id)
+    }
+
+    /// Creates the current secret-free persistence record with the identity used
+    /// by the active connection attempt.
+    ///
+    /// # Errors
+    ///
+    /// Returns a record validation error.
+    pub fn current_record_for(
+        &self,
+        connection_id: &str,
+    ) -> Result<RemoteConnectionRecord, String> {
+        let existing = self
+            .records
+            .iter()
+            .find(|record| record.connection_id == connection_id);
         let mut roots = self
             .records
             .iter()
@@ -307,8 +337,39 @@ impl RemoteSurfaces {
         roots.retain(|root| root != &self.root_input);
         roots.insert(0, self.root_input.clone());
         roots.truncate(20);
-        RemoteConnectionRecord::new(connection_id, self.alias_input.clone(), None, roots, None)
-            .map_err(|error| error.to_string())
+        let mut record = RemoteConnectionRecord::new(
+            connection_id.to_owned(),
+            self.alias_input.clone(),
+            existing.and_then(|record| record.display_name.clone()),
+            roots,
+            existing.and_then(|record| record.helper.clone()),
+        )
+        .map_err(|error| error.to_string())?;
+        record.preferred_session_provider =
+            existing.and_then(|record| record.preferred_session_provider);
+        Ok(record)
+    }
+
+    #[must_use]
+    pub fn preferred_session_provider(&self) -> Option<RemoteSessionProviderPreference> {
+        self.records
+            .iter()
+            .find(|record| record.alias == self.alias_input)
+            .and_then(|record| record.preferred_session_provider)
+    }
+
+    /// Updates only the secret-free provider preference for the current record.
+    ///
+    /// # Errors
+    ///
+    /// Returns an identity or record validation error.
+    pub fn remember_session_provider(
+        &mut self,
+        provider: RemoteSessionProviderPreference,
+    ) -> Result<RemoteConnectionRecord, String> {
+        let record = self.current_record()?.with_session_provider(provider);
+        self.remember_record(record.clone());
+        Ok(record)
     }
 
     #[must_use]
@@ -501,14 +562,20 @@ pub struct RemoteConnectJob {
     executable: SshExecutable,
     alias: SshAlias,
     root: RemoteRoot,
+    connection_id: String,
     generation: u64,
 }
 
 impl RemoteConnectJob {
     pub fn run(self) -> RemoteConnectCompletion {
         let generation = self.generation;
-        let result =
-            RemoteRuntime::connect(self.executable, &self.alias, self.root.as_str(), generation);
+        let result = RemoteRuntime::connect(
+            self.executable,
+            &self.alias,
+            self.root.as_str(),
+            self.connection_id,
+            generation,
+        );
         RemoteConnectCompletion { generation, result }
     }
 }
@@ -522,6 +589,7 @@ pub struct RemoteConnectCompletion {
 #[derive(Clone)]
 pub struct RemoteRuntime {
     client: Arc<Mutex<OpenSshClient>>,
+    connection_id: String,
     alias: String,
     root: String,
     capabilities: BTreeSet<RemoteCapability>,
@@ -532,6 +600,7 @@ impl RemoteRuntime {
         executable: SshExecutable,
         alias: &SshAlias,
         root: &str,
+        connection_id: String,
         generation: u64,
     ) -> Result<Self, String> {
         let alias_label = alias.as_str().to_owned();
@@ -543,6 +612,7 @@ impl RemoteRuntime {
         let canonical_root = client.workspace_root().unwrap_or(root).to_owned();
         Ok(Self {
             client: Arc::new(Mutex::new(client)),
+            connection_id,
             alias: alias_label,
             root: canonical_root,
             capabilities,
@@ -552,6 +622,11 @@ impl RemoteRuntime {
     #[must_use]
     pub fn capabilities(&self) -> &BTreeSet<RemoteCapability> {
         &self.capabilities
+    }
+
+    #[must_use]
+    pub fn connection_id(&self) -> &str {
+        &self.connection_id
     }
 
     #[must_use]
@@ -571,10 +646,7 @@ impl RemoteRuntime {
         &self,
         provider: strukt_remote::PersistentProvider,
     ) -> Result<SessionClient, String> {
-        let backend = Arc::new(RemoteSessionBackend::new(
-            Arc::clone(&self.client),
-            provider,
-        ));
+        let backend = self.session_backend(provider);
         let root = std::env::current_dir().map_err(|error| error.to_string())?;
         SessionClient::with_backend(
             root.join("remote-session-data"),
@@ -582,6 +654,17 @@ impl RemoteRuntime {
             backend,
         )
         .map_err(|error| error.to_string())
+    }
+
+    #[must_use]
+    pub fn session_backend(
+        &self,
+        provider: strukt_remote::PersistentProvider,
+    ) -> Arc<RemoteSessionBackend> {
+        Arc::new(RemoteSessionBackend::new(
+            Arc::clone(&self.client),
+            provider,
+        ))
     }
 
     pub fn native_session_client(&self) -> Result<SessionClient, String> {
@@ -1149,6 +1232,43 @@ mod tests {
         assert_eq!(
             surfaces.task_consent.as_deref(),
             Some(r#"Run on devbox: /usr/bin/cargo ["test","--workspace"]"#)
+        );
+    }
+
+    #[test]
+    fn remote_provider_preference_is_host_scoped_and_secret_free() {
+        let record = strukt_persistence::RemoteConnectionRecord::new(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "devbox",
+            None,
+            vec!["~/src".into()],
+            None,
+        )
+        .unwrap();
+        let mut surfaces = RemoteSurfaces {
+            alias_input: "devbox".into(),
+            root_input: "~/src".into(),
+            records: vec![record],
+            ..RemoteSurfaces::default()
+        };
+
+        let saved = surfaces
+            .remember_session_provider(strukt_persistence::RemoteSessionProviderPreference::Tmux)
+            .unwrap();
+
+        assert_eq!(
+            surfaces.preferred_session_provider(),
+            Some(strukt_persistence::RemoteSessionProviderPreference::Tmux)
+        );
+        assert_eq!(saved.alias, "devbox");
+        assert_eq!(saved.recent_roots, ["~/src"]);
+        assert!(saved.extensions.is_empty());
+        assert_eq!(
+            surfaces
+                .current_record_for("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                .unwrap()
+                .connection_id,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         );
     }
 }

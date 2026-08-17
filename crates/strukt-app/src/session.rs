@@ -20,6 +20,7 @@ pub(crate) struct SessionSurfaces {
     pending: Option<PendingRequest>,
     migration_plan: Option<SessionMigrationPlan>,
     completed_migration: Option<SessionMigrationPlan>,
+    remote_connection_id: Option<String>,
     remote_host: Option<String>,
     workspace_root: Option<std::path::PathBuf>,
     tmux_available: bool,
@@ -47,6 +48,7 @@ impl Default for SessionSurfaces {
                 pending: None,
                 migration_plan: None,
                 completed_migration: None,
+                remote_connection_id: None,
                 remote_host: None,
                 workspace_root: None,
                 tmux_available: false,
@@ -67,6 +69,7 @@ impl SessionSurfaces {
             pending: None,
             migration_plan: None,
             completed_migration: None,
+            remote_connection_id: None,
             remote_host: None,
             workspace_root: None,
             tmux_available: false,
@@ -77,16 +80,50 @@ impl SessionSurfaces {
     pub(crate) fn use_remote_client(
         &mut self,
         client: SessionClient,
+        connection_id: String,
         host: String,
         workspace_root: std::path::PathBuf,
         tmux_available: bool,
         provider: strukt_remote::PersistentProvider,
     ) {
         *self = Self::with_client(client);
+        self.remote_connection_id = Some(connection_id);
         self.remote_host = Some(host);
         self.workspace_root = Some(workspace_root);
         self.tmux_available = tmux_available;
         self.remote_provider = Some(provider);
+    }
+
+    pub(crate) fn rebind_remote_backend(
+        &mut self,
+        backend: Arc<strukt_remote::RemoteSessionBackend>,
+        connection_id: &str,
+        host: &str,
+        workspace_root: std::path::PathBuf,
+        tmux_available: bool,
+        provider: strukt_remote::PersistentProvider,
+    ) -> Result<bool, SessionUiError> {
+        if !self.matches_remote_identity(connection_id, host, provider)
+            || !matches!(self.health(), ClientHealth::Stale | ClientHealth::Failed)
+        {
+            return Ok(false);
+        }
+        let client = self.client.as_mut().ok_or(SessionUiError::Unavailable)?;
+        client.rebind_backend(backend)?;
+        self.workspace_root = Some(workspace_root);
+        self.tmux_available = tmux_available;
+        Ok(true)
+    }
+
+    pub(crate) fn matches_remote_identity(
+        &self,
+        connection_id: &str,
+        host: &str,
+        provider: strukt_remote::PersistentProvider,
+    ) -> bool {
+        self.remote_connection_id.as_deref() == Some(connection_id)
+            && self.remote_host.as_deref() == Some(host)
+            && self.remote_provider == Some(provider)
     }
 
     pub(crate) fn mark_remote_disconnected(&mut self) {
@@ -111,6 +148,10 @@ impl SessionSurfaces {
 
     pub(crate) const fn remote_provider(&self) -> Option<strukt_remote::PersistentProvider> {
         self.remote_provider
+    }
+
+    pub(crate) fn selection_is_local_only(&self) -> bool {
+        self.remote_provider == Some(strukt_remote::PersistentProvider::Tmux)
     }
 
     pub(crate) fn health(&self) -> ClientHealth {
@@ -146,6 +187,14 @@ impl SessionSurfaces {
 
     pub(crate) fn request_in_flight(&self) -> bool {
         self.pending.is_some()
+            || self
+                .client
+                .as_ref()
+                .is_some_and(SessionClient::request_in_flight)
+    }
+
+    pub(crate) fn can_switch_remote_provider(&self) -> bool {
+        self.remote_host.is_some() && !self.request_in_flight()
     }
 
     pub(crate) fn begin_connect(&mut self) -> Result<ClientConnectJob, SessionUiError> {
@@ -186,6 +235,23 @@ impl SessionSurfaces {
             RequestBody::Snapshot { pane },
             PendingRequest::Snapshot(pane),
         )
+    }
+
+    pub(crate) fn begin_next_reconnect_resync(
+        &mut self,
+    ) -> Result<Option<ClientRequestJob>, SessionUiError> {
+        let pane = self
+            .client
+            .as_mut()
+            .ok_or(SessionUiError::Unavailable)?
+            .take_reconnect_resync_pane();
+        pane.map(|pane| {
+            self.begin_tagged_request(
+                RequestBody::Snapshot { pane },
+                PendingRequest::Snapshot(pane),
+            )
+        })
+        .transpose()
     }
 
     pub(crate) fn begin_detach(&mut self) -> Result<ClientRequestJob, SessionUiError> {
@@ -447,6 +513,7 @@ mod tests {
         let mut surfaces = SessionSurfaces::default();
         surfaces.use_remote_client(
             client,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
             "ec2-dev".into(),
             std::path::PathBuf::from("/srv/project"),
             true,
@@ -462,5 +529,71 @@ mod tests {
             Some(strukt_remote::PersistentProvider::Native)
         );
         assert!(surfaces.catalog().is_none());
+    }
+
+    #[test]
+    fn tmux_selection_stays_local_to_avoid_native_layout_mutations() {
+        let root = std::env::current_dir().expect("current directory");
+        let client = SessionClient::new(root.join("remote-data"), root.join("remote-sessiond"))
+            .expect("client");
+        let mut surfaces = SessionSurfaces::default();
+        surfaces.use_remote_client(
+            client,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            "ec2-dev".into(),
+            std::path::PathBuf::from("/srv/project"),
+            true,
+            strukt_remote::PersistentProvider::Tmux,
+        );
+
+        assert!(surfaces.selection_is_local_only());
+    }
+
+    #[test]
+    fn remote_rebind_identity_is_scoped_by_connection_record_not_alias() {
+        let root = std::env::current_dir().expect("current directory");
+        let client = SessionClient::new(root.join("remote-data"), root.join("remote-sessiond"))
+            .expect("client");
+        let mut surfaces = SessionSurfaces::default();
+        surfaces.use_remote_client(
+            client,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            "ec2-dev".into(),
+            std::path::PathBuf::from("/srv/project"),
+            true,
+            strukt_remote::PersistentProvider::Native,
+        );
+
+        assert!(surfaces.matches_remote_identity(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ec2-dev",
+            strukt_remote::PersistentProvider::Native,
+        ));
+        assert!(!surfaces.matches_remote_identity(
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "ec2-dev",
+            strukt_remote::PersistentProvider::Native,
+        ));
+    }
+
+    #[test]
+    fn remote_provider_switch_waits_for_the_single_request_lane() {
+        let root = std::env::current_dir().expect("current directory");
+        let client = SessionClient::new(root.join("remote-data"), root.join("remote-sessiond"))
+            .expect("client");
+        let mut surfaces = SessionSurfaces::default();
+        surfaces.use_remote_client(
+            client,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            "ec2-dev".into(),
+            std::path::PathBuf::from("/srv/project"),
+            true,
+            strukt_remote::PersistentProvider::Native,
+        );
+        assert!(surfaces.can_switch_remote_provider());
+
+        let _connect = surfaces.begin_connect().expect("connect job");
+
+        assert!(!surfaces.can_switch_remote_provider());
     }
 }

@@ -17,14 +17,14 @@ recommended path. Existing tmux sessions are also discoverable and attachable
 through an explicit provider with accurately reduced capabilities.
 
 The M4 helper remains a short-lived SSH stdio process. For native sessions it
-proxies the existing M3 session protocol to a detached, per-user
-`strukt-sessiond` on the remote host. The service owns PTYs and persistence and
+proxies the existing M3 session protocol to a detached, per-user session-service
+mode hosted by the installed `strukt-remote` runtime. The service owns PTYs and persistence and
 listens only on private local IPC. Its rendezvous secret never crosses SSH to the
 desktop. Opening or restoring a workspace starts no remote process; service start
 is limited to an explicit create, attach, or restart action.
 
 For tmux, the helper invokes the installed `tmux` executable with fixed argument
-vectors and uses control mode for interactive attachment. It never constructs a
+vectors for discovery, literal input, resize, and bounded capture. It never constructs a
 shell command from a session name or pane identifier. Native and tmux sessions
 share the user-facing session/window/pane hierarchy, but the UI gates every
 action from provider-advertised capabilities and never silently changes provider.
@@ -50,9 +50,10 @@ action from provider-advertised capabilities and never silently changes provider
 ## Non-goals
 
 - Windows remote hosts for the public alpha.
-- Multiple simultaneous controlling clients for one provider. One helper/client
-  holds the controlling writer lease; additional clients receive a precise busy
-  response.
+- Multiple simultaneous controlling clients for the native provider. One native
+  helper/client holds the service writer lease; additional native clients receive
+  a precise busy response. The compatibility tmux provider follows tmux's existing
+  client model and does not add a separate cross-helper lease in M5.
 - Collaboration, shared cursors, session sharing, or multi-user authorization.
 - Full tmux command, configuration, plugin, status-line, hook, copy-mode, or key
   binding parity.
@@ -73,10 +74,10 @@ strukt-app
      -> versioned strukt-remote helper (per SSH connection)
         -> native adapter
            -> authenticated private local IPC
-              -> detached per-user strukt-sessiond
+              -> detached per-user native session-service mode
                  -> remote PTYs + private persistent store
         -> tmux adapter
-           -> fixed argv tmux control-mode child
+           -> fixed argv tmux adapter
               -> existing per-user tmux server
 ```
 
@@ -125,9 +126,10 @@ to a different provider.
 ### Negotiation
 
 M5 adds independent `sessions` and `tmux` helper capabilities. `sessions` is
-advertised only when the helper understands the session tunnel schema and has a
-compatible packaged `strukt-sessiond`. `tmux` is advertised only when a supported
-executable is detected and the adapter can parse its version and identifiers.
+advertised only when the helper understands both the session tunnel schema and its
+built-in native session-service mode. `tmux` is advertised when an executable path
+is detected; the first explicit tmux provider operation validates its output and
+identifiers before presenting a catalog.
 
 The existing major-version rule remains strict. Minor versions negotiate known
 capabilities. A sessiond protocol incompatibility disables only native remote
@@ -164,12 +166,11 @@ changes, the client discards prior writer ownership and reattaches before sendin
 input.
 
 For every observed pane the client retains the last accepted screen revision and
-output sequence. Reattach supplies those cursors. The native service returns
-ordered retained deltas when every requested sequence remains available; otherwise
-it returns a bounded full snapshot with `resync_required`. Applying a full snapshot
-atomically replaces the pane projection. Applying a delta requires the exact next
-sequence. Gaps, duplicates outside the acknowledged cursor, and instance changes
-force resync rather than speculative merge.
+output sequence. Reattach supplies those cursors. The public-alpha implementation
+uses an explicit bounded full resync for every retained pane after reconnect;
+replacement atomically discards the stale pane projection. The cursor contract
+keeps exact ordered delta replay additive later. Gaps, duplicate responses, and
+service-instance changes force full replacement rather than speculative merge.
 
 The last immutable catalog and pane snapshots remain visible while the connection
 is stale. They are clearly marked stale, accept no input, and expose reconnect and
@@ -179,10 +180,11 @@ terminal-fallback actions.
 
 ### Packaging and lifecycle
 
-Release packages include `strukt-sessiond` artifacts for the same supported Linux
-architectures as `strukt-remote`, with version metadata and checksums. Installation
-and repair reuse M4's exact host/version/artifact consent and private atomic install
-rules. No binary is downloaded by the remote host.
+Each supported Linux release package contains one `strukt-remote` runtime artifact
+with the helper and native session-service mode, version metadata, and a checksum.
+Installation and repair reuse M4's exact host/version/artifact consent and private
+atomic install rules. No binary is downloaded by the remote host, and there is no
+second artifact whose version or checksum can drift independently.
 
 The helper starts the exact installed service executable only after an explicit
 create, attach, or restart intent. It passes a fixed private application-data path,
@@ -210,13 +212,13 @@ the user explicitly restarts that session or pane under the existing M3 policy.
 
 ### Fairness and bounds
 
-M3 per-pane scrollback and service limits remain authoritative. The proxy adds:
+M3 per-pane scrollback and service limits remain authoritative. The
+request-response proxy adds:
 
 - at most one in-flight native exchange per attached client;
 - at most 1 MiB per inner frame;
-- at most 4 MiB queued across one helper session channel;
-- at most 1,024 unconsumed provider events;
-- bounded reconnect attempts and jittered backoff;
+- no asynchronous provider-event queue in M5;
+- bounded reconnect attempts and fixed capped backoff;
 - round-robin pane/event draining so one noisy process cannot starve another;
 - cancellation and stale-generation rejection before projection updates.
 
@@ -240,17 +242,17 @@ refresh and retains the prior stale snapshot.
 
 ### Interactive attachment
 
-Attachment starts `tmux -C attach-session` with a validated exact session target.
-The adapter parses only documented control-mode records needed for pane output,
-layout, focus, exit, and resync. Literal terminal input goes through control-mode
-input operations without shell interpolation. Resize uses validated numeric
-arguments. Unknown control records are bounded and ignored; malformed required
-records terminate the attachment with a recoverable provider error.
+Provider attach discovers and projects the existing tmux hierarchy through stable
+opaque IDs while the topology is unchanged. Selecting a tmux session, window, or
+pane remains presentation-local rather than mutating tmux focus. Literal terminal
+input uses fixed-argv hexadecimal `send-keys`; resize accepts only validated numeric
+dimensions; initial attach and resync use bounded `capture-pane` output. The
+adapter also validates the documented control-mode records needed by a future
+streaming transport, but M5 does not keep a long-lived control client.
 
-For initial attach and resync, the adapter captures bounded pane contents. tmux
-history is exposed as a screen snapshot rather than native structured command
-history. Detach closes only the control-mode client and leaves the tmux session
-running.
+tmux history is exposed as a screen snapshot rather than native structured command
+history. Detach releases only the strukt provider projection and leaves the tmux
+server and sessions running.
 
 ## User Experience
 
@@ -278,7 +280,7 @@ through shell commands so workflows remain scriptable and reproducible.
 - No public listening port is opened by the helper, native service, or tmux
   adapter.
 - Remote processes run as the authenticated SSH user and never require root.
-- Helper and service artifacts require exact checksum-bound consent.
+- The combined helper and native-service runtime requires exact checksum-bound consent.
 - Rendezvous files, stores, and sockets use private per-user permissions.
 - SSH keys, passwords, agent material, rendezvous secrets, and tmux environment
   values are never persisted by the desktop.
@@ -368,4 +370,3 @@ evidence is not represented as human verification.
 12. The exact final head passes strict formatting, lint, full workspace tests,
     deterministic M5 smoke, disposable real-SSH/native-service integration, real
     tmux integration where available, and macOS/Ubuntu/Windows hosted checks.
-

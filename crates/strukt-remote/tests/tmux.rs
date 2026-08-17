@@ -49,6 +49,24 @@ fn hostile_or_oversized_discovery_is_rejected() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn process_output_is_killed_at_the_bound_instead_of_buffered_without_limit() {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let directory = tempfile::tempdir().unwrap();
+    let executable = directory.path().join("oversized-tmux");
+    fs::write(&executable, "#!/bin/sh\nhead -c 1100000 /dev/zero\n").unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    let provider = TmuxProvider::new(executable).unwrap();
+
+    assert!(matches!(
+        provider.discover(),
+        Err(strukt_remote::TmuxError::OutputTooLarge)
+    ));
+}
+
 #[test]
 fn attach_input_resize_and_capture_never_use_a_shell() {
     let provider = TmuxProvider::new(PathBuf::from("/usr/bin/tmux")).unwrap();
@@ -61,6 +79,11 @@ fn attach_input_resize_and_capture_never_use_a_shell() {
     assert_eq!(
         provider.input_command(&pane, b"hi\n").unwrap().arguments(),
         ["send-keys", "-t", "%7", "-H", "68", "69", "0a"]
+    );
+    assert!(
+        provider
+            .input_command(&pane, &vec![b'x'; 4 * 1024 + 1])
+            .is_err()
     );
     assert_eq!(
         provider.resize_command(&pane, 40, 120).unwrap().arguments(),
@@ -218,6 +241,24 @@ fn verify_shared_session_protocol(manager: &TmuxManager) {
         .flat_map(|row| row.iter().map(strukt_terminal::Cell::text))
         .collect::<String>();
     assert!(screen_text.contains("M5_SHARED_PROVIDER"));
+    let detached = tmux_session_exchange(
+        manager,
+        &SessionRequestEnvelope::new(5, snapshot.catalog().revision(), SessionRequest::Detach),
+    );
+    assert!(matches!(detached.result(), Ok(SessionResponse::Detached)));
+    let rejected = tmux_session_exchange(
+        manager,
+        &SessionRequestEnvelope::new(
+            6,
+            snapshot.catalog().revision(),
+            SessionRequest::WritePane {
+                pane,
+                generation: 1,
+                bytes: b"echo SHOULD_NOT_RUN\n".to_vec(),
+            },
+        ),
+    );
+    assert!(rejected.result().is_err());
 }
 
 fn tmux_exchange(manager: &TmuxManager, request: &TmuxRequest) -> TmuxResponse {

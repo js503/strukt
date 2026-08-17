@@ -747,14 +747,26 @@ fn subsystem_error(error: &impl std::fmt::Display) -> ResponseBody {
 
 fn default_native_session_manager() -> Option<crate::NativeSessionManager> {
     let executable = std::env::current_exe().ok()?;
-    let service = executable.parent()?.join(if cfg!(windows) {
+    let sibling_service = executable.parent()?.join(if cfg!(windows) {
         "strukt-sessiond.exe"
     } else {
         "strukt-sessiond"
     });
-    if !service.is_file() {
+    let installed_helper_name = if cfg!(windows) {
+        "strukt-remote.exe"
+    } else {
+        "strukt-remote"
+    };
+    let service = if executable
+        .file_name()
+        .is_some_and(|name| name == installed_helper_name)
+    {
+        executable
+    } else if sibling_service.is_file() {
+        sibling_service
+    } else {
         return None;
-    }
+    };
     let application_data = std::env::var_os("STRUKT_REMOTE_SESSION_DATA").map_or_else(
         || {
             std::env::var_os("HOME").map(|home| {

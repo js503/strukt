@@ -198,6 +198,53 @@ fn reconnect_sends_last_accepted_pane_cursors_without_starting_service() {
 }
 
 #[test]
+fn rebinding_transport_preserves_stale_projection_for_same_provider_reconnect() {
+    let directory = std::env::current_dir().expect("current directory");
+    let mut catalog = SessionCatalog::new();
+    let session = catalog.create_session(0, "remote", directory).unwrap();
+    let pane = catalog
+        .session(session)
+        .unwrap()
+        .active_window()
+        .unwrap()
+        .focused_pane()
+        .id();
+    let instance = ServiceInstanceId::new().unwrap();
+    let original = Arc::new(FakeBackend::default());
+    original.queue_connection(FakeConnection::attached_snapshot(snapshot(
+        instance,
+        catalog.clone(),
+    )));
+    let mut client = test_client(original);
+    let attached = client
+        .begin_connect(ClientConnectIntent::ExplicitAttach)
+        .unwrap()
+        .run();
+    client.finish_connect(attached).unwrap();
+    assert!(client.apply_snapshot(pane, pane_snapshot(17)));
+    client.mark_transport_lost("SSH helper exited");
+
+    let replacement = Arc::new(FakeBackend::default());
+    replacement.queue_connection(FakeConnection::attached_snapshot(snapshot(
+        instance, catalog,
+    )));
+    client.rebind_backend(replacement.clone()).unwrap();
+    assert_eq!(client.health(), ClientHealth::Stale);
+    assert_eq!(client.snapshot(pane), Some(&pane_snapshot(17)));
+
+    let reconnected = client
+        .begin_connect(ClientConnectIntent::Reconnect)
+        .unwrap()
+        .run();
+    client.finish_connect(reconnected).unwrap();
+    assert_eq!(client.take_reconnect_resync_pane(), Some(pane));
+    assert!(matches!(
+        replacement.request_bodies().last(),
+        Some(RequestBody::Reconnect { cursors }) if cursors.len() == 1
+    ));
+}
+
+#[test]
 fn a_replaced_service_instance_discards_frozen_pane_snapshots() {
     let directory = std::env::current_dir().expect("current directory");
     let mut catalog = SessionCatalog::new();
@@ -241,6 +288,46 @@ fn a_replaced_service_instance_discards_frozen_pane_snapshots() {
     assert_eq!(client.take_reconnect_resync_pane(), None);
     assert!(client.accepts_service_instance(replacement));
     assert!(!client.accepts_service_instance(first));
+}
+
+#[test]
+fn catalog_replacement_prunes_snapshots_for_removed_panes() {
+    let directory = std::env::current_dir().expect("current directory");
+    let mut initial_catalog = SessionCatalog::new();
+    let session = initial_catalog
+        .create_session(0, "remote", directory)
+        .expect("session");
+    let pane = initial_catalog
+        .session(session)
+        .expect("session")
+        .active_window()
+        .expect("window")
+        .focused_pane()
+        .id();
+    let instance = ServiceInstanceId::new().expect("service instance");
+    let backend = Arc::new(FakeBackend::default());
+    backend.queue_connection(FakeConnection::new(
+        instance,
+        VecDeque::from([
+            ResponseBody::Attached(snapshot(instance, initial_catalog)),
+            ResponseBody::Catalog(snapshot(instance, SessionCatalog::new())),
+        ]),
+    ));
+    let mut client = test_client(backend);
+    let attached = client
+        .begin_connect(ClientConnectIntent::ExplicitAttach)
+        .expect("attach job")
+        .run();
+    client.finish_connect(attached).expect("attach");
+    assert!(client.apply_snapshot(pane, pane_snapshot(9)));
+
+    let refresh = client
+        .begin_request(RequestBody::Catalog)
+        .expect("catalog job")
+        .run();
+    client.finish_request(refresh).expect("catalog response");
+
+    assert!(client.snapshot(pane).is_none());
 }
 
 fn test_client(backend: Arc<FakeBackend>) -> SessionClient {

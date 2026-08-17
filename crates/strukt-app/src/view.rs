@@ -571,7 +571,7 @@ fn connections_canvas(app: &StruktApp) -> Element<'_, Message> {
             column![
                 text("Confirm remote helper installation"),
                 text(summary),
-                text("The verified artifact will be streamed over standard OpenSSH to the versioned private user-data path."),
+                text("The verified runtime includes the remote helper and native persistent-session service. It will be streamed over standard OpenSSH to the versioned private user-data path."),
                 row![
                     button("Install exactly this helper")
                         .on_press(Message::ConfirmRemoteHelperInstall),
@@ -699,17 +699,20 @@ fn sessions_canvas(app: &StruktApp) -> Element<'_, Message> {
             } else {
                 "○ strukt native · recommended"
             })
-            .on_press(Message::SelectRemoteSessionProvider(
-                strukt_remote::PersistentProvider::Native,
+            .on_press_maybe(app.sessions.can_switch_remote_provider().then_some(
+                Message::SelectRemoteSessionProvider(strukt_remote::PersistentProvider::Native),
             )),
             button(if selected == strukt_remote::PersistentProvider::Tmux {
                 "● tmux · existing sessions"
             } else {
                 "○ tmux · existing sessions"
             })
-            .on_press_maybe(app.sessions.tmux_available().then_some(
-                Message::SelectRemoteSessionProvider(strukt_remote::PersistentProvider::Tmux),
-            )),
+            .on_press_maybe(
+                (app.sessions.tmux_available() && app.sessions.can_switch_remote_provider())
+                    .then_some(Message::SelectRemoteSessionProvider(
+                        strukt_remote::PersistentProvider::Tmux,
+                    )),
+            ),
         ]
         .spacing(6)
         .into()
@@ -979,7 +982,7 @@ fn sessions_canvas(app: &StruktApp) -> Element<'_, Message> {
         ],
         text(format!("{location}  ·  {provider_summary}")),
         text(if app.sessions.remote_host().is_some() {
-            "Remote PTYs continue in strukt-sessiond after SSH disconnects; Explorer remains available from the activity rail."
+            "Remote PTYs continue in the strukt session service after SSH disconnects; Explorer remains available from the activity rail."
         } else {
             "Local PTYs continue in strukt-sessiond after the app detaches."
         }),

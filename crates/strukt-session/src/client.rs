@@ -144,6 +144,11 @@ impl SessionClient {
     }
 
     #[must_use]
+    pub const fn request_in_flight(&self) -> bool {
+        self.in_flight
+    }
+
+    #[must_use]
     pub const fn catalog(&self) -> Option<&ProviderCatalogSnapshot> {
         self.catalog.as_ref()
     }
@@ -151,6 +156,29 @@ impl SessionClient {
     #[must_use]
     pub fn snapshot(&self, pane: PaneId) -> Option<&PaneScreenSnapshot> {
         self.snapshots.get(&pane)
+    }
+
+    /// Replaces a lost provider transport without discarding immutable catalog
+    /// and pane projections.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error while another client operation is in flight.
+    pub fn rebind_backend<B: ClientBackend + 'static>(
+        &mut self,
+        backend: Arc<B>,
+    ) -> Result<(), ClientError> {
+        if self.in_flight {
+            return Err(ClientError::RequestInFlight);
+        }
+        self.backend = backend;
+        self.connection = None;
+        self.health = if self.catalog.is_some() {
+            ClientHealth::Stale
+        } else {
+            ClientHealth::Stopped
+        };
+        Ok(())
     }
 
     #[must_use]
@@ -222,7 +250,10 @@ impl SessionClient {
             }
         };
         let same_instance = self.service_instance == Some(instance);
-        if !same_instance {
+        if same_instance {
+            self.snapshots
+                .retain(|pane, _| snapshot.catalog().contains_pane(*pane));
+        } else {
             self.snapshots.clear();
         }
         self.reconnect_resync.clear();
@@ -311,6 +342,8 @@ impl SessionClient {
                     self.mark_transport_lost("stale service response");
                     return Err(ClientError::StaleService);
                 }
+                self.snapshots
+                    .retain(|pane, _| snapshot.catalog().contains_pane(*pane));
                 self.service_instance = Some(snapshot.service_instance());
                 self.catalog = Some(snapshot.clone());
             }
@@ -491,15 +524,19 @@ impl ClientBackend for LocalClientBackend {
     }
 
     fn start_service(&self) -> Result<(), ClientError> {
-        Command::new(&self.helper)
+        let mut command = Command::new(&self.helper);
+        command
             .arg("--app-data")
             .arg(&self.application_data)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map(|_| ())
-            .map_err(ClientError::Io)
+            .stderr(Stdio::null());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt as _;
+            command.process_group(0);
+        }
+        command.spawn().map(|_| ()).map_err(ClientError::Io)
     }
 
     fn wait(&self, duration: Duration) {

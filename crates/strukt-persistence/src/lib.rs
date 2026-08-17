@@ -17,7 +17,8 @@ pub use language_store::{
     LanguageStoreError, RestoredLanguageSession, language_contribution, set_language_contribution,
 };
 pub use remote_store::{
-    RemoteConnectionRecord, RemoteHelperMetadata, RemoteStore, RemoteStoreError,
+    RemoteConnectionRecord, RemoteHelperMetadata, RemoteSessionProviderPreference, RemoteStore,
+    RemoteStoreError,
 };
 pub use session_store::{
     SESSION_CONTRIBUTION_ID, SessionContribution, SessionMigrationError, SessionMigrationOutcome,
