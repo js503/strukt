@@ -256,8 +256,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "M5 support binary build exited with code $LASTEXITCODE"
           }
-          $output = & cargo run -p strukt-app --locked --offline -- --remote-sessions-smoke $fixture 2>&1
-          $output | Write-Output
+          & cargo run -p strukt-app --locked --offline -- --remote-sessions-smoke $fixture 2>&1 |
+            Tee-Object -Variable output
           if ($LASTEXITCODE -ne 0) {
             throw "M5 remote session smoke exited with code $LASTEXITCODE"
           }

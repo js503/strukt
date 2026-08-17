@@ -12,6 +12,7 @@ use strukt_terminal::SplitAxis;
 use crate::remote::RemoteRuntime;
 
 pub fn run(root: &Path) -> Result<(), String> {
+    progress("connect first SSH helper");
     let fake_ssh = sibling_binary("fake-ssh")?;
     let alias = SshAlias::new("fixture").map_err(display)?;
     let executable = SshExecutable::from_path(fake_ssh).map_err(display)?;
@@ -24,9 +25,11 @@ pub fn run(root: &Path) -> Result<(), String> {
         connection_id.clone(),
         21,
     )?;
+    progress("attach native session provider");
     let mut client = runtime.native_session_client()?;
     connect(&mut client, ClientConnectIntent::ExplicitAttach)?;
 
+    progress("create remote session hierarchies");
     let first = create_session(&mut client, "api", root)?;
     let second = create_session(&mut client, "worker", root)?;
     let (logs_window, logs_split) = create_remote_layout(&mut client, first, root)?;
@@ -34,6 +37,7 @@ pub fn run(root: &Path) -> Result<(), String> {
     let second_pane = session_first_pane(&client, second)?;
     start_and_mark(&mut client, first, first_pane, b"echo M5_API_MARKER\r")?;
     start_and_mark(&mut client, second, second_pane, b"echo M5_WORKER_MARKER\r")?;
+    progress("observe independent pane output");
     expect_marker(&mut client, first_pane, "M5_API_MARKER")?;
     expect_marker(&mut client, second_pane, "M5_WORKER_MARKER")?;
 
@@ -41,14 +45,17 @@ pub fn run(root: &Path) -> Result<(), String> {
         .catalog()
         .ok_or_else(|| "native remote catalog is missing".to_owned())?
         .service_instance();
+    progress("disconnect first SSH helper");
     runtime.disconnect();
     client.mark_transport_lost("smoke SSH disconnect");
     if client.health() != strukt_session::ClientHealth::Stale {
         return Err("SSH disconnect did not freeze the session projection as stale".into());
     }
 
+    progress("connect replacement SSH helper");
     let reconnected_runtime =
         RemoteRuntime::connect(executable, &alias, &root_label, connection_id, 22)?;
+    progress("reattach existing native service");
     let mut reconnected = reconnected_runtime.native_session_client()?;
     connect(&mut reconnected, ClientConnectIntent::Reconnect)?;
     let catalog = reconnected
@@ -88,16 +95,23 @@ pub fn run(root: &Path) -> Result<(), String> {
     expect_marker(&mut reconnected, first_pane, "M5_API_MARKER")?;
     expect_marker(&mut reconnected, second_pane, "M5_WORKER_MARKER")?;
 
+    progress("terminate remote sessions");
     for session in [first, second] {
         let _ = request(&mut reconnected, RequestBody::TerminateSession { session })?;
         let _ = request(&mut reconnected, RequestBody::Catalog)?;
     }
+    progress("detach provider and disconnect replacement helper");
     let _ = request(&mut reconnected, RequestBody::Detach)?;
     reconnected_runtime.disconnect();
     if root.join(".strukt").exists() {
         return Err("M5 smoke wrote workspace metadata".into());
     }
+    progress("complete");
     Ok(())
+}
+
+fn progress(stage: &str) {
+    eprintln!("strukt M5 smoke stage: {stage}");
 }
 
 fn create_remote_layout(
