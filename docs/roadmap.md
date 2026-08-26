@@ -35,7 +35,8 @@ exit criteria are satisfied and verified, not when a target date arrives.
 | M3 | Local persistent sessions | Complete | M2 | Named local sessions with windows, split panes, detach/reattach, and restoration |
 | M4 | SSH remote workspace | Complete | M2 | A remote development box behaves as a first-class workspace over standard SSH |
 | M5 | Remote persistent sessions | Complete | M3, M4 | Multiple persistent sessions per remote host, reconnect recovery, and tmux interoperability |
-| Alpha | Public alpha release | Not planned | M3, M4, M5 | Installable, documented local and remote development release for macOS and Windows with Linux in the build pipeline |
+| M5.5 | Visual and interaction foundation | Shaping | M1–M5 | Quiet Precision visual system, adaptive workspace shell, reusable native components, and extensible themes across existing workflows |
+| Alpha | Public alpha release | Not planned | M3, M4, M5, M5.5 | Installable, documented local and remote development release for macOS and Windows with Linux in the build pipeline |
 | M6 | AI and workspace context | Post-alpha | Alpha | Optional, model-agnostic AI grounded in explicit local and remote workspace context |
 | M7 | Plugin and MCP foundation | Post-alpha | Alpha, M6 | Sandboxed extensions, MCP discovery, permissions, and host-controlled contributions |
 | M8 | Integrated developer workflows | Post-alpha | Alpha, M7 | Git, tasks, logs, diagnostics, containers, and Kubernetes as cohesive workspace surfaces |
@@ -308,14 +309,64 @@ tmux sessions can be discovered and attached through a common provider model.
 - Interaction reference:
   [`mockups/workspace-shell/remote-multiplexer.html`](mockups/workspace-shell/remote-multiplexer.html)
 
+## M5.5 — Visual and Interaction Foundation
+
+### Outcome
+
+The native application expresses the approved Quiet Precision direction across
+every existing local and remote workflow. One adaptive canvas owns the active task,
+supporting tools use a promoteable drawer and on-demand context, and feature views
+compose reusable components instead of owning raw application styling.
+
+### Intended Scope
+
+- Compact Quiet Precision component and interaction system
+- Equally supported dark and light built-in themes
+- Versioned semantic definition contract reserved for future custom themes
+- Adaptive canvas, stable activity rail, contextual sidebar, on-demand context
+  panel, status strip, and promoteable bottom drawer
+- Unified command center and coherent keyboard/focus behavior
+- Empty, loading, unavailable, stale, error, destructive, and approval states
+- Presentation migration and regression verification for every M1 through M5
+  workflow
+
+M5.5 reorganizes existing workflows but adds no AI, plugin, MCP, terminal, SSH,
+session, editor, or language capability.
+
+### Exit Criteria
+
+- Local, remote, and persistent-session surfaces match the approved hierarchy in
+  both built-in themes.
+- Feature views consume reusable components and semantic roles rather than raw
+  application chrome styling.
+- Drawer tools promote to split or full canvas and return without losing their
+  underlying runtime state.
+- Theme fallback, shell restoration, capability removal, focus return, reduced
+  motion, platform scaling, and shared state presentation are verified.
+- Existing M1 through M5 automated suites and deterministic smokes retain their
+  assertions and pass at the final implementation head.
+- Human macOS and Windows review covers both themes, keyboard-only workflows,
+  accessibility, responsive density, and visual rendering.
+
+### Related Artifacts
+
+- Dedicated spec:
+  [`specs/0010-m5-5-visual-and-interaction-foundation.md`](specs/0010-m5-5-visual-and-interaction-foundation.md)
+- Approved workflow mockup:
+  [`mockups/visual-foundation/quiet-precision-workflows.html`](mockups/visual-foundation/quiet-precision-workflows.html)
+- Approved spatial-policy mockup:
+  [`mockups/visual-foundation/quiet-precision-spatial-policy.html`](mockups/visual-foundation/quiet-precision-spatial-policy.html)
+- Implementation plan: created after written spec approval
+- Tracking issue, pull request, and validation evidence: created during governed
+  execution
+
 ## Public Alpha Release Gate
 
 ### Outcome
 
-After M3 through M5, `strukt` is ready for external developers to install,
+After M3 through M5.5, `strukt` is ready for external developers to install,
 evaluate, report problems, and use for bounded local and remote development
-workflows. UI refinement may land throughout the critical path, but new product
-capabilities begin at M6 after the alpha release.
+workflows. New product capabilities begin at M6 after the alpha release.
 
 ### Intended Scope
 
@@ -329,7 +380,7 @@ capabilities begin at M6 after the alpha release.
 
 ### Exit Criteria
 
-- M3, M4, and M5 exit criteria are complete with linked evidence.
+- M3, M4, M5, and M5.5 exit criteria are complete with linked evidence.
 - Packaged smoke tests pass on supported macOS and Windows versions.
 - A human validates visual rendering and keyboard workflows on supported macOS and
   Windows desktops.
@@ -343,8 +394,9 @@ capabilities begin at M6 after the alpha release.
 
 - Product foundation:
   [`specs/0001-workspace-shell-and-remote-development.md`](specs/0001-workspace-shell-and-remote-development.md)
-- M3 through M5 specs, plans, and evidence: created during their milestones
-- Release criteria and packaging plan: created after M5 implementation stabilizes
+- M3 through M5.5 specs, plans, and evidence: created during their milestones
+- Release criteria and packaging plan: created after M5.5 implementation
+  stabilizes
 
 ## Post-alpha Feature Roadmap
 
@@ -456,7 +508,7 @@ collections of terminal commands and disconnected external tools.
   [`tracker.md`](tracker.md).
 - Work may be split into smaller plans within one milestone when that keeps pull
   requests independently reviewable and verifiable.
-- Public-alpha scope is defined by the release gate after M5, not by implementing
+- Public-alpha scope is defined by the release gate after M5.5, not by implementing
   every item in the long-term product vision.
 
 ## Tracking
