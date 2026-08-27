@@ -94,7 +94,7 @@ git commit -m "docs: start M5.5 implementation"
 - Create: `crates/strukt-theme/tests/theme_validation.rs`
 - Modify: `crates/strukt-theme/tests/builtin_themes.rs`
 
-- [ ] **Step 1: Write failing serialization and resolution tests**
+- [x] **Step 1: Write failing serialization and resolution tests**
 
 Cover this public contract:
 
@@ -124,7 +124,7 @@ pub struct ThemeVariantV1 {
 
 Tests must assert JSON round-trip equality, both required variants, stable snake-case role names, and resolution from palette keys into a complete `ThemeTokens` value.
 
-- [ ] **Step 2: Confirm the tests fail for the missing contract**
+- [x] **Step 2: Confirm the tests fail for the missing contract**
 
 ```bash
 cargo test -p strukt-theme --test theme_definition --locked --offline
@@ -132,7 +132,7 @@ cargo test -p strukt-theme --test theme_definition --locked --offline
 
 Expected: compilation fails because the new contract types are not exported.
 
-- [ ] **Step 3: Implement the definition and resolver**
+- [x] **Step 3: Implement the definition and resolver**
 
 Add every current `ThemeTokens` field to `ThemeRole`, including the sixteen ANSI slots. Add `ThemeRole::ALL` and resolve roles without silently substituting values. `ThemeMetricsV1` must contain only visual metrics:
 
@@ -156,11 +156,11 @@ pub struct ThemeMetricsV1 {
 Reject missing palette references, missing roles, unsupported schema versions, invalid identifiers, non-finite metrics, and metrics outside the bounds documented in the spec.
 Extend `ThemeMode` with Serde and total-order derives so it is a stable serialized `BTreeMap` key.
 
-- [ ] **Step 4: Write failing validation and fallback tests**
+- [x] **Step 4: Write failing validation and fallback tests**
 
 Test unsupported schema versions, missing dark or light variants, bad role references, incomplete roles, contrast failures, and registry fallback to Quiet Precision when a selected ID is absent or invalid.
 
-- [ ] **Step 5: Implement validation and registry fallback**
+- [x] **Step 5: Implement validation and registry fallback**
 
 Expose:
 
@@ -179,11 +179,11 @@ impl ThemeRegistry {
 
 Validate text-on-canvas and text-on-panel at 4.5:1, muted text at 3:1, and focus/error indicators at 3:1. Keep validation UI-independent and deterministic.
 
-- [ ] **Step 6: Express both built-ins through the same definition contract**
+- [x] **Step 6: Express both built-ins through the same definition contract**
 
-Replace direct `ThemeTokens::builtin` construction with built-in `ThemeDefinitionV1` values named `quiet-precision` and `quiet-precision-light`. Preserve `ThemeTokens::builtin(mode)` as a compatibility wrapper that resolves the built-in registry.
+Replace direct `ThemeTokens::builtin` construction with one built-in `ThemeDefinitionV1` named `quiet-precision` containing complete light and dark variants. Preserve `ThemeTokens::builtin(mode)` as a compatibility wrapper that resolves that built-in definition.
 
-- [ ] **Step 7: Run theme verification**
+- [x] **Step 7: Run theme verification**
 
 ```bash
 cargo fmt --all -- --check
@@ -193,7 +193,7 @@ cargo test -p strukt-theme --all-targets --locked --offline
 
 Expected: all commands exit 0 and tests cover every semantic role in both variants.
 
-- [ ] **Step 8: Commit the theme contract**
+- [x] **Step 8: Commit the theme contract**
 
 ```bash
 git add Cargo.toml crates/strukt-theme

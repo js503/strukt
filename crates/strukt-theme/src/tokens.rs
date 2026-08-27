@@ -1,10 +1,13 @@
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ThemeMode {
     Light,
     Dark,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Rgb {
     pub red: u8,
     pub green: u8,
@@ -74,7 +77,7 @@ impl ThemeTokens {
         clippy::too_many_lines,
         reason = "built-in themes keep their complete semantic token tables auditable in one place"
     )]
-    pub const fn builtin(mode: ThemeMode) -> Self {
+    pub(crate) const fn quiet_precision_tokens(mode: ThemeMode) -> Self {
         match mode {
             ThemeMode::Light => Self {
                 canvas: Rgb::new(246, 247, 249),
@@ -207,6 +210,11 @@ impl ThemeTokens {
                 syntax_punctuation: Rgb::new(230, 237, 243),
             },
         }
+    }
+
+    #[must_use]
+    pub fn builtin(mode: ThemeMode) -> Self {
+        crate::definition::resolved_quiet_precision_tokens(mode)
     }
 }
 
