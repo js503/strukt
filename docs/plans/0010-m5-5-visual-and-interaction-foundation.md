@@ -215,11 +215,11 @@ git commit -m "feat(theme): add versioned semantic theme definitions"
 - Create: `crates/strukt-ui/src/components/state.rs`
 - Create: `crates/strukt-ui/tests/component_contracts.rs`
 
-- [ ] **Step 1: Add a failing component-contract test**
+- [x] **Step 1: Add a failing component-contract test**
 
 The test must instantiate dark and light `UiTheme` values and assert that default, hovered, focused, selected, disabled, warning, and error appearances resolve exclusively from semantic roles.
 
-- [ ] **Step 2: Confirm the new package does not exist**
+- [x] **Step 2: Confirm the new package does not exist**
 
 ```bash
 cargo test -p strukt-ui --all-targets --locked --offline
@@ -227,7 +227,7 @@ cargo test -p strukt-ui --all-targets --locked --offline
 
 Expected: Cargo reports that package `strukt-ui` is missing.
 
-- [ ] **Step 3: Add the crate and public visual contract**
+- [x] **Step 3: Add the crate and public visual contract**
 
 Add `crates/strukt-ui` to workspace members and dependencies. Its dependency surface is `iced`, `strukt-theme`, and `thiserror`. Export:
 
@@ -256,11 +256,11 @@ pub enum SelectionState {
 }
 ```
 
-- [ ] **Step 4: Implement the first component set**
+- [x] **Step 4: Implement the first component set**
 
 Provide semantic builders for icon buttons, text buttons, activity-rail items, panel headers, toolbar groups, list rows, badges, dividers, empty states, error states, and loading states. Icons use one 16-pixel stroke family and must include accessible text labels at the call site; do not introduce an icon font or image dependency.
 
-- [ ] **Step 5: Run component verification**
+- [x] **Step 5: Run component verification**
 
 ```bash
 cargo fmt --all -- --check
@@ -270,7 +270,7 @@ cargo test -p strukt-ui --all-targets --locked --offline
 
 Expected: all commands exit 0 in both theme modes.
 
-- [ ] **Step 6: Commit the component foundation**
+- [x] **Step 6: Commit the component foundation**
 
 ```bash
 git add Cargo.toml crates/strukt-ui
