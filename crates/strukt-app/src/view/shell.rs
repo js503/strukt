@@ -1,15 +1,16 @@
 use iced::widget::{Space, column, container, row, stack, text};
 use iced::{Alignment, Element, Fill, Length};
-use strukt_shell::Activity;
+use strukt_shell::{Activity, CanvasLayout};
 use strukt_theme::ThemeRegistry;
 use strukt_ui::{BadgeKind, ChromeRole, UiTheme, badge, chrome, quiet_button};
 
 use crate::app::{Message, StruktApp};
 use crate::remote::RemoteStatus;
 
+use super::terminal;
 use super::{
-    activity, command_center, context, drawer, files, primary_canvas, search, settings,
-    source_control, status,
+    activity, command_center, context, files, primary_canvas, search, settings, source_control,
+    status,
 };
 
 pub(super) fn view(app: &StruktApp) -> Element<'_, Message> {
@@ -22,17 +23,32 @@ pub(super) fn view(app: &StruktApp) -> Element<'_, Message> {
         Activity::Settings => settings::sidebar(app, &theme),
         _ => files::sidebar(app, &theme),
     };
+    let canvas = match &app.shell.canvas {
+        CanvasLayout::Split { ratio, .. } if terminal::is_secondary_canvas(app) => {
+            let primary_width = if *ratio <= 0.5 { 50 } else { 62 };
+            let secondary_width = 100_u16.saturating_sub(primary_width).max(1);
+            row![
+                container(primary_canvas(app, tokens, &theme))
+                    .width(Length::FillPortion(primary_width)),
+                container(terminal::canvas(app, tokens, &theme))
+                    .width(Length::FillPortion(secondary_width)),
+            ]
+            .height(Fill)
+            .into()
+        }
+        _ => primary_canvas(app, tokens, &theme),
+    };
     let body = row![
         activity::rail(app, &theme),
         sidebar,
-        primary_canvas(app, tokens, &theme),
+        canvas,
         context::panel(app, &theme),
     ]
     .height(Fill);
     let workspace = column![
         workspace_bar(app, &theme),
         body,
-        drawer(app, tokens, &theme),
+        terminal::drawer(app, tokens, &theme),
         status::strip(app, &theme),
     ]
     .height(Fill);

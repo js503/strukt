@@ -464,6 +464,10 @@ pub enum Message {
     ActivateRelativeTerminalTab(bool),
     FocusRelativeTerminalPane(bool),
     ToggleTerminalExpanded,
+    PromoteTerminalToSplit,
+    PromoteTerminalToFull,
+    DemoteTerminalToDrawer,
+    CloseTerminalPlacement,
     RestartTerminal(TerminalPaneId),
     RequestCloseTerminal(TerminalPaneId),
     ResolveCloseTerminal(bool),
@@ -2499,8 +2503,45 @@ impl StruktApp {
                 return Task::none();
             }
             Message::ToggleTerminalExpanded => {
+                if self.terminal_expanded {
+                    self.shell.apply(ShellAction::DemotePromotedSurface);
+                } else {
+                    self.shell.apply(ShellAction::PromoteDrawerToFull);
+                }
                 self.terminal_expanded = !self.terminal_expanded;
-                self.shell.drawer_visible = true;
+                self.terminal_input_active = self.terminal.workspace().focused_pane().is_some();
+                return Task::none();
+            }
+            Message::PromoteTerminalToSplit => {
+                self.shell
+                    .apply(ShellAction::PromoteDrawerToSplit { ratio: 0.62 });
+                self.terminal_expanded = false;
+                self.terminal_input_active = self.terminal.workspace().focused_pane().is_some();
+                return Task::none();
+            }
+            Message::PromoteTerminalToFull => {
+                self.shell.apply(ShellAction::PromoteDrawerToFull);
+                self.terminal_expanded = true;
+                self.terminal_input_active = self.terminal.workspace().focused_pane().is_some();
+                return Task::none();
+            }
+            Message::DemoteTerminalToDrawer => {
+                self.shell.apply(ShellAction::DemotePromotedSurface);
+                self.terminal_expanded = false;
+                self.terminal_input_active = self.terminal.workspace().focused_pane().is_some();
+                return Task::none();
+            }
+            Message::CloseTerminalPlacement => {
+                let terminal_surface =
+                    SurfaceId::new("terminal.local.primary").expect("built-in surface id");
+                if self.shell.canvas.contains(&terminal_surface) {
+                    self.shell.apply(ShellAction::DemotePromotedSurface);
+                }
+                if self.shell.drawer_visible {
+                    self.shell.apply(ShellAction::ToggleDrawer);
+                }
+                self.terminal_expanded = false;
+                self.terminal_input_active = false;
                 return Task::none();
             }
             Message::StartTerminal(pane) => {
@@ -4509,6 +4550,10 @@ impl StruktApp {
             | Message::ActivateRelativeTerminalTab(_)
             | Message::FocusRelativeTerminalPane(_)
             | Message::ToggleTerminalExpanded
+            | Message::PromoteTerminalToSplit
+            | Message::PromoteTerminalToFull
+            | Message::DemoteTerminalToDrawer
+            | Message::CloseTerminalPlacement
             | Message::RestartTerminal(_)
             | Message::RequestCloseTerminal(_)
             | Message::ResolveCloseTerminal(_)
@@ -4778,6 +4823,17 @@ impl StruktApp {
         }
         if drawer_was_visible && !self.shell.drawer_visible {
             self.terminal_input_active = false;
+        } else if !drawer_was_visible
+            && self.shell.drawer_visible
+            && self
+                .shell
+                .drawer
+                .surface
+                .as_ref()
+                .is_some_and(|surface| surface.as_str() == "terminal.local.primary")
+        {
+            self.shell.focus_region = FocusRegion::Drawer;
+            self.terminal_input_active = self.terminal.workspace().focused_pane().is_some();
         }
 
         if self.shell.explorer_visible != shell_before.explorer_visible

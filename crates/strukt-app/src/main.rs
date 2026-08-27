@@ -122,7 +122,7 @@ mod tests {
         set_terminal_contribution, shell_contribution, terminal_contribution,
     };
     use strukt_session::ClientHealth;
-    use strukt_shell::Activity;
+    use strukt_shell::{Activity, CanvasLayout, FocusRegion};
     use strukt_terminal::{PaneState, SplitAxis, TerminalWorkspace};
     use strukt_workspace::{WorkspaceRoot, WorkspaceState};
     use tempfile::{TempDir, tempdir};
@@ -658,6 +658,65 @@ mod tests {
 
         assert_eq!(app.terminal.workspace().tabs().len(), 1);
         assert_eq!(app.terminal.running_processes(), 0);
+    }
+
+    #[test]
+    fn terminal_placement_changes_preserve_the_terminal_runtime_identity() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        let _ = app.update(Message::NewTerminal);
+        let pane = app.terminal.workspace().focused_pane().unwrap();
+        let directory = app
+            .terminal
+            .workspace()
+            .pane(pane)
+            .unwrap()
+            .working_directory()
+            .clone();
+        let process_count = app.terminal.running_processes();
+
+        let _ = app.update(Message::PromoteTerminalToSplit);
+        assert!(matches!(app.shell.canvas, CanvasLayout::Split { .. }));
+        assert_eq!(app.terminal.workspace().focused_pane(), Some(pane));
+        assert_eq!(
+            app.terminal
+                .workspace()
+                .pane(pane)
+                .unwrap()
+                .working_directory(),
+            &directory
+        );
+        assert_eq!(app.terminal.running_processes(), process_count);
+        assert_eq!(app.shell.focus_region, FocusRegion::Canvas);
+
+        let _ = app.update(Message::DemoteTerminalToDrawer);
+        assert!(app.shell.drawer_visible);
+        assert_eq!(app.terminal.workspace().focused_pane(), Some(pane));
+        assert_eq!(app.terminal.running_processes(), process_count);
+
+        let _ = app.update(Message::PromoteTerminalToFull);
+        assert!(matches!(app.shell.canvas, CanvasLayout::Single { .. }));
+        assert_eq!(app.terminal.workspace().focused_pane(), Some(pane));
+        let _ = app.update(Message::CloseTerminalPlacement);
+        assert!(!app.shell.drawer_visible);
+        assert_eq!(app.terminal.workspace().focused_pane(), Some(pane));
+        assert_eq!(app.terminal.running_processes(), process_count);
+    }
+
+    #[test]
+    fn primary_j_opens_and_focuses_the_terminal_drawer() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        let _ = app.update(Message::NewTerminal);
+        app.shell.drawer_visible = false;
+        app.shell.drawer.visible = false;
+
+        let _ = app.update(key_pressed("j", key::Code::KeyJ, Modifiers::COMMAND));
+
+        assert!(app.shell.drawer_visible);
+        assert_eq!(app.shell.focus_region, FocusRegion::Drawer);
     }
 
     #[test]

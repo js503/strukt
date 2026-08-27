@@ -28,6 +28,7 @@ mod shell;
 mod source_control;
 mod state;
 mod status;
+mod terminal;
 
 pub(crate) fn command_center_input_id() -> iced::widget::Id {
     command_center::input_id()
@@ -286,7 +287,9 @@ fn primary_canvas<'a>(
     tokens: ThemeTokens,
     theme: &strukt_ui::UiTheme,
 ) -> Element<'a, Message> {
-    let content: Element<'_, Message> = if app.shell.active_activity == Activity::Connections {
+    let content: Element<'_, Message> = if terminal::is_primary_canvas(app) {
+        terminal::canvas(app, tokens, theme)
+    } else if app.shell.active_activity == Activity::Connections {
         connections_canvas(app)
     } else if app.remote.status != RemoteStatus::Disconnected
         && app.shell.active_activity == Activity::Search
@@ -308,18 +311,6 @@ fn primary_canvas<'a>(
         search::canvas(app, theme)
     } else if app.workspace.is_none() {
         welcome_canvas(app).into()
-    } else if app.terminal_expanded {
-        app.terminal.workspace().active_tab().map_or_else(
-            || text("Create a terminal to use the expanded terminal canvas").into(),
-            |tab| {
-                column![
-                    text(format!("{} · local terminal workspace", tab.name())).size(14),
-                    terminal_layout(app, tab.root(), tab.focused_pane(), tokens),
-                ]
-                .spacing(6)
-                .into()
-            },
-        )
     } else if app.quick_open_visible {
         quick_open_canvas(app).into()
     } else if app.shell.active_activity == Activity::Sessions {
@@ -1474,7 +1465,7 @@ fn context_panel(app: &StruktApp, theme: &strukt_ui::UiTheme) -> Element<'static
     clippy::too_many_lines,
     reason = "terminal drawer chrome keeps its empty, active, and confirmation states together"
 )]
-fn drawer(
+pub(super) fn terminal_drawer(
     app: &StruktApp,
     tokens: ThemeTokens,
     theme: &strukt_ui::UiTheme,
@@ -1515,13 +1506,9 @@ fn drawer(
             (enabled && app.terminal.workspace().active_tab().is_some())
                 .then_some(Message::SplitTerminal(SplitAxis::Horizontal)),
         ),
-        button(if app.terminal_expanded {
-            "Collapse"
-        } else {
-            "Expand"
-        })
-        .on_press(Message::ToggleTerminalExpanded),
-        button("Hide").on_press(Message::ToggleDrawer),
+        strukt_ui::quiet_button("Split view", Some(Message::PromoteTerminalToSplit), theme),
+        strukt_ui::quiet_button("Full canvas", Some(Message::PromoteTerminalToFull), theme),
+        strukt_ui::quiet_button("Close view", Some(Message::CloseTerminalPlacement), theme),
     ]
     .align_y(iced::Alignment::Center)
     .spacing(6);
@@ -1539,9 +1526,7 @@ fn drawer(
             ]
             .spacing(6),
         );
-        if !app.terminal_expanded {
-            content = content.push(terminal_layout(app, tab.root(), tab.focused_pane(), tokens));
-        }
+        content = content.push(terminal_layout(app, tab.root(), tab.focused_pane(), tokens));
     } else {
         content = content.push(
             container(
@@ -1609,13 +1594,61 @@ fn drawer(
 
     container(content)
         .padding(8)
-        .height(Length::Fixed(if app.terminal_expanded {
-            150.0
-        } else {
-            330.0
-        }))
+        .height(Length::Fixed(330.0))
         .style(panel_style(tokens, tokens.terminal_background))
         .into()
+}
+
+pub(super) fn terminal_canvas(
+    app: &StruktApp,
+    tokens: ThemeTokens,
+    theme: &strukt_ui::UiTheme,
+) -> Element<'static, Message> {
+    let content: Element<'static, Message> =
+        app.terminal.workspace().active_tab().map_or_else(
+            || {
+                column![
+                text("LOCAL TERMINAL").size(12),
+                terminal_placement_controls(theme),
+                text("No local terminal yet"),
+                text("Create a terminal from the drawer; changing placement never starts a process")
+                    .size(12),
+            ]
+                .spacing(8)
+                .into()
+            },
+            |tab| {
+                column![
+                    row![
+                        text(format!("{} · local terminal", tab.name())).size(14),
+                        Space::new().width(Fill),
+                        terminal_placement_controls(theme),
+                    ]
+                    .align_y(iced::Alignment::Center),
+                    terminal_layout(app, tab.root(), tab.focused_pane(), tokens),
+                ]
+                .spacing(8)
+                .into()
+            },
+        );
+    container(content)
+        .padding(8)
+        .width(Fill)
+        .height(Fill)
+        .style(panel_style(tokens, tokens.terminal_background))
+        .into()
+}
+
+fn terminal_placement_controls(theme: &strukt_ui::UiTheme) -> iced::widget::Row<'static, Message> {
+    row![
+        strukt_ui::quiet_button(
+            "Return to drawer",
+            Some(Message::DemoteTerminalToDrawer),
+            theme
+        ),
+        strukt_ui::quiet_button("Close view", Some(Message::CloseTerminalPlacement), theme),
+    ]
+    .spacing(6)
 }
 
 fn terminal_layout(

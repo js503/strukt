@@ -656,19 +656,19 @@ git commit -m "feat(app): migrate editor and language surfaces"
 - Modify: `crates/strukt-app/src/terminal_widget.rs`
 - Modify: `crates/strukt-app/src/app.rs`
 
-- [ ] **Step 1: Add failing terminal placement tests**
+- [x] **Step 1: Add failing terminal placement tests**
 
 Open the same terminal surface in drawer, split, and full placements and assert that its runtime/session identifier, output buffer, input routing, current directory, and process lifecycle are unchanged. Assert that closing the visual placement does not terminate the runtime unless the user invokes the existing terminate action.
 
-- [ ] **Step 2: Implement placement-independent terminal rendering**
+- [x] **Step 2: Implement placement-independent terminal rendering**
 
 Render the existing terminal model through a `SurfaceId`. Drawer controls expose promote-to-split, promote-to-full, demote, maximize/restore, and close-placement actions. Use terminal semantic colors and preserve the existing renderer and PTY behavior.
 
-- [ ] **Step 3: Add keyboard and focus behavior**
+- [x] **Step 3: Add keyboard and focus behavior**
 
 The existing terminal shortcut opens/focuses the drawer. Promotion keeps terminal input focus. Escape follows the documented overlay/panel priority without being sent to the PTY only when the shell owns the key event.
 
-- [ ] **Step 4: Verify terminal identity and regressions**
+- [x] **Step 4: Verify terminal identity and regressions**
 
 ```bash
 cargo test -p strukt-terminal --all-targets --locked --offline
