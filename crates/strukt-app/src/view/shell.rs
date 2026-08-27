@@ -9,8 +9,8 @@ use crate::remote::RemoteStatus;
 
 use super::terminal;
 use super::{
-    activity, command_center, context, files, primary_canvas, search, settings, source_control,
-    status,
+    activity, command_center, context, files, primary_canvas, search, sessions, settings,
+    source_control, status,
 };
 
 pub(super) fn view(app: &StruktApp) -> Element<'_, Message> {
@@ -21,6 +21,7 @@ pub(super) fn view(app: &StruktApp) -> Element<'_, Message> {
         Activity::Search => search::sidebar(app, &theme),
         Activity::SourceControl => source_control::sidebar(app, &theme),
         Activity::Settings => settings::sidebar(app, &theme),
+        Activity::Sessions => sessions::sidebar(app, &theme),
         _ => files::sidebar(app, &theme),
     };
     let canvas = match &app.shell.canvas {

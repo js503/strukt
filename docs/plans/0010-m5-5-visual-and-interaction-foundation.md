@@ -696,15 +696,15 @@ git commit -m "feat(app): add promoteable terminal surface"
 - Modify: `crates/strukt-app/src/session.rs`
 - Modify: `crates/strukt-app/src/app.rs`
 
-- [ ] **Step 1: Add failing session-view tests**
+- [x] **Step 1: Add failing session-view tests**
 
 Test active/detached/exited states, empty state, create/attach/detach/rename/terminate confirmations, selected session focus, and stable session identity across view placement changes.
 
-- [ ] **Step 2: Implement the compact session surface**
+- [x] **Step 2: Implement the compact session surface**
 
 Use a dense semantic list in the contextual sidebar and session detail or attached terminal in the canvas. State chips use semantic session roles and text, not color alone. Destructive termination stays distinct from closing or detaching a view.
 
-- [ ] **Step 3: Verify session behavior**
+- [x] **Step 3: Verify session behavior**
 
 ```bash
 cargo test -p strukt-session --all-targets --locked --offline

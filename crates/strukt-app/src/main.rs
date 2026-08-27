@@ -238,6 +238,19 @@ mod tests {
     }
 
     #[test]
+    fn session_surface_uses_a_compact_sidebar_and_distinct_destructive_actions() {
+        let contract = crate::view::session_surface_contract();
+
+        assert_eq!(contract.sidebar_title, "SESSIONS");
+        assert_eq!(contract.empty_state, "No persistent sessions yet.");
+        assert!(contract.actions.contains(&"Attach"));
+        assert!(contract.actions.contains(&"Detach"));
+        assert!(contract.actions.contains(&"Rename"));
+        assert!(contract.actions.contains(&"Terminate"));
+        assert_ne!(contract.close_label, contract.terminate_label);
+    }
+
+    #[test]
     fn remote_session_controls_wait_for_ssh_and_the_single_request_lane() {
         let root = std::env::current_dir().expect("current directory");
         let client = strukt_session::SessionClient::new(

@@ -6,7 +6,7 @@ use strukt_core::CapabilityId;
 use strukt_editor::{CloseDecision, DocumentStatus, FindQuery, GrammarRegistry, OpenDisposition};
 use strukt_fs::{FileEntry, FileKind};
 use strukt_remote::Capability as RemoteCapability;
-use strukt_session::{AttentionState, ClientHealth, PaneLifecycle};
+use strukt_session::ClientHealth;
 use strukt_shell::Activity;
 use strukt_terminal::{LayoutNode, PaneState, SplitAxis, TerminalPaneId};
 use strukt_theme::{Rgb, ThemeTokens};
@@ -23,6 +23,7 @@ mod editor;
 mod files;
 mod problems;
 mod search;
+mod sessions;
 mod settings;
 mod shell;
 mod source_control;
@@ -34,6 +35,8 @@ pub(crate) fn command_center_input_id() -> iced::widget::Id {
     command_center::input_id()
 }
 
+#[cfg(test)]
+pub(crate) use sessions::session_surface_contract;
 #[cfg(test)]
 pub(crate) use state::local_activity_composition;
 
@@ -314,7 +317,7 @@ fn primary_canvas<'a>(
     } else if app.quick_open_visible {
         quick_open_canvas(app).into()
     } else if app.shell.active_activity == Activity::Sessions {
-        sessions_canvas(app)
+        sessions::canvas(app)
     } else if app
         .editor
         .as_ref()
@@ -623,7 +626,7 @@ fn connections_canvas(app: &StruktApp) -> Element<'_, Message> {
     clippy::too_many_lines,
     reason = "the session canvas keeps its hierarchy and active pane projection together"
 )]
-fn sessions_canvas(app: &StruktApp) -> Element<'_, Message> {
+pub(super) fn session_detail_canvas(app: &StruktApp) -> Element<'_, Message> {
     let health = app.sessions.health();
     let health_label = session_health_label(health);
     let health_color = match health {
@@ -683,7 +686,7 @@ fn sessions_canvas(app: &StruktApp) -> Element<'_, Message> {
         Space::new().height(Length::Shrink).into()
     };
     let mut controls = row![
-        button("Connect").on_press_maybe(
+        button("Attach").on_press_maybe(
             matches!(
                 health,
                 ClientHealth::Stopped | ClientHealth::Stale | ClientHealth::Failed
@@ -824,71 +827,6 @@ fn sessions_canvas(app: &StruktApp) -> Element<'_, Message> {
     ]
     .spacing(6);
 
-    let mut inventory = column![text("SESSIONS").size(12)].spacing(4);
-    if let Some(snapshot) = app.sessions.catalog() {
-        for session in snapshot.catalog().sessions() {
-            let selected = app.sessions.selected_session() == Some(session.id());
-            let label = if selected {
-                format!("● {}", session.name())
-            } else {
-                session.name().to_owned()
-            };
-            inventory = inventory.push(
-                button(text(label))
-                    .width(Fill)
-                    .on_press(Message::SelectSession(session.id())),
-            );
-            if selected {
-                for window in session.windows() {
-                    let window_selected = app.sessions.selected_window() == Some(window.id());
-                    inventory = inventory.push(
-                        button(text(format!(
-                            "  {} {}",
-                            if window_selected { "●" } else { "○" },
-                            window.name()
-                        )))
-                        .width(Fill)
-                        .on_press(Message::SelectSessionWindow(window.id())),
-                    );
-                    if window_selected {
-                        for pane in window.panes() {
-                            let pane_selected = app.sessions.selected_pane() == Some(pane.id());
-                            let state = match pane.lifecycle() {
-                                PaneLifecycle::Stopped => "stopped",
-                                PaneLifecycle::Starting => "starting",
-                                PaneLifecycle::Running => "running",
-                                PaneLifecycle::Exited { .. } => "exited",
-                                PaneLifecycle::Failed { .. } => "failed",
-                                PaneLifecycle::Backpressured => "busy",
-                            };
-                            let (unread, attention) = snapshot.pane_status(pane.id());
-                            let signal = match attention {
-                                AttentionState::Attention => " · attention".to_owned(),
-                                AttentionState::Unread if unread > 0 => {
-                                    format!(" · {unread} unread")
-                                }
-                                AttentionState::None | AttentionState::Unread => String::new(),
-                            };
-                            inventory = inventory.push(
-                                button(text(format!(
-                                    "    {} pane · {state}{signal}",
-                                    if pane_selected { "●" } else { "○" }
-                                )))
-                                .width(Fill)
-                                .on_press(Message::SelectSessionPane(pane.id())),
-                            );
-                        }
-                    }
-                }
-            }
-        }
-        if snapshot.catalog().sessions().next().is_none() {
-            inventory = inventory.push(text("No persistent sessions yet."));
-        }
-    } else {
-        inventory = inventory.push(text("Connect to view persistent sessions."));
-    }
-
     let screen: Element<'_, Message> = app.sessions.active_snapshot().map_or_else(
         || text("Select and start a pane to view its structured screen.").into(),
         |snapshot| {
@@ -955,12 +893,7 @@ fn sessions_canvas(app: &StruktApp) -> Element<'_, Message> {
         pane_input,
         confirmation,
         notices,
-        row![
-            container(scrollable(inventory)).width(Length::Fixed(260.0)),
-            container(screen).padding(10).width(Fill).height(Fill),
-        ]
-        .spacing(12)
-        .height(Fill),
+        container(screen).padding(10).width(Fill).height(Fill),
     ]
     .spacing(10)
     .into()
