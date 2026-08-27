@@ -612,19 +612,19 @@ git commit -m "feat(app): migrate local workspace surfaces"
 - Modify: `crates/strukt-app/src/language.rs`
 - Modify: `crates/strukt-app/src/app.rs`
 
-- [ ] **Step 1: Add failing editor composition tests**
+- [x] **Step 1: Add failing editor composition tests**
 
 Cover active tab identity, modified indicator, save/conflict/recovery notices, syntax-theme parity, diagnostics counts, problem filtering, context-panel toggling, language-server unavailable state, and focus restoration.
 
-- [ ] **Step 2: Migrate editor canvas**
+- [x] **Step 2: Migrate editor canvas**
 
 Make the document the dominant surface. Use a compact tab/title row, semantic modified/conflict state, quiet gutters, stable line metrics, and unobtrusive recovery notices. Preserve editing, selection, save, conflict, and recovery behavior exactly.
 
-- [ ] **Step 3: Migrate Problems and workspace context**
+- [x] **Step 3: Migrate Problems and workspace context**
 
 Problems opens as a supporting panel or promoted surface, never a permanently reserved column. Context is on demand, separates diagnostics from workspace metadata, and uses shared state language when no language server applies.
 
-- [ ] **Step 4: Verify editor and language behavior**
+- [x] **Step 4: Verify editor and language behavior**
 
 ```bash
 cargo test -p strukt-editor --all-targets --locked --offline

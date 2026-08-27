@@ -8,7 +8,7 @@ use crate::app::{Message, StruktApp};
 use crate::remote::RemoteStatus;
 
 use super::{
-    activity, command_center, context_panel, drawer, files, primary_canvas, search, settings,
+    activity, command_center, context, drawer, files, primary_canvas, search, settings,
     source_control, status,
 };
 
@@ -26,7 +26,7 @@ pub(super) fn view(app: &StruktApp) -> Element<'_, Message> {
         activity::rail(app, &theme),
         sidebar,
         primary_canvas(app, tokens, &theme),
-        context_panel(app, tokens),
+        context::panel(app, &theme),
     ]
     .height(Fill);
     let workspace = column![

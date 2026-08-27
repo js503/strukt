@@ -925,7 +925,7 @@ impl LanguageCoordinator {
             workspace_id: workspace_id.into(),
             selections: HashMap::new(),
             approvals: Vec::new(),
-            problems_visible: true,
+            problems_visible: false,
             documents: HashMap::new(),
             servers: HashMap::new(),
             diagnostics: HashMap::new(),

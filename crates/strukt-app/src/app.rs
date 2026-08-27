@@ -2765,6 +2765,11 @@ impl StruktApp {
                     shell.sidebar.visible = opened.state.explorer.visible;
                     shell
                 });
+                if self.language.problems_visible() {
+                    self.shell.apply(ShellAction::OpenDrawer(
+                        SurfaceId::new("problems").expect("built-in surface id"),
+                    ));
+                }
                 self.files = opened.discovery.entries;
                 self.file_warnings = opened.discovery.warnings;
                 self.filesystem_truncated = opened.discovery.truncated;
@@ -3510,7 +3515,16 @@ impl StruktApp {
                     });
             }
             Message::ToggleProblems => {
+                let opening = !self.language.problems_visible();
                 self.language.toggle_problems();
+                let problems = SurfaceId::new("problems").expect("built-in surface id");
+                if opening {
+                    self.shell.apply(ShellAction::OpenDrawer(problems));
+                } else if self.shell.drawer.surface.as_ref() == Some(&problems)
+                    && self.shell.drawer.visible
+                {
+                    self.shell.apply(ShellAction::ToggleDrawer);
+                }
                 return self.request_persistence(false);
             }
             Message::SetProblemFilter(filter) => {

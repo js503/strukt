@@ -12,13 +12,16 @@ use strukt_terminal::{LayoutNode, PaneState, SplitAxis, TerminalPaneId};
 use strukt_theme::{Rgb, ThemeTokens};
 
 use crate::app::{DocumentNotice, ExplorerDialog, Message, SessionConfirmation, StruktApp};
-use crate::language::{DiagnosticSeverity, LanguageState, ProblemFilter};
+use crate::language::LanguageState;
 use crate::remote::RemoteStatus;
 use crate::terminal_widget::TerminalWidget;
 
 mod activity;
 mod command_center;
+mod context;
+mod editor;
 mod files;
+mod problems;
 mod search;
 mod settings;
 mod shell;
@@ -328,7 +331,7 @@ fn primary_canvas<'a>(
         .is_some()
         || app.document_notice.is_some()
     {
-        editor_canvas(app)
+        editor::canvas(app, theme)
     } else {
         column![
             text("Workspace shell").size(22),
@@ -1015,7 +1018,7 @@ fn app_theme(app: &StruktApp) -> ThemeTokens {
     clippy::too_many_lines,
     reason = "the native editor canvas keeps tab, toolbar, find, status, and close-dialog composition together"
 )]
-fn editor_canvas(app: &StruktApp) -> Element<'_, Message> {
+fn editor_canvas<'a>(app: &'a StruktApp, theme: &strukt_ui::UiTheme) -> Element<'a, Message> {
     if let Some(notice) = &app.document_notice {
         return document_notice_canvas(notice).into();
     }
@@ -1046,8 +1049,13 @@ fn editor_canvas(app: &StruktApp) -> Element<'_, Message> {
         let preview = if tab.pinned { "" } else { " (preview)" };
         tabs = tabs.push(
             row![
-                button(text(format!("{}{}{}", tab.path.as_str(), preview, status)))
-                    .on_press(Message::SelectDocument(tab.id)),
+                strukt_ui::list_row_owned(
+                    format!("{}{}{}", tab.path.as_str(), preview, status),
+                    tab.id == active_id,
+                    Some(Message::SelectDocument(tab.id)),
+                    theme,
+                )
+                .width(Length::Shrink),
                 button(if tab.pinned { "×" } else { "Pin" }).on_press(if tab.pinned {
                     Message::CloseDocument(tab.id)
                 } else {
@@ -1356,12 +1364,9 @@ pub(crate) fn quick_open_input_id() -> iced::widget::Id {
     iced::widget::Id::new("strukt.quick-open.input")
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "context, language status, and Problems presentation remain colocated for a coherent panel"
-)]
-fn context_panel(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Message> {
-    if !app.shell.context_visible && !app.language.problems_visible() {
+fn context_panel(app: &StruktApp, theme: &strukt_ui::UiTheme) -> Element<'static, Message> {
+    let tokens = theme.tokens;
+    if !app.shell.context_visible {
         return container(Space::new()).width(Length::Shrink).into();
     }
 
@@ -1371,78 +1376,19 @@ fn context_panel(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Messa
         "WORKSPACE CONTEXT"
     };
 
-    let counts = app.language.problem_counts();
     let mut content = column![].spacing(8);
-    if app.language.problems_visible() {
-        content = content.push(
-            row![
-                text("PROBLEMS").size(12),
-                Space::new().width(Fill),
-                text(format!(
-                    "E {}  W {}  I {}  H {}",
-                    counts.errors, counts.warnings, counts.information, counts.hints
-                ))
-                .size(12),
-                button("Hide").on_press(Message::ToggleProblems),
-            ]
-            .align_y(iced::Alignment::Center)
-            .spacing(5),
-        );
-        content = content.push(
-            row![
-                button("All").on_press(Message::SetProblemFilter(ProblemFilter::All)),
-                button("Errors").on_press(Message::SetProblemFilter(ProblemFilter::Errors)),
-                button("Warnings").on_press(Message::SetProblemFilter(ProblemFilter::Warnings)),
-            ]
-            .spacing(4),
-        );
-        let mut problems = column![].spacing(5);
-        let visible_problems = app.language.visible_problems();
-        let mut previous_path = None;
-        for problem in &visible_problems {
-            if previous_path.as_deref() != Some(problem.path()) {
-                problems = problems.push(text(problem.path().display().to_string()).size(12));
-                previous_path = Some(problem.path().to_path_buf());
-            }
-            let severity_color = match problem.severity() {
-                DiagnosticSeverity::Error => tokens.diagnostic_error,
-                DiagnosticSeverity::Warning => tokens.diagnostic_warning,
-                DiagnosticSeverity::Information => tokens.diagnostic_information,
-                DiagnosticSeverity::Hint => tokens.diagnostic_hint,
-            };
-            let source = problem
-                .source()
-                .map_or_else(String::new, |source| format!(" · {source}"));
-            let label = format!(
-                "{}:{}:{} · {}{}",
-                problem.path().display(),
-                problem.line() + 1,
-                problem.character() + 1,
-                problem.message(),
-                source,
-            );
-            problems = problems.push(
-                button(text(label).size(12).color(color(severity_color))).on_press(
-                    Message::OpenProblem {
-                        id: problem.document_id(),
-                        line: problem.line(),
-                        character: problem.character(),
-                    },
-                ),
-            );
-        }
-        if visible_problems.is_empty() {
-            problems = problems.push(text("No problems in synchronized files").size(12));
-        }
-        content = content.push(scrollable(problems).height(Fill));
-    }
     if app.shell.context_visible {
         content = content
             .push(text(ai_status))
             .push(text("LANGUAGE SERVERS").size(12));
         let states = app.language.server_states();
         if states.is_empty() {
-            content = content.push(text("Open a code file to discover a server").size(12));
+            content = content.push(strukt_ui::state_panel(
+                "No language service active",
+                "Open a code file to discover an available language server.",
+                strukt_ui::StateKind::Unavailable,
+                theme,
+            ));
         }
         for (language, state) in states {
             let state_label = match state {
@@ -1533,6 +1479,9 @@ fn drawer(
     tokens: ThemeTokens,
     theme: &strukt_ui::UiTheme,
 ) -> Element<'static, Message> {
+    if app.language.problems_visible() {
+        return problems::drawer(app, theme);
+    }
     if !app.shell.drawer_visible {
         return strukt_ui::quiet_button(
             "TERMINAL                                      Primary+J",

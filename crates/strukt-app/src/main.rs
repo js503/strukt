@@ -2008,6 +2008,31 @@ mod tests {
     }
 
     #[test]
+    fn problems_uses_the_supporting_drawer_without_forcing_context_open() {
+        let mut app = StruktApp::default();
+        assert!(!app.shell.context_visible);
+        assert!(!app.shell.drawer_visible);
+
+        let _ = app.update(Message::ToggleProblems);
+
+        assert!(app.language.problems_visible());
+        assert!(!app.shell.context_visible);
+        assert!(app.shell.drawer_visible);
+        assert_eq!(
+            app.shell
+                .drawer
+                .surface
+                .as_ref()
+                .map(strukt_shell::SurfaceId::as_str),
+            Some("problems")
+        );
+
+        let _ = app.update(Message::ToggleProblems);
+        assert!(!app.language.problems_visible());
+        assert!(!app.shell.drawer_visible);
+    }
+
+    #[test]
     fn unmodified_shortcut_keys_do_not_toggle_shell_panels() {
         let mut app = StruktApp::default();
 
