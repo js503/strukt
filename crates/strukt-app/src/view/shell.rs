@@ -7,16 +7,23 @@ use strukt_ui::{BadgeKind, ChromeRole, UiTheme, badge, chrome, quiet_button};
 use crate::app::{Message, StruktApp};
 use crate::remote::RemoteStatus;
 
-use super::terminal;
 use super::{
     activity, command_center, connections, context, files, primary_canvas, remote_workspace,
     search, sessions, settings, source_control, status,
 };
+use super::{responsive::ResponsivePolicy, terminal};
 
 pub(super) fn view(app: &StruktApp) -> Element<'_, Message> {
     let registry = ThemeRegistry::with_builtins();
     let theme = UiTheme::from(registry.resolve(&app.shell.theme_id, app.shell.theme_mode));
     let tokens = theme.tokens;
+    let responsive = ResponsivePolicy::default().compose(
+        app.viewport_width,
+        app.shell.sidebar.visible,
+        app.shell.context.visible,
+    );
+    let _reduced_motion = ResponsivePolicy::reduced_motion();
+    let _transition_duration_ms = ResponsivePolicy::transition_duration_ms();
     let sidebar = match app.shell.active_activity {
         Activity::Connections => connections::sidebar(app, &theme),
         Activity::Search => search::sidebar(app, &theme),
@@ -34,6 +41,16 @@ pub(super) fn view(app: &StruktApp) -> Element<'_, Message> {
     } else {
         sidebar
     };
+    let sidebar: Element<'_, Message> = if responsive.sidebar {
+        sidebar
+    } else {
+        container(Space::new()).width(Length::Shrink).into()
+    };
+    let context_panel: Element<'_, Message> = if responsive.context {
+        context::panel(app, &theme)
+    } else {
+        container(Space::new()).width(Length::Shrink).into()
+    };
     let canvas = match &app.shell.canvas {
         CanvasLayout::Split { ratio, .. } if terminal::is_secondary_canvas(app) => {
             let primary_width = if *ratio <= 0.5 { 50 } else { 62 };
@@ -49,13 +66,7 @@ pub(super) fn view(app: &StruktApp) -> Element<'_, Message> {
         }
         _ => primary_canvas(app, tokens, &theme),
     };
-    let body = row![
-        activity::rail(app, &theme),
-        sidebar,
-        canvas,
-        context::panel(app, &theme),
-    ]
-    .height(Fill);
+    let body = row![activity::rail(app, &theme), sidebar, canvas, context_panel,].height(Fill);
     let workspace = column![
         workspace_bar(app, &theme),
         body,

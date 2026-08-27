@@ -71,7 +71,7 @@ impl Default for ShellState {
                 height: 280,
             },
             focus_region: FocusRegion::Canvas,
-            reduced_motion: false,
+            reduced_motion: true,
             promotion: None,
         }
     }

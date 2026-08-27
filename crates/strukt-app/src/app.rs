@@ -242,6 +242,7 @@ impl LaunchMode {
 pub struct StruktApp {
     pub capabilities: CapabilityRegistry,
     pub shell: ShellState,
+    pub(crate) viewport_width: u32,
     pub workspace: Option<WorkspaceState>,
     pub files: Vec<FileEntry>,
     pub file_warnings: Vec<String>,
@@ -396,6 +397,7 @@ pub enum SessionConfirmation {
 
 #[derive(Clone, Debug)]
 pub enum Message {
+    WindowResized(iced::Size),
     CommandSelected(CommandId),
     ToggleCommandCenter,
     CommandQueryChanged(String),
@@ -1152,6 +1154,7 @@ impl StruktApp {
         Self {
             capabilities,
             shell: ShellState::default(),
+            viewport_width: 1_280,
             workspace: None,
             files: Vec::new(),
             file_warnings: Vec::new(),
@@ -1296,6 +1299,10 @@ impl StruktApp {
     )]
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::WindowResized(size) => {
+                self.viewport_width = logical_viewport_width(size.width);
+                return Task::none();
+            }
             Message::CommandSelected(id) => {
                 self.close_command_center();
                 return self
@@ -4496,6 +4503,7 @@ impl StruktApp {
             Message::ToggleTheme => Some(ShellAction::ToggleTheme),
             Message::SetThemeMode(mode) => Some(ShellAction::SetThemeMode(mode)),
             Message::OpenFolder
+            | Message::WindowResized(_)
             | Message::CommandSelected(_)
             | Message::ToggleCommandCenter
             | Message::CommandQueryChanged(_)
@@ -5797,7 +5805,8 @@ impl StruktApp {
 
     pub fn subscription(&self) -> Subscription<Message> {
         let keyboard = keyboard::listen().map(Message::Keyboard);
-        let mut subscriptions = vec![keyboard];
+        let window = iced::window::resize_events().map(|(_, size)| Message::WindowResized(size));
+        let mut subscriptions = vec![keyboard, window];
         if self.watcher.is_some() {
             subscriptions
                 .push(time::every(Duration::from_millis(250)).map(|_| Message::PollWatcher));
@@ -6600,6 +6609,15 @@ fn is_scoped_relative_path(path: &Path) -> bool {
 )]
 fn scroll_lines_as_f32(lines: i32) -> f32 {
     lines as f32
+}
+
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the finite logical window width is clamped before conversion"
+)]
+fn logical_viewport_width(width: f32) -> u32 {
+    width.clamp(1.0, 16_384.0).round() as u32
 }
 
 fn dialog_source(dialog: &ExplorerDialog) -> Option<&Path> {

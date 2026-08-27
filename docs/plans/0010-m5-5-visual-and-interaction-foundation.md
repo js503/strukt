@@ -788,23 +788,23 @@ git commit -m "feat(app): migrate remote workspace workflows"
 - Create: `crates/strukt-app/src/view/responsive.rs`
 - Create: `crates/strukt-app/tests/visual_foundation_contract.rs`
 
-- [ ] **Step 1: Write failing accessibility and size-policy tests**
+- [x] **Step 1: Write failing accessibility and size-policy tests**
 
 Test visible focus for every interactive component, text alternatives for icons, keyboard traversal order, focus trapping/restoration, semantic state text, minimum control target, reduced-motion selection, and deterministic composition at widths `960`, `1280`, and `1728` pixels.
 
-- [ ] **Step 2: Implement platform-neutral logical shortcuts**
+- [x] **Step 2: Implement platform-neutral logical shortcuts**
 
 Centralize `Primary`, `Primary+K`, activity navigation, panel toggles, drawer focus, and Escape precedence. Map `Primary` to Command on macOS and Control on Windows/Linux. Do not scatter platform conditionals through feature views.
 
-- [ ] **Step 3: Implement responsive policy**
+- [x] **Step 3: Implement responsive policy**
 
 At constrained width, collapse the context panel first, then the sidebar; preserve the canvas and activity rail; keep collapsed regions keyboard-reachable. At wide width, do not automatically open context. Clamp restored geometry using the persistence bounds.
 
-- [ ] **Step 4: Implement reduced-motion behavior**
+- [x] **Step 4: Implement reduced-motion behavior**
 
 Keep all state transitions functional with animation duration zero. If the platform preference is unavailable through current dependencies, default to reduced motion and document the limitation; do not add a new system-integration dependency in M5.5.
 
-- [ ] **Step 5: Verify accessibility contracts**
+- [x] **Step 5: Verify accessibility contracts**
 
 ```bash
 cargo test -p strukt-ui --all-targets --locked --offline

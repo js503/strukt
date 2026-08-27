@@ -16,6 +16,7 @@ use crate::language::LanguageState;
 use crate::remote::RemoteStatus;
 use crate::terminal_widget::TerminalWidget;
 
+mod accessibility;
 mod activity;
 mod command_center;
 mod connections;
@@ -24,6 +25,7 @@ mod editor;
 mod files;
 mod problems;
 mod remote_workspace;
+mod responsive;
 mod search;
 mod sessions;
 mod settings;
