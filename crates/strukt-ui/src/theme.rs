@@ -144,6 +144,11 @@ pub fn state_appearance(theme: &UiTheme, kind: crate::StateKind) -> StateAppeara
     }
 }
 
-pub(crate) const fn color(rgb: Rgb) -> Color {
+#[must_use]
+pub const fn semantic_color(rgb: Rgb) -> Color {
     Color::from_rgb8(rgb.red, rgb.green, rgb.blue)
+}
+
+pub(crate) const fn color(rgb: Rgb) -> Color {
+    semantic_color(rgb)
 }

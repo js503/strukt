@@ -1,7 +1,7 @@
 use iced::widget::{
     Space, button, column, container, pick_list, row, scrollable, text, text_editor, text_input,
 };
-use iced::{Background, Border, Color, Element, Fill, Length};
+use iced::{Background, Border, Element, Fill, Length};
 use strukt_core::CapabilityId;
 use strukt_editor::{CloseDecision, DocumentStatus, FindQuery, GrammarRegistry, OpenDisposition};
 use strukt_fs::{FileEntry, FileKind};
@@ -10,6 +10,7 @@ use strukt_session::ClientHealth;
 use strukt_shell::Activity;
 use strukt_terminal::{LayoutNode, PaneState, SplitAxis, TerminalPaneId};
 use strukt_theme::{Rgb, ThemeTokens};
+use strukt_ui::semantic_color;
 
 use crate::app::{DocumentNotice, ExplorerDialog, Message, SessionConfirmation, StruktApp};
 use crate::language::LanguageState;
@@ -46,16 +47,12 @@ pub(crate) use sessions::session_surface_contract;
 #[cfg(test)]
 pub(crate) use state::local_activity_composition;
 
-fn color(rgb: Rgb) -> Color {
-    Color::from_rgb8(rgb.red, rgb.green, rgb.blue)
-}
-
 fn panel_style(tokens: ThemeTokens, background: Rgb) -> impl Fn(&iced::Theme) -> container::Style {
     move |_| container::Style {
-        background: Some(Background::Color(color(background))),
-        text_color: Some(color(tokens.text_primary)),
+        background: Some(Background::Color(semantic_color(background))),
+        text_color: Some(semantic_color(tokens.text_primary)),
         border: Border {
-            color: color(tokens.border),
+            color: semantic_color(tokens.border),
             width: 1.0,
             radius: 0.0.into(),
         },
@@ -885,7 +882,7 @@ pub(super) fn session_detail_canvas(app: &StruktApp) -> Element<'_, Message> {
         row![
             text("Persistent sessions").size(22),
             Space::new().width(Fill),
-            text(health_label).color(color(health_color))
+            text(health_label).color(semantic_color(health_color))
         ],
         text(format!("{location}  ·  {provider_summary}")),
         text(if app.sessions.remote_host().is_some() {
@@ -1517,7 +1514,7 @@ pub(super) fn terminal_drawer(
                 text("Open this exact terminal link?").size(12),
                 text(target.clone())
                     .size(12)
-                    .color(color(tokens.terminal_link)),
+                    .color(semantic_color(tokens.terminal_link)),
                 row![
                     button("Open link").on_press(Message::ResolveTerminalLink(true)),
                     button("Cancel").on_press(Message::ResolveTerminalLink(false)),
@@ -1662,10 +1659,12 @@ fn terminal_pane(
         )),
         text(pane_title).size(11),
         text(format!("local · {cwd}")).size(11),
-        text(state_label).size(11).color(color(state_color)),
+        text(state_label)
+            .size(11)
+            .color(semantic_color(state_color)),
         text(if sustained_output { "high output" } else { "" })
             .size(11)
-            .color(color(tokens.terminal_backpressure)),
+            .color(semantic_color(tokens.terminal_backpressure)),
         Space::new().width(Fill),
         button("Copy").on_press(Message::CopyTerminal(pane_id)),
         button("Paste").on_press(Message::RequestTerminalPaste(pane_id)),

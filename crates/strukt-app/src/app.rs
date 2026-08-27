@@ -68,7 +68,7 @@ pub(crate) const TERMINAL_SMOKE_SUCCESS: &str =
 pub(crate) const LANGUAGE_SMOKE_SUCCESS: &str = "strukt language smoke: discovery, sync, diagnostics, completion, hover, definition, cancellation, shutdown, and restore passed";
 pub(crate) const M2_INTEGRATION_SMOKE_SUCCESS: &str = "strukt M2 integration smoke: files, editor, terminal, language, persistence, isolation, and stopped restore passed";
 
-fn built_in_shell_surfaces() -> BTreeSet<SurfaceId> {
+pub(crate) fn built_in_shell_surfaces() -> BTreeSet<SurfaceId> {
     let activities = [
         Activity::Files,
         Activity::Search,
@@ -152,6 +152,7 @@ pub enum LaunchMode {
     RemoteSessionsSmoke {
         root: PathBuf,
     },
+    M5_5VisualFoundationSmoke,
 }
 
 impl LaunchMode {
@@ -213,6 +214,7 @@ impl LaunchMode {
                     root: PathBuf::from(root),
                 }
             }
+            [flag] if flag == "--m5-5-visual-foundation-smoke" => Self::M5_5VisualFoundationSmoke,
             _ if args.iter().any(|argument| argument == "--smoke-test") => Self::SmokeTest,
             _ => Self::Interactive,
         }
@@ -222,6 +224,7 @@ impl LaunchMode {
     pub const fn smoke_timeout(&self) -> Option<Duration> {
         match self {
             Self::Interactive
+            | Self::M5_5VisualFoundationSmoke
             | Self::WorkspaceFilesSmoke { .. }
             | Self::EditorSmoke { .. }
             | Self::TerminalSmoke { .. }

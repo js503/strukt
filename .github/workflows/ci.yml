@@ -31,12 +31,43 @@ jobs:
           tmux -V
       - name: Format
         run: cargo fmt --all --check
+      - name: Enforce semantic UI chrome
+        if: runner.os != 'Windows'
+        shell: bash
+        run: bash scripts/check-ui-semantics.sh
+      - name: Enforce semantic UI chrome
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $matches = Get-ChildItem crates/strukt-app/src/view -Filter *.rs -Recurse |
+            Select-String -Pattern 'iced::Color|Color::from_rgb|#[0-9A-Fa-f]{6}'
+          if ($matches) {
+            $matches | Write-Output
+            throw "app views contain direct chrome colors"
+          }
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
       - name: Build native application
         run: cargo build -p strukt-app
+      - name: Smoke M5.5 visual foundation
+        if: runner.os != 'Windows'
+        shell: bash
+        run: bash scripts/m5-5-visual-foundation-smoke.sh
+      - name: Smoke M5.5 visual foundation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $output = & cargo run -p strukt-app --locked --offline -- --m5-5-visual-foundation-smoke 2>&1
+          $output | Write-Output
+          if ($LASTEXITCODE -ne 0) {
+            throw "M5.5 visual foundation smoke exited with code $LASTEXITCODE"
+          }
+          $marker = "M5.5 visual foundation smoke passed"
+          if (($output -join [Environment]::NewLine) -notmatch [regex]::Escape($marker)) {
+            throw "M5.5 visual foundation smoke marker missing"
+          }
       - name: Build terminal fixture
         run: cargo build -p strukt-terminal --bin terminal-fixture
       - name: Build language fixture

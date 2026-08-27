@@ -831,7 +831,7 @@ git commit -m "feat(ui): enforce accessible responsive composition"
 - Modify: `.github/workflows/ci.yml`
 - Create: `docs/evidence/m5-5-visual-foundation.md`
 
-- [ ] **Step 1: Write the smoke entrypoint contract**
+- [x] **Step 1: Write the smoke entrypoint contract**
 
 Add a deterministic mode that constructs the app without opening a native window, registers all built-in contributions, resolves both themes, visits every activity, opens/closes every optional region, promotes/demotes the terminal, searches the command center, restores a valid and invalid snapshot, and prints exactly:
 
@@ -841,19 +841,19 @@ M5.5 visual foundation smoke passed
 
 It must not read user state, spawn a shell, contact a remote host, or modify a workspace.
 
-- [ ] **Step 2: Add the shell wrapper**
+- [x] **Step 2: Add the shell wrapper**
 
 The script follows existing smoke-script conventions, resolves the repository root, uses locked offline Cargo, and fails on any unexpected exit status or missing success line.
 
-- [ ] **Step 3: Enforce semantic chrome ownership**
+- [x] **Step 3: Enforce semantic chrome ownership**
 
 Add `scripts/check-ui-semantics.sh` to reject direct `iced::Color`, `Color::from_rgb`, and literal RGB/hex chrome declarations under `crates/strukt-app/src/view/`. Permit only documented editor syntax and terminal parser modules outside that directory. Run the check in CI and document any future exception in the script with its exact file and reason.
 
-- [ ] **Step 4: Add CI execution on all supported runners**
+- [x] **Step 4: Add CI execution on all supported runners**
 
 Run the semantic check and M5.5 smoke in the existing macOS/Windows/Ubuntu matrix alongside the existing milestone smokes. Use Bash on macOS/Ubuntu and the repository's established PowerShell marker-check pattern on Windows.
 
-- [ ] **Step 5: Run the new checks locally**
+- [x] **Step 5: Run the new checks locally**
 
 ```bash
 ./scripts/check-ui-semantics.sh

@@ -3,6 +3,7 @@
 mod app;
 mod editor;
 mod language;
+mod m5_5_smoke;
 mod recovery_key;
 mod remote;
 mod remote_sessions_smoke;
@@ -89,6 +90,14 @@ fn main() -> iced::Result {
             panic!("strukt M5 remote sessions smoke failed: {error}");
         }
         println!("{}", app::REMOTE_SESSIONS_SMOKE_SUCCESS);
+        return Ok(());
+    }
+
+    if launch_mode == LaunchMode::M5_5VisualFoundationSmoke {
+        if let Err(error) = m5_5_smoke::run() {
+            panic!("M5.5 visual foundation smoke failed: {error}");
+        }
+        println!("{}", m5_5_smoke::SUCCESS);
         return Ok(());
     }
 
