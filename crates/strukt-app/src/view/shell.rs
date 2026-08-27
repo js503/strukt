@@ -9,8 +9,8 @@ use crate::remote::RemoteStatus;
 
 use super::terminal;
 use super::{
-    activity, command_center, context, files, primary_canvas, search, sessions, settings,
-    source_control, status,
+    activity, command_center, connections, context, files, primary_canvas, remote_workspace,
+    search, sessions, settings, source_control, status,
 };
 
 pub(super) fn view(app: &StruktApp) -> Element<'_, Message> {
@@ -18,11 +18,21 @@ pub(super) fn view(app: &StruktApp) -> Element<'_, Message> {
     let theme = UiTheme::from(registry.resolve(&app.shell.theme_id, app.shell.theme_mode));
     let tokens = theme.tokens;
     let sidebar = match app.shell.active_activity {
+        Activity::Connections => connections::sidebar(app, &theme),
         Activity::Search => search::sidebar(app, &theme),
         Activity::SourceControl => source_control::sidebar(app, &theme),
         Activity::Settings => settings::sidebar(app, &theme),
         Activity::Sessions => sessions::sidebar(app, &theme),
         _ => files::sidebar(app, &theme),
+    };
+    let sidebar = if app.remote.status != RemoteStatus::Disconnected
+        && matches!(
+            app.shell.active_activity,
+            Activity::Files | Activity::Search | Activity::SourceControl | Activity::Tasks
+        ) {
+        remote_workspace::sidebar(app, &theme)
+    } else {
+        sidebar
     };
     let canvas = match &app.shell.canvas {
         CanvasLayout::Split { ratio, .. } if terminal::is_secondary_canvas(app) => {

@@ -732,23 +732,23 @@ git commit -m "feat(app): migrate local session workflows"
 - Modify: `crates/strukt-app/src/remote.rs`
 - Modify: `crates/strukt-app/src/app.rs`
 
-- [ ] **Step 1: Add failing remote composition tests**
+- [x] **Step 1: Add failing remote composition tests**
 
 Cover connection list/search, host-key confirmation, authentication failure, helper unavailable/compatible/incompatible states, remote root selection, remote file opening, remote boundary labels, persistent-session list/attach/detach/create/rename/terminate, and local fallback after disconnection.
 
-- [ ] **Step 2: Migrate connection entry and state language**
+- [x] **Step 2: Migrate connection entry and state language**
 
 Use a focused connection canvas with compact saved-host rows and a clear primary action. Show host alias plus execution boundary in title/status chrome at all times. Authentication, host-key, network, helper, and permission errors use distinct recovery actions.
 
-- [ ] **Step 3: Migrate remote workspace shell**
+- [x] **Step 3: Migrate remote workspace shell**
 
 Reuse Files, Search, editor, Problems, context, and terminal components with remote providers. Keep capability checks visible and disable unsupported commands with reasons. Do not fork a second visual system for remote mode.
 
-- [ ] **Step 4: Migrate persistent remote sessions**
+- [x] **Step 4: Migrate persistent remote sessions**
 
 Render remote tmux-compatible sessions through the shared session components while retaining remote provider semantics. Attaching a session opens its terminal as the same promoteable surface used locally. Execution boundary confirmation precedes destructive remote commands.
 
-- [ ] **Step 5: Verify remote behavior**
+- [x] **Step 5: Verify remote behavior**
 
 ```bash
 cargo test -p strukt-remote --all-targets --locked --offline
@@ -761,9 +761,11 @@ bash scripts/m5-remote-sessions-smoke.sh
 
 Expected: all commands exit 0 without requiring a live remote host; integration fakes prove the UI dispatches existing remote operations.
 
-- [ ] **Step 6: Perform a live remote walkthrough when a test host is available**
+- [x] **Step 6: Perform a live remote walkthrough when a test host is available**
 
 Record evidence for: connect, trust host key, choose remote root, browse/open/save a file, open terminal, create two persistent sessions, detach, reconnect, reattach each session, and disconnect safely. Redact hostnames, usernames, addresses, keys, and terminal content from committed evidence.
+
+No disposable live SSH target was configured for this change. The conditional walkthrough was therefore not run; the real helper/fake SSH integration suites and M4/M5 deterministic smokes provide the recorded verification boundary.
 
 - [ ] **Step 7: Commit remote workflow migration**
 

@@ -285,6 +285,24 @@ mod tests {
     }
 
     #[test]
+    fn remote_surface_contract_keeps_boundary_and_recovery_states_explicit() {
+        let contract = crate::view::remote_surface_contract();
+
+        assert_eq!(contract.boundary_label, "REMOTE");
+        assert!(contract.states.contains(&"Host key confirmation required"));
+        assert!(contract.states.contains(&"Authentication failed"));
+        assert!(contract.states.contains(&"Helper unavailable"));
+        assert!(contract.states.contains(&"Helper incompatible"));
+        assert!(contract.recovery_actions.contains(&"Reconnect"));
+        assert!(contract.recovery_actions.contains(&"Repair helper"));
+        assert!(
+            contract
+                .recovery_actions
+                .contains(&"Return to local workspace")
+        );
+    }
+
+    #[test]
     fn persistent_session_lines_use_portable_terminal_enter_framing() {
         assert_eq!(crate::app::session_line_input("alpha".into()), b"alpha\r");
     }

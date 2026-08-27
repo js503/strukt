@@ -18,10 +18,12 @@ use crate::terminal_widget::TerminalWidget;
 
 mod activity;
 mod command_center;
+mod connections;
 mod context;
 mod editor;
 mod files;
 mod problems;
+mod remote_workspace;
 mod search;
 mod sessions;
 mod settings;
@@ -35,6 +37,8 @@ pub(crate) fn command_center_input_id() -> iced::widget::Id {
     command_center::input_id()
 }
 
+#[cfg(test)]
+pub(crate) use connections::remote_surface_contract;
 #[cfg(test)]
 pub(crate) use sessions::session_surface_contract;
 #[cfg(test)]
@@ -293,19 +297,19 @@ fn primary_canvas<'a>(
     let content: Element<'_, Message> = if terminal::is_primary_canvas(app) {
         terminal::canvas(app, tokens, theme)
     } else if app.shell.active_activity == Activity::Connections {
-        connections_canvas(app)
+        connections::canvas(app, theme)
     } else if app.remote.status != RemoteStatus::Disconnected
         && app.shell.active_activity == Activity::Search
     {
-        remote_search_canvas(app)
+        remote_workspace::search_canvas(app)
     } else if app.remote.status != RemoteStatus::Disconnected
         && app.shell.active_activity == Activity::SourceControl
     {
-        remote_git_canvas(app)
+        remote_workspace::git_canvas(app)
     } else if app.remote.status != RemoteStatus::Disconnected
         && app.shell.active_activity == Activity::Tasks
     {
-        remote_tasks_canvas(app)
+        remote_workspace::tasks_canvas(app)
     } else if app.shell.active_activity == Activity::SourceControl {
         source_control::canvas(app, theme)
     } else if app.shell.active_activity == Activity::Settings {
@@ -345,7 +349,7 @@ fn primary_canvas<'a>(
         .into()
 }
 
-fn remote_search_canvas(app: &StruktApp) -> Element<'_, Message> {
+pub(super) fn remote_search_canvas(app: &StruktApp) -> Element<'_, Message> {
     let available = app.remote.capabilities.contains(&RemoteCapability::Search);
     let ready =
         available && app.remote.status == RemoteStatus::Ready && !app.remote.operation_in_flight();
@@ -378,7 +382,7 @@ fn remote_search_canvas(app: &StruktApp) -> Element<'_, Message> {
     .into()
 }
 
-fn remote_git_canvas(app: &StruktApp) -> Element<'_, Message> {
+pub(super) fn remote_git_canvas(app: &StruktApp) -> Element<'_, Message> {
     let available = app.remote.capabilities.contains(&RemoteCapability::Git);
     let ready =
         available && app.remote.status == RemoteStatus::Ready && !app.remote.operation_in_flight();
@@ -400,7 +404,7 @@ fn remote_git_canvas(app: &StruktApp) -> Element<'_, Message> {
     .into()
 }
 
-fn remote_tasks_canvas(app: &StruktApp) -> Element<'_, Message> {
+pub(super) fn remote_tasks_canvas(app: &StruktApp) -> Element<'_, Message> {
     let ready = app.remote.status == RemoteStatus::Ready && !app.remote.operation_in_flight();
     let process_ready = ready
         && app
@@ -480,7 +484,7 @@ fn remote_tasks_canvas(app: &StruktApp) -> Element<'_, Message> {
     clippy::too_many_lines,
     reason = "the connection canvas keeps consent, status, files, and editor boundary labels together"
 )]
-fn connections_canvas(app: &StruktApp) -> Element<'_, Message> {
+pub(super) fn connection_workspace_canvas(app: &StruktApp) -> Element<'_, Message> {
     let connecting = app.remote.status == RemoteStatus::Connecting;
     let connected = matches!(
         app.remote.status,
