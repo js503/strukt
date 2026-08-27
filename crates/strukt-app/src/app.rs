@@ -446,6 +446,7 @@ pub enum Message {
     ToggleDrawer,
     ToggleExplorer,
     ToggleTheme,
+    SetThemeMode(ThemeMode),
     OpenFolder,
     FolderPicked(Option<PathBuf>),
     WorkspaceOpened(Result<OpenedWorkspace, String>),
@@ -4438,6 +4439,7 @@ impl StruktApp {
             Message::ToggleDrawer => Some(ShellAction::ToggleDrawer),
             Message::ToggleExplorer => Some(ShellAction::ToggleExplorer),
             Message::ToggleTheme => Some(ShellAction::ToggleTheme),
+            Message::SetThemeMode(mode) => Some(ShellAction::SetThemeMode(mode)),
             Message::OpenFolder
             | Message::CommandSelected(_)
             | Message::ToggleCommandCenter

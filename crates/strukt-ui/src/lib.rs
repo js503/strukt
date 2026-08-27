@@ -6,7 +6,8 @@ mod theme;
 
 pub use components::{
     BadgeKind, ChromeRole, StateKind, activity_rail_item, badge, chrome, divider, icon_button,
-    list_row, panel_header, primary_button, quiet_button, state_panel, toolbar_group,
+    list_row, list_row_owned, panel_header, primary_button, quiet_button, state_panel,
+    toolbar_group,
 };
 pub use icon::Icon;
 pub use theme::{

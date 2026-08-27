@@ -565,23 +565,23 @@ git commit -m "feat(app): build adaptive quiet precision shell"
 - Modify: `crates/strukt-app/src/app.rs`
 - Modify: `crates/strukt-app/src/workspace.rs`
 
-- [ ] **Step 1: Add failing composition tests for local activities**
+- [x] **Step 1: Add failing composition tests for local activities**
 
 For each activity, assert the sidebar title, canvas owner, available contextual actions, keyboard focus target, empty state, and one representative existing operation. File operations must retain confirmation and exclusion behavior.
 
-- [ ] **Step 2: Migrate Files**
+- [x] **Step 2: Migrate Files**
 
 Use a compact tree with quiet row selection, toolbar icons with labels, inline create/rename affordances, clear hidden/ignored filters, and confirmation for destructive actions. Opening a file owns the canvas; the Files tree stays contextual rather than becoming the canvas.
 
-- [ ] **Step 3: Migrate Search and Source Control**
+- [x] **Step 3: Migrate Search and Source Control**
 
 Search uses a focused query field, filter disclosure, grouped results, and inline match context. Source Control uses grouped changes, explicit repository state, and restrained primary actions. Preserve existing Git behavior and no-op/disabled states.
 
-- [ ] **Step 4: Migrate Settings**
+- [x] **Step 4: Migrate Settings**
 
 Settings owns the canvas, groups existing settings semantically, and exposes dark/light selection through theme ID plus mode. Do not add external-theme browsing or editing.
 
-- [ ] **Step 5: Run local surface regression tests**
+- [x] **Step 5: Run local surface regression tests**
 
 ```bash
 cargo test -p strukt-fs --all-targets --locked --offline
@@ -594,7 +594,7 @@ cargo run -p strukt-app --locked --offline -- --workspace-files-smoke "$fixture"
 
 Expected: all commands exit 0 and existing file/search/Git/settings operations remain reachable.
 
-- [ ] **Step 6: Commit local navigation surfaces**
+- [x] **Step 6: Commit local navigation surfaces**
 
 ```bash
 git add crates/strukt-app

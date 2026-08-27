@@ -18,13 +18,20 @@ use crate::terminal_widget::TerminalWidget;
 
 mod activity;
 mod command_center;
+mod files;
+mod search;
+mod settings;
 mod shell;
+mod source_control;
 mod state;
 mod status;
 
 pub(crate) fn command_center_input_id() -> iced::widget::Id {
     command_center::input_id()
 }
+
+#[cfg(test)]
+pub(crate) use state::local_activity_composition;
 
 fn color(rgb: Rgb) -> Color {
     Color::from_rgb8(rgb.red, rgb.green, rgb.blue)
@@ -47,7 +54,12 @@ pub fn view(app: &StruktApp) -> Element<'_, Message> {
     shell::view(app)
 }
 
-fn explorer(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> {
+#[expect(
+    clippy::too_many_lines,
+    reason = "file operations, filters, notices, and the tree remain one auditable sidebar"
+)]
+fn explorer<'a>(app: &'a StruktApp, theme: &strukt_ui::UiTheme) -> Element<'a, Message> {
+    let tokens = theme.tokens;
     if !app.shell.explorer_visible {
         return container(Space::new()).width(Length::Shrink).into();
     }
@@ -58,31 +70,56 @@ fn explorer(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> {
         && !app.file_operation_in_flight();
     let selection_ready = operation_ready && app.selected_entry.is_some();
     let controls = row![
-        button(if app.explorer_options.show_hidden {
-            "Hide hidden"
-        } else {
-            "Show hidden"
-        })
-        .on_press_maybe(operation_ready.then_some(Message::ToggleHiddenFiles)),
-        button(if app.explorer_options.show_ignored {
-            "Hide ignored"
-        } else {
-            "Show ignored"
-        })
-        .on_press_maybe(operation_ready.then_some(Message::ToggleIgnoredFiles)),
+        strukt_ui::quiet_button(
+            if app.explorer_options.show_hidden {
+                "✓ Hidden"
+            } else {
+                "Hidden"
+            },
+            operation_ready.then_some(Message::ToggleHiddenFiles),
+            theme,
+        ),
+        strukt_ui::quiet_button(
+            if app.explorer_options.show_ignored {
+                "✓ Ignored"
+            } else {
+                "Ignored"
+            },
+            operation_ready.then_some(Message::ToggleIgnoredFiles),
+            theme,
+        ),
     ]
     .spacing(6);
     let operations = column![
         row![
-            button("New File").on_press_maybe(operation_ready.then_some(Message::BeginCreateFile)),
-            button("New Folder")
-                .on_press_maybe(operation_ready.then_some(Message::BeginCreateDirectory)),
+            strukt_ui::quiet_button(
+                "+ File",
+                operation_ready.then_some(Message::BeginCreateFile),
+                theme,
+            ),
+            strukt_ui::quiet_button(
+                "+ Folder",
+                operation_ready.then_some(Message::BeginCreateDirectory),
+                theme,
+            ),
         ]
         .spacing(6),
         row![
-            button("Rename").on_press_maybe(selection_ready.then_some(Message::BeginRename)),
-            button("Duplicate").on_press_maybe(selection_ready.then_some(Message::BeginDuplicate)),
-            button("Trash").on_press_maybe(selection_ready.then_some(Message::BeginTrash)),
+            strukt_ui::quiet_button(
+                "Rename",
+                selection_ready.then_some(Message::BeginRename),
+                theme,
+            ),
+            strukt_ui::quiet_button(
+                "Duplicate",
+                selection_ready.then_some(Message::BeginDuplicate),
+                theme,
+            ),
+            strukt_ui::quiet_button(
+                "Trash",
+                selection_ready.then_some(Message::BeginTrash),
+                theme,
+            ),
         ]
         .spacing(6),
     ]
@@ -96,19 +133,16 @@ fn explorer(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> {
     } else {
         for entry in &app.files {
             let selected = app.selected_entry.as_ref() == Some(&entry.relative_path);
-            let row_label = if selected {
-                format!("● {}", file_entry_label(entry))
+            let row_label = if entry.ignored {
+                format!("{}  · ignored", file_entry_label(entry))
             } else {
                 file_entry_label(entry)
             };
-            let label = text(row_label);
-            let label = if entry.ignored {
-                label.color(color(tokens.text_muted))
-            } else {
-                label
-            };
-            file_rows = file_rows.push(button(label).width(Fill).on_press_maybe(
+            file_rows = file_rows.push(strukt_ui::list_row_owned(
+                row_label,
+                selected,
                 operation_ready.then(|| Message::SelectExplorerEntry(entry.relative_path.clone())),
+                theme,
             ));
         }
     }
@@ -127,12 +161,16 @@ fn explorer(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> {
     container(
         column![
             row![
-                text("EXPLORER"),
+                text("EXPLORER").size(11),
                 Space::new().width(Fill),
-                button("×").on_press(Message::ToggleExplorer),
-            ],
-            button("Open Folder…")
-                .on_press_maybe((!app.folder_picker_in_flight()).then_some(Message::OpenFolder)),
+                strukt_ui::quiet_button("×", Some(Message::ToggleExplorer), theme,),
+            ]
+            .align_y(iced::Alignment::Center),
+            strukt_ui::primary_button(
+                "Open Folder…",
+                (!app.folder_picker_in_flight()).then_some(Message::OpenFolder),
+                theme,
+            ),
             controls,
             operations,
             explorer_dialog(app),
@@ -240,7 +278,11 @@ fn explorer_dialog(app: &StruktApp) -> Element<'_, Message> {
     }
 }
 
-fn primary_canvas(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> {
+fn primary_canvas<'a>(
+    app: &'a StruktApp,
+    tokens: ThemeTokens,
+    theme: &strukt_ui::UiTheme,
+) -> Element<'a, Message> {
     let content: Element<'_, Message> = if app.shell.active_activity == Activity::Connections {
         connections_canvas(app)
     } else if app.remote.status != RemoteStatus::Disconnected
@@ -255,6 +297,12 @@ fn primary_canvas(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> 
         && app.shell.active_activity == Activity::Tasks
     {
         remote_tasks_canvas(app)
+    } else if app.shell.active_activity == Activity::SourceControl {
+        source_control::canvas(app, theme)
+    } else if app.shell.active_activity == Activity::Settings {
+        settings::canvas(app, theme)
+    } else if app.shell.active_activity == Activity::Search {
+        search::canvas(app, theme)
     } else if app.workspace.is_none() {
         welcome_canvas(app).into()
     } else if app.terminal_expanded {
@@ -271,8 +319,6 @@ fn primary_canvas(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> 
         )
     } else if app.quick_open_visible {
         quick_open_canvas(app).into()
-    } else if app.shell.active_activity == Activity::Search {
-        search_canvas(app).into()
     } else if app.shell.active_activity == Activity::Sessions {
         sessions_canvas(app)
     } else if app
@@ -1308,33 +1354,6 @@ fn quick_open_canvas(app: &StruktApp) -> iced::widget::Column<'_, Message> {
 
 pub(crate) fn quick_open_input_id() -> iced::widget::Id {
     iced::widget::Id::new("strukt.quick-open.input")
-}
-
-fn search_canvas(app: &StruktApp) -> iced::widget::Column<'_, Message> {
-    let mut results = column![].spacing(6);
-    for result in &app.search_results.matches {
-        results = results.push(text(format!(
-            "{}:{}  {}",
-            result.relative_path.display(),
-            result.line,
-            result.preview
-        )));
-    }
-    if app.search_results.truncated {
-        results = results.push(text("Results truncated"));
-    }
-    column![
-        text("Workspace Search").size(20),
-        text_input("Search files", &app.search_query).on_input(Message::SearchChanged),
-        button(if app.search_include_ignored {
-            "Use ignore files"
-        } else {
-            "Include ignored files"
-        })
-        .on_press(Message::ToggleSearchIgnored),
-        scrollable(results).height(Fill),
-    ]
-    .spacing(10)
 }
 
 #[expect(

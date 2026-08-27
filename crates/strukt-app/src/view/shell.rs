@@ -1,21 +1,31 @@
 use iced::widget::{Space, column, container, row, stack, text};
 use iced::{Alignment, Element, Fill, Length};
+use strukt_shell::Activity;
 use strukt_theme::ThemeRegistry;
 use strukt_ui::{BadgeKind, ChromeRole, UiTheme, badge, chrome, quiet_button};
 
 use crate::app::{Message, StruktApp};
 use crate::remote::RemoteStatus;
 
-use super::{activity, command_center, context_panel, drawer, explorer, primary_canvas, status};
+use super::{
+    activity, command_center, context_panel, drawer, files, primary_canvas, search, settings,
+    source_control, status,
+};
 
 pub(super) fn view(app: &StruktApp) -> Element<'_, Message> {
     let registry = ThemeRegistry::with_builtins();
     let theme = UiTheme::from(registry.resolve(&app.shell.theme_id, app.shell.theme_mode));
     let tokens = theme.tokens;
+    let sidebar = match app.shell.active_activity {
+        Activity::Search => search::sidebar(app, &theme),
+        Activity::SourceControl => source_control::sidebar(app, &theme),
+        Activity::Settings => settings::sidebar(app, &theme),
+        _ => files::sidebar(app, &theme),
+    };
     let body = row![
         activity::rail(app, &theme),
-        explorer(app, tokens),
-        primary_canvas(app, tokens),
+        sidebar,
+        primary_canvas(app, tokens, &theme),
         context_panel(app, tokens),
     ]
     .height(Fill);

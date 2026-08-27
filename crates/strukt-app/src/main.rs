@@ -634,6 +634,19 @@ mod tests {
     }
 
     #[test]
+    fn settings_selects_theme_mode_without_replacing_the_theme_definition() {
+        let mut app = StruktApp::default();
+        let theme_id = app.shell.theme_id.clone();
+
+        let _ = app.update(Message::SelectActivity(Activity::Settings));
+        let _ = app.update(Message::SetThemeMode(strukt_theme::ThemeMode::Light));
+
+        assert_eq!(app.shell.active_activity, Activity::Settings);
+        assert_eq!(app.shell.theme_mode, strukt_theme::ThemeMode::Light);
+        assert_eq!(app.shell.theme_id, theme_id);
+    }
+
+    #[test]
     fn terminal_commands_require_a_workspace_and_never_spawn_on_open() {
         let project = tempdir().unwrap();
         let mut app = StruktApp::default();
@@ -1500,6 +1513,51 @@ mod tests {
         let _ = app.update(Message::ToggleDrawer);
         assert!(app.shell.context_visible);
         assert!(app.shell.drawer_visible);
+    }
+
+    #[test]
+    fn local_activities_have_explicit_sidebar_canvas_and_empty_state_contracts() {
+        let mut app = StruktApp::default();
+        let expectations = [
+            (
+                Activity::Files,
+                "EXPLORER",
+                "files",
+                "Open a folder to browse files",
+                "files.new",
+            ),
+            (
+                Activity::Search,
+                "SEARCH",
+                "search",
+                "Search across the workspace",
+                "search.run",
+            ),
+            (
+                Activity::SourceControl,
+                "SOURCE CONTROL",
+                "source-control",
+                "Open a Git workspace",
+                "source-control.refresh",
+            ),
+            (
+                Activity::Settings,
+                "SETTINGS",
+                "settings",
+                "Workspace and appearance settings",
+                "settings.theme",
+            ),
+        ];
+
+        for (activity, sidebar, canvas, empty, action) in expectations {
+            let _ = app.update(Message::SelectActivity(activity));
+            let composition = crate::view::local_activity_composition(&app);
+            assert_eq!(composition.sidebar_title, sidebar);
+            assert_eq!(composition.canvas_owner, canvas);
+            assert_eq!(composition.empty_state, empty);
+            assert!(composition.contextual_actions.contains(&action));
+            assert_eq!(composition.focus_target, strukt_shell::FocusRegion::Canvas);
+        }
     }
 
     #[test]

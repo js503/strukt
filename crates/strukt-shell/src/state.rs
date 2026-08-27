@@ -14,6 +14,7 @@ pub enum ShellAction {
     ToggleDrawer,
     ToggleExplorer,
     ToggleTheme,
+    SetThemeMode(ThemeMode),
     OpenDrawer(SurfaceId),
     PromoteDrawerToSplit { ratio: f32 },
     PromoteDrawerToFull,
@@ -107,6 +108,7 @@ impl ShellState {
                     ThemeMode::Dark => ThemeMode::Light,
                 };
             }
+            ShellAction::SetThemeMode(mode) => self.theme_mode = mode,
             ShellAction::OpenDrawer(surface) => {
                 self.drawer.surface = Some(surface);
                 self.drawer.visible = true;
@@ -191,6 +193,7 @@ impl ShellState {
             primary: activity.canvas_surface(),
         };
         self.promotion = None;
+        self.focus_region = FocusRegion::Canvas;
     }
 
     fn promote_drawer(&mut self, split_ratio: Option<f32>) {

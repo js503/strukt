@@ -10,8 +10,27 @@ pub fn list_row<'a, Message: Clone + 'a>(
     on_press: Option<Message>,
     theme: &UiTheme,
 ) -> Button<'a, Message> {
+    list_row_content(text(label), selected, on_press, theme)
+}
+
+#[must_use]
+pub fn list_row_owned<Message: Clone + 'static>(
+    label: String,
+    selected: bool,
+    on_press: Option<Message>,
+    theme: &UiTheme,
+) -> Button<'static, Message> {
+    list_row_content(text(label), selected, on_press, theme)
+}
+
+fn list_row_content<'a, Message: Clone + 'a>(
+    label: iced::widget::Text<'a>,
+    selected: bool,
+    on_press: Option<Message>,
+    theme: &UiTheme,
+) -> Button<'a, Message> {
     let owned_theme = theme.clone();
-    button(text(label))
+    button(label)
         .height(theme.metrics.row_height)
         .width(Fill)
         .padding([0.0, theme.metrics.space_2])
