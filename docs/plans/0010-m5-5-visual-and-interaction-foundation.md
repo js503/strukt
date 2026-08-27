@@ -445,11 +445,11 @@ git commit -m "feat(shell): persist workspace composition"
 - Modify: `crates/strukt-app/src/main.rs`
 - Modify: `crates/strukt-app/src/app.rs`
 
-- [ ] **Step 1: Write failing command model tests**
+- [x] **Step 1: Write failing command model tests**
 
 Test deterministic registration order, case-insensitive token matching, category filtering, disabled-command visibility, duplicate rejection, local/remote execution-boundary labels, and selection returning an ID without executing feature behavior.
 
-- [ ] **Step 2: Implement the command contract**
+- [x] **Step 2: Implement the command contract**
 
 ```rust
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -476,11 +476,11 @@ pub struct CommandContribution {
 
 `CommandCatalog::search(query)` returns ranked contributions. `strukt-shell` never invokes feature code; `strukt-app` maps the selected `CommandId` to existing messages.
 
-- [ ] **Step 3: Register all existing global actions**
+- [x] **Step 3: Register all existing global actions**
 
 Register activity navigation, open folder, file search, source control, session views, connection views, context toggle, drawer toggle, terminal drawer, theme mode, settings, and every existing keyboard-reachable action. Show `LOCAL`, remote host alias, or `INTERFACE` before execution.
 
-- [ ] **Step 4: Verify command behavior**
+- [x] **Step 4: Verify command behavior**
 
 ```bash
 cargo test -p strukt-shell --test command_center --locked --offline
@@ -489,7 +489,7 @@ cargo test -p strukt-app --all-targets --locked --offline
 
 Expected: all tests pass and command selection is covered without spawning a process or remote request.
 
-- [ ] **Step 5: Commit the command model**
+- [x] **Step 5: Commit the command model**
 
 ```bash
 git add crates/strukt-shell crates/strukt-app/src/main.rs crates/strukt-app/src/app.rs

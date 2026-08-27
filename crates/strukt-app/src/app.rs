@@ -28,7 +28,10 @@ use strukt_persistence::{
     shell_contribution, terminal_contribution,
 };
 use strukt_session::{ClientHealth, PaneId, RequestBody, ResponseBody, SessionId, WindowId};
-use strukt_shell::{Activity, ShellAction, ShellState, SurfaceId};
+use strukt_shell::{
+    Activity, CommandCatalog, CommandContribution, CommandId, ExecutionBoundary, ShellAction,
+    ShellState, SurfaceId,
+};
 use strukt_terminal::{
     Color as TerminalColor, DrainBudget, PaneState, PasteDecision, PortableTransport,
     RuntimePaneState, Selection, SpawnRequest, SplitAxis, TerminalKey, TerminalPaneId,
@@ -86,6 +89,29 @@ fn built_in_shell_surfaces() -> BTreeSet<SurfaceId> {
             SurfaceId::new("workspace.context").expect("built-in surface id"),
         ])
         .collect()
+}
+
+fn command(
+    id: &str,
+    title: &str,
+    category: &str,
+    keywords: &[&str],
+    shortcut: Option<&str>,
+    boundary: ExecutionBoundary,
+    enabled: bool,
+) -> CommandContribution {
+    CommandContribution {
+        id: CommandId(id.to_owned()),
+        title: title.to_owned(),
+        category: category.to_owned(),
+        keywords: keywords
+            .iter()
+            .map(|keyword| (*keyword).to_owned())
+            .collect(),
+        shortcut: shortcut.map(str::to_owned),
+        boundary,
+        enabled,
+    }
 }
 pub(crate) const SESSION_SMOKE_SUCCESS: &str = "strukt M3 session smoke: hierarchy, isolation, detach, reattach, history, termination, and stopped restore passed";
 pub(crate) const REMOTE_SMOKE_SUCCESS: &str = "strukt M4 remote smoke: ssh, fallback, files, edit, search, git, task, language, disconnect, and reconnect passed";
@@ -367,6 +393,14 @@ pub enum SessionConfirmation {
 
 #[derive(Clone, Debug)]
 pub enum Message {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "constructed by the command-center view in the next delivery task"
+        )
+    )]
+    CommandSelected(CommandId),
     SelectActivity(Activity),
     RemoteAliasChanged(String),
     RemoteRootChanged(String),
@@ -680,6 +714,402 @@ impl Default for StruktApp {
 }
 
 impl StruktApp {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the complete built-in command inventory stays auditable in registration order"
+    )]
+    pub(crate) fn command_catalog(&self) -> CommandCatalog {
+        let has_workspace = self.workspace.is_some();
+        let has_document = self
+            .editor
+            .as_ref()
+            .and_then(EditorWorkspace::active_document_id)
+            .is_some();
+        let remote_ready = self.remote_runtime.is_some();
+        let has_terminal = self.terminal.workspace().focused_pane().is_some();
+        let mut catalog = CommandCatalog::default();
+        let commands = [
+            command(
+                "workspace.open-folder",
+                "Open Folder",
+                "Workspace",
+                &["project", "directory"],
+                Some("Primary+O"),
+                ExecutionBoundary::Local,
+                true,
+            ),
+            command(
+                "files.quick-open",
+                "Quick Open File",
+                "Files",
+                &["search", "file"],
+                Some("Primary+P"),
+                ExecutionBoundary::Local,
+                has_workspace,
+            ),
+            command(
+                "navigation.files",
+                "Show Files",
+                "Navigation",
+                &["explorer"],
+                None,
+                ExecutionBoundary::Interface,
+                true,
+            ),
+            command(
+                "navigation.search",
+                "Show Search",
+                "Navigation",
+                &["find"],
+                None,
+                ExecutionBoundary::Interface,
+                true,
+            ),
+            command(
+                "navigation.source-control",
+                "Show Source Control",
+                "Navigation",
+                &["git"],
+                None,
+                ExecutionBoundary::Interface,
+                true,
+            ),
+            command(
+                "navigation.sessions",
+                "Show Sessions",
+                "Navigation",
+                &["persistent", "tmux"],
+                None,
+                ExecutionBoundary::Interface,
+                true,
+            ),
+            command(
+                "navigation.tasks",
+                "Show Tasks",
+                "Navigation",
+                &["runner"],
+                None,
+                ExecutionBoundary::Interface,
+                true,
+            ),
+            command(
+                "navigation.connections",
+                "Show Connections",
+                "Navigation",
+                &["remote", "ssh"],
+                None,
+                ExecutionBoundary::Interface,
+                true,
+            ),
+            command(
+                "navigation.extensions",
+                "Show Extensions",
+                "Navigation",
+                &["plugins"],
+                None,
+                ExecutionBoundary::Interface,
+                true,
+            ),
+            command(
+                "navigation.settings",
+                "Show Settings",
+                "Navigation",
+                &["preferences"],
+                None,
+                ExecutionBoundary::Interface,
+                true,
+            ),
+            command(
+                "view.toggle-explorer",
+                "Toggle Sidebar",
+                "View",
+                &["explorer"],
+                Some("Primary+B"),
+                ExecutionBoundary::Interface,
+                true,
+            ),
+            command(
+                "view.toggle-context",
+                "Toggle Context",
+                "View",
+                &["panel", "ai"],
+                Some("Primary+\\"),
+                ExecutionBoundary::Interface,
+                true,
+            ),
+            command(
+                "view.toggle-drawer",
+                "Toggle Terminal Drawer",
+                "View",
+                &["bottom", "console"],
+                Some("Primary+J"),
+                ExecutionBoundary::Interface,
+                true,
+            ),
+            command(
+                "view.toggle-theme",
+                "Toggle Theme Mode",
+                "View",
+                &["dark", "light"],
+                None,
+                ExecutionBoundary::Interface,
+                true,
+            ),
+            command(
+                "terminal.new",
+                "New Terminal",
+                "Terminal",
+                &["shell", "console"],
+                Some("Primary+T"),
+                ExecutionBoundary::Local,
+                has_workspace,
+            ),
+            command(
+                "terminal.split-vertical",
+                "Split Terminal Vertically",
+                "Terminal",
+                &["pane", "right"],
+                Some("Primary+D"),
+                ExecutionBoundary::Local,
+                has_terminal,
+            ),
+            command(
+                "terminal.split-horizontal",
+                "Split Terminal Horizontally",
+                "Terminal",
+                &["pane", "down"],
+                Some("Primary+Shift+D"),
+                ExecutionBoundary::Local,
+                has_terminal,
+            ),
+            command(
+                "terminal.copy",
+                "Copy Terminal Selection",
+                "Terminal",
+                &["clipboard"],
+                Some("Primary+C"),
+                ExecutionBoundary::Local,
+                has_terminal,
+            ),
+            command(
+                "terminal.paste",
+                "Paste into Terminal",
+                "Terminal",
+                &["clipboard"],
+                Some("Primary+V"),
+                ExecutionBoundary::Local,
+                has_terminal,
+            ),
+            command(
+                "terminal.close",
+                "Close Terminal Pane",
+                "Terminal",
+                &["pane"],
+                Some("Primary+W"),
+                ExecutionBoundary::Local,
+                has_terminal,
+            ),
+            command(
+                "terminal.focus-previous-pane",
+                "Focus Previous Terminal Pane",
+                "Terminal",
+                &["left"],
+                Some("Primary+["),
+                ExecutionBoundary::Interface,
+                has_terminal,
+            ),
+            command(
+                "terminal.focus-next-pane",
+                "Focus Next Terminal Pane",
+                "Terminal",
+                &["right"],
+                Some("Primary+]"),
+                ExecutionBoundary::Interface,
+                has_terminal,
+            ),
+            command(
+                "terminal.previous-tab",
+                "Previous Terminal Tab",
+                "Terminal",
+                &["navigate"],
+                Some("Control+Shift+Tab"),
+                ExecutionBoundary::Interface,
+                has_terminal,
+            ),
+            command(
+                "terminal.next-tab",
+                "Next Terminal Tab",
+                "Terminal",
+                &["navigate"],
+                Some("Control+Tab"),
+                ExecutionBoundary::Interface,
+                has_terminal,
+            ),
+            command(
+                "terminal.toggle-expanded",
+                "Toggle Expanded Terminal",
+                "Terminal",
+                &["maximize", "drawer"],
+                Some("Primary+Shift+J"),
+                ExecutionBoundary::Interface,
+                has_terminal,
+            ),
+            command(
+                "editor.find",
+                "Find in Active File",
+                "Editor",
+                &["search"],
+                Some("Primary+F"),
+                ExecutionBoundary::Local,
+                has_document,
+            ),
+            command(
+                "editor.save",
+                "Save Active File",
+                "Editor",
+                &["write"],
+                Some("Primary+S"),
+                ExecutionBoundary::Local,
+                has_document,
+            ),
+            command(
+                "editor.undo",
+                "Undo Editor Change",
+                "Editor",
+                &["history"],
+                Some("Primary+Z"),
+                ExecutionBoundary::Local,
+                has_document,
+            ),
+            command(
+                "editor.redo",
+                "Redo Editor Change",
+                "Editor",
+                &["history"],
+                Some("Primary+Shift+Z"),
+                ExecutionBoundary::Local,
+                has_document,
+            ),
+            command(
+                "problems.toggle",
+                "Toggle Problems",
+                "Language",
+                &["diagnostics", "errors"],
+                None,
+                ExecutionBoundary::Interface,
+                has_workspace,
+            ),
+            command(
+                "remote.connect",
+                "Connect to Remote",
+                "Remote",
+                &["ssh", "host"],
+                None,
+                ExecutionBoundary::Remote,
+                !self.remote.alias_input.trim().is_empty(),
+            ),
+            command(
+                "remote.disconnect",
+                "Disconnect Remote",
+                "Remote",
+                &["ssh", "host"],
+                None,
+                ExecutionBoundary::Remote,
+                remote_ready,
+            ),
+            command(
+                "remote.new-terminal",
+                "New Remote Terminal",
+                "Remote",
+                &["ssh", "shell"],
+                None,
+                ExecutionBoundary::Remote,
+                remote_ready,
+            ),
+            command(
+                "sessions.connect",
+                "Connect Persistent Sessions",
+                "Sessions",
+                &["native", "tmux"],
+                None,
+                ExecutionBoundary::Remote,
+                has_workspace,
+            ),
+            command(
+                "sessions.new",
+                "New Persistent Session",
+                "Sessions",
+                &["native", "tmux"],
+                None,
+                ExecutionBoundary::Remote,
+                has_workspace,
+            ),
+        ];
+        for command in commands {
+            catalog
+                .register(command)
+                .expect("built-in command definitions must be valid and unique");
+        }
+        catalog
+    }
+
+    fn command_message(&self, id: &CommandId) -> Option<Message> {
+        let catalog = self.command_catalog();
+        let enabled = catalog
+            .search("")
+            .into_iter()
+            .find(|entry| entry.command.id == *id)
+            .is_some_and(|entry| entry.command.enabled);
+        if !enabled {
+            return None;
+        }
+        Some(match id.0.as_str() {
+            "workspace.open-folder" => Message::OpenFolder,
+            "files.quick-open" => Message::ToggleQuickOpen,
+            "navigation.files" => Message::SelectActivity(Activity::Files),
+            "navigation.search" => Message::SelectActivity(Activity::Search),
+            "navigation.source-control" => Message::SelectActivity(Activity::SourceControl),
+            "navigation.sessions" => Message::SelectActivity(Activity::Sessions),
+            "navigation.tasks" => Message::SelectActivity(Activity::Tasks),
+            "navigation.connections" => Message::SelectActivity(Activity::Connections),
+            "navigation.extensions" => Message::SelectActivity(Activity::Extensions),
+            "navigation.settings" => Message::SelectActivity(Activity::Settings),
+            "view.toggle-explorer" => Message::ToggleExplorer,
+            "view.toggle-context" => Message::ToggleContext,
+            "view.toggle-drawer" => Message::ToggleDrawer,
+            "view.toggle-theme" => Message::ToggleTheme,
+            "terminal.new" => Message::NewTerminal,
+            "terminal.split-vertical" => Message::SplitTerminal(SplitAxis::Vertical),
+            "terminal.split-horizontal" => Message::SplitTerminal(SplitAxis::Horizontal),
+            "terminal.copy" => Message::CopyTerminal(self.terminal.workspace().focused_pane()?),
+            "terminal.paste" => {
+                Message::RequestTerminalPaste(self.terminal.workspace().focused_pane()?)
+            }
+            "terminal.close" => {
+                Message::RequestCloseTerminal(self.terminal.workspace().focused_pane()?)
+            }
+            "terminal.focus-previous-pane" => Message::FocusRelativeTerminalPane(true),
+            "terminal.focus-next-pane" => Message::FocusRelativeTerminalPane(false),
+            "terminal.previous-tab" => Message::ActivateRelativeTerminalTab(true),
+            "terminal.next-tab" => Message::ActivateRelativeTerminalTab(false),
+            "terminal.toggle-expanded" => Message::ToggleTerminalExpanded,
+            "editor.find" => Message::ToggleEditorFind,
+            "editor.save" => Message::SaveDocument {
+                id: self.editor.as_ref()?.active_document_id()?,
+                mode: SaveMode::IfUnchanged,
+            },
+            "editor.undo" => Message::UndoDocument(self.editor.as_ref()?.active_document_id()?),
+            "editor.redo" => Message::RedoDocument(self.editor.as_ref()?.active_document_id()?),
+            "problems.toggle" => Message::ToggleProblems,
+            "remote.connect" => Message::ConnectRemote,
+            "remote.disconnect" => Message::DisconnectRemote,
+            "remote.new-terminal" => Message::NewRemoteTerminal,
+            "sessions.connect" => Message::ConnectSessions,
+            "sessions.new" => Message::CreateSession,
+            _ => return None,
+        })
+    }
+
     #[must_use]
     pub fn new(launch_mode: LaunchMode) -> Self {
         Self::new_with_store(launch_mode, WorkspaceStore::platform_default().ok())
@@ -850,6 +1280,11 @@ impl StruktApp {
     )]
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::CommandSelected(id) => {
+                return self
+                    .command_message(&id)
+                    .map_or_else(Task::none, |message| self.update(message));
+            }
             Message::RemoteAliasChanged(value) => {
                 self.remote.alias_input = value;
                 return Task::none();
@@ -3960,6 +4395,7 @@ impl StruktApp {
             Message::ToggleExplorer => Some(ShellAction::ToggleExplorer),
             Message::ToggleTheme => Some(ShellAction::ToggleTheme),
             Message::OpenFolder
+            | Message::CommandSelected(_)
             | Message::RemoteAliasChanged(_)
             | Message::RemoteRootChanged(_)
             | Message::ConnectRemote
@@ -4267,10 +4703,10 @@ impl StruktApp {
             self.terminal_input_active = false;
         }
 
-        if self.shell.explorer_visible != shell_before.explorer_visible {
-            if let Some(workspace) = &mut self.workspace {
-                workspace.explorer.visible = self.shell.explorer_visible;
-            }
+        if self.shell.explorer_visible != shell_before.explorer_visible
+            && let Some(workspace) = &mut self.workspace
+        {
+            workspace.explorer.visible = self.shell.explorer_visible;
         }
         if self.shell != shell_before && self.workspace.is_some() {
             return self.request_persistence(false);

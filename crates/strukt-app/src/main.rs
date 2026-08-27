@@ -1483,6 +1483,38 @@ mod tests {
     }
 
     #[test]
+    fn command_catalog_registers_global_actions_and_dispatches_only_selected_ids() {
+        let mut app = StruktApp::default();
+        let catalog = app.command_catalog();
+        let ids = catalog
+            .search("")
+            .into_iter()
+            .map(|entry| entry.command.id.0.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(ids.contains(&"workspace.open-folder"));
+        assert!(ids.contains(&"navigation.connections"));
+        assert!(ids.contains(&"terminal.new"));
+        assert!(ids.contains(&"view.toggle-context"));
+        let context_was_visible = app.shell.context_visible;
+
+        let selected = catalog.select(
+            0,
+            &catalog.search_in_category("toggle context", Some("View")),
+        );
+        assert_eq!(
+            selected,
+            Some(strukt_shell::CommandId("view.toggle-context".to_owned()))
+        );
+        assert_eq!(app.shell.context_visible, context_was_visible);
+
+        let _ = app.update(Message::CommandSelected(
+            selected.expect("selected command"),
+        ));
+        assert_eq!(app.shell.context_visible, !context_was_visible);
+    }
+
+    #[test]
     fn workspace_open_restores_shell_composition_and_shell_actions_persist_it() {
         let project = tempdir().unwrap();
         let mut opened = open_workspace(&project);

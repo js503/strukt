@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use thiserror::Error;
 
-use crate::{Activity, ShellState, SurfaceId};
+use crate::{Activity, CommandContribution, CommandId, ShellState, SurfaceId};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ActivityContribution {
@@ -16,11 +16,6 @@ pub struct ActivityContribution {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SurfaceContribution {
     pub id: SurfaceId,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CommandContribution {
-    pub id: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -71,7 +66,7 @@ impl ContributionRegistry {
         let existing_commands = self.command_ids();
         let mut incoming_commands = BTreeSet::new();
         for command in &contribution.commands {
-            if command.id.is_empty()
+            if !command.id.is_valid()
                 || existing_commands.contains(&command.id)
                 || !incoming_commands.insert(command.id.clone())
             {
@@ -138,7 +133,7 @@ impl ContributionRegistry {
             .collect()
     }
 
-    fn command_ids(&self) -> BTreeSet<String> {
+    fn command_ids(&self) -> BTreeSet<CommandId> {
         self.contributions
             .values()
             .flat_map(|entry| entry.commands.iter().map(|command| command.id.clone()))
@@ -157,7 +152,7 @@ pub enum ContributionError {
     #[error("surface `{0:?}` is already registered")]
     DuplicateSurface(SurfaceId),
     #[error("command `{0}` is already registered")]
-    DuplicateCommand(String),
+    DuplicateCommand(CommandId),
     #[error("shell contribution `{0}` is not registered")]
     UnknownContribution(String),
 }

@@ -1,7 +1,7 @@
 use strukt_shell::{
-    Activity, ActivityContribution, CanvasLayout, CommandContribution, ContributionError,
-    ContributionRegistry, FocusRegion, ShellAction, ShellContribution, ShellState,
-    SurfaceContribution, SurfaceId,
+    Activity, ActivityContribution, CanvasLayout, CommandContribution, CommandId,
+    ContributionError, ContributionRegistry, ExecutionBoundary, FocusRegion, ShellAction,
+    ShellContribution, ShellState, SurfaceContribution, SurfaceId,
 };
 
 fn surface(id: &str) -> SurfaceId {
@@ -109,7 +109,13 @@ fn contribution(id: &str, activity: Activity, surface_id: &str) -> ShellContribu
             id: surface(surface_id),
         }],
         commands: vec![CommandContribution {
-            id: format!("{id}.open"),
+            id: CommandId(format!("{id}.open")),
+            title: format!("Open {id}"),
+            category: "Navigation".to_owned(),
+            keywords: Vec::new(),
+            shortcut: None,
+            boundary: ExecutionBoundary::Interface,
+            enabled: true,
         }],
     }
 }
