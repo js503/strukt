@@ -29,8 +29,8 @@ use strukt_persistence::{
 };
 use strukt_session::{ClientHealth, PaneId, RequestBody, ResponseBody, SessionId, WindowId};
 use strukt_shell::{
-    Activity, CommandCatalog, CommandContribution, CommandId, ExecutionBoundary, ShellAction,
-    ShellState, SurfaceId,
+    Activity, CommandCatalog, CommandContribution, CommandId, ExecutionBoundary, FocusRegion,
+    ShellAction, ShellState, SurfaceId,
 };
 use strukt_terminal::{
     Color as TerminalColor, DrainBudget, PaneState, PasteDecision, PortableTransport,
@@ -255,6 +255,8 @@ pub struct StruktApp {
     pub quick_open_query: String,
     pub quick_open_results: Vec<QuickOpenCandidate>,
     pub quick_open_include_ignored: bool,
+    pub command_center_visible: bool,
+    pub command_query: String,
     pub search_query: String,
     pub search_results: SearchResult,
     pub search_include_ignored: bool,
@@ -327,6 +329,7 @@ pub struct StruktApp {
     quick_open_generation: u64,
     quick_open_scan_in_flight: Option<(u64, PathBuf, u64)>,
     quick_open_cache: Option<QuickOpenCache>,
+    command_return_focus: FocusRegion,
 }
 
 struct QuickOpenCache {
@@ -393,14 +396,10 @@ pub enum SessionConfirmation {
 
 #[derive(Clone, Debug)]
 pub enum Message {
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "constructed by the command-center view in the next delivery task"
-        )
-    )]
     CommandSelected(CommandId),
+    ToggleCommandCenter,
+    CommandQueryChanged(String),
+    ExecuteCommandIndex(usize),
     SelectActivity(Activity),
     RemoteAliasChanged(String),
     RemoteRootChanged(String),
@@ -1110,6 +1109,15 @@ impl StruktApp {
         })
     }
 
+    fn close_command_center(&mut self) {
+        if self.command_center_visible {
+            self.command_center_visible = false;
+            self.command_query.clear();
+            self.shell
+                .apply(ShellAction::Focus(self.command_return_focus));
+        }
+    }
+
     #[must_use]
     pub fn new(launch_mode: LaunchMode) -> Self {
         Self::new_with_store(launch_mode, WorkspaceStore::platform_default().ok())
@@ -1152,6 +1160,8 @@ impl StruktApp {
             quick_open_query: String::new(),
             quick_open_results: Vec::new(),
             quick_open_include_ignored: false,
+            command_center_visible: false,
+            command_query: String::new(),
             search_query: String::new(),
             search_results: SearchResult {
                 matches: Vec::new(),
@@ -1227,6 +1237,7 @@ impl StruktApp {
             quick_open_generation: 0,
             quick_open_scan_in_flight: None,
             quick_open_cache: None,
+            command_return_focus: FocusRegion::Canvas,
         }
     }
 
@@ -1281,9 +1292,42 @@ impl StruktApp {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::CommandSelected(id) => {
+                self.close_command_center();
                 return self
                     .command_message(&id)
                     .map_or_else(Task::none, |message| self.update(message));
+            }
+            Message::ToggleCommandCenter => {
+                if self.command_center_visible {
+                    self.close_command_center();
+                    return Task::none();
+                }
+                self.command_return_focus = self.shell.focus_region;
+                self.command_center_visible = true;
+                self.command_query.clear();
+                self.quick_open_visible = false;
+                self.terminal_input_active = false;
+                self.shell
+                    .apply(ShellAction::Focus(FocusRegion::CommandCenter));
+                return iced::widget::operation::focus(crate::view::command_center_input_id());
+            }
+            Message::CommandQueryChanged(query) => {
+                if self.command_center_visible {
+                    self.command_query = query;
+                }
+                return Task::none();
+            }
+            Message::ExecuteCommandIndex(index) => {
+                if !self.command_center_visible {
+                    return Task::none();
+                }
+                let selected = {
+                    let catalog = self.command_catalog();
+                    let matches = catalog.search(&self.command_query);
+                    catalog.select(index, &matches)
+                };
+                return selected
+                    .map_or_else(Task::none, |id| self.update(Message::CommandSelected(id)));
             }
             Message::RemoteAliasChanged(value) => {
                 self.remote.alias_input = value;
@@ -4396,6 +4440,9 @@ impl StruktApp {
             Message::ToggleTheme => Some(ShellAction::ToggleTheme),
             Message::OpenFolder
             | Message::CommandSelected(_)
+            | Message::ToggleCommandCenter
+            | Message::CommandQueryChanged(_)
+            | Message::ExecuteCommandIndex(_)
             | Message::RemoteAliasChanged(_)
             | Message::RemoteRootChanged(_)
             | Message::ConnectRemote
@@ -4576,6 +4623,17 @@ impl StruktApp {
                 ..
             }) => {
                 if matches!(key.as_ref(), Key::Named(keyboard::key::Named::Escape))
+                    && self.command_center_visible
+                {
+                    return self.update(Message::ToggleCommandCenter);
+                }
+                if self.command_center_visible {
+                    if modifiers.command() && matches!(key.as_ref(), Key::Character("k")) {
+                        return self.update(Message::ToggleCommandCenter);
+                    }
+                    return Task::none();
+                }
+                if matches!(key.as_ref(), Key::Named(keyboard::key::Named::Escape))
                     && self.language.has_transient_features()
                 {
                     return self.update(Message::DismissLanguageFeatures);
@@ -4642,6 +4700,9 @@ impl StruktApp {
                     return Task::none();
                 }
                 match key.as_ref() {
+                    Key::Character("k") => {
+                        return self.update(Message::ToggleCommandCenter);
+                    }
                     Key::Character("b") => Some(ShellAction::ToggleExplorer),
                     Key::Character("j") => Some(ShellAction::ToggleDrawer),
                     Key::Character("\\") => Some(ShellAction::ToggleContext),
@@ -5644,10 +5705,22 @@ impl StruktApp {
 
     #[must_use]
     pub fn theme(&self) -> Theme {
-        match self.shell.theme_mode {
-            ThemeMode::Light => Theme::Light,
-            ThemeMode::Dark => Theme::Dark,
-        }
+        let tokens = strukt_theme::ThemeTokens::builtin(self.shell.theme_mode);
+        let color = |rgb: strukt_theme::Rgb| iced::Color::from_rgb8(rgb.red, rgb.green, rgb.blue);
+        Theme::custom(
+            match self.shell.theme_mode {
+                ThemeMode::Light => "Quiet Precision Light",
+                ThemeMode::Dark => "Quiet Precision Dark",
+            },
+            iced::theme::Palette {
+                background: color(tokens.canvas),
+                text: color(tokens.text_primary),
+                primary: color(tokens.panel_active),
+                success: color(tokens.status_success),
+                warning: color(tokens.status_warning),
+                danger: color(tokens.diagnostic_error),
+            },
+        )
     }
 
     pub fn subscription(&self) -> Subscription<Message> {

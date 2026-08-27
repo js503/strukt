@@ -61,6 +61,7 @@ fn full_promotion_and_panel_closure_return_focus_without_runtime_replacement() {
     assert_eq!(state.canvas, CanvasLayout::Single { primary: problems });
     assert_eq!(state.focus_region, FocusRegion::Canvas);
 
+    state.apply(ShellAction::ToggleContext);
     state.apply(ShellAction::Focus(FocusRegion::ContextPanel));
     state.apply(ShellAction::ToggleContext);
     assert_eq!(state.focus_region, FocusRegion::Canvas);

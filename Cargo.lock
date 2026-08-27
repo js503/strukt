@@ -4101,6 +4101,7 @@ dependencies = [
  "strukt-shell",
  "strukt-terminal",
  "strukt-theme",
+ "strukt-ui",
  "strukt-workspace",
  "tempfile",
  "thiserror 2.0.19",

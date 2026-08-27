@@ -16,6 +16,16 @@ use crate::language::{DiagnosticSeverity, LanguageState, ProblemFilter};
 use crate::remote::RemoteStatus;
 use crate::terminal_widget::TerminalWidget;
 
+mod activity;
+mod command_center;
+mod shell;
+mod state;
+mod status;
+
+pub(crate) fn command_center_input_id() -> iced::widget::Id {
+    command_center::input_id()
+}
+
 fn color(rgb: Rgb) -> Color {
     Color::from_rgb8(rgb.red, rgb.green, rgb.blue)
 }
@@ -33,95 +43,8 @@ fn panel_style(tokens: ThemeTokens, background: Rgb) -> impl Fn(&iced::Theme) ->
     }
 }
 
-fn activity_button(label: &'static str, activity: Activity) -> Element<'static, Message> {
-    button(text(label))
-        .width(Fill)
-        .on_press(Message::SelectActivity(activity))
-        .into()
-}
-
 pub fn view(app: &StruktApp) -> Element<'_, Message> {
-    let tokens = ThemeTokens::builtin(app.shell.theme_mode);
-    let body = row![
-        activity_rail(tokens),
-        explorer(app, tokens),
-        primary_canvas(app, tokens),
-        context_panel(app, tokens),
-    ]
-    .height(Fill);
-
-    container(column![header(app, tokens), body, drawer(app, tokens)].height(Fill))
-        .width(Fill)
-        .height(Fill)
-        .style(panel_style(tokens, tokens.canvas))
-        .into()
-}
-
-fn header(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Message> {
-    let workspace_label = if app.remote.status == RemoteStatus::Disconnected {
-        app.workspace.as_ref().map_or_else(
-            || "No folder open".to_owned(),
-            |workspace| {
-                format!(
-                    "{}  ·  {}",
-                    workspace.root.display_name(),
-                    workspace.root.path().display()
-                )
-            },
-        )
-    } else {
-        format!(
-            "SSH: {}  ·  {}  ·  {}",
-            app.remote.host_label.as_deref().unwrap_or("connecting"),
-            app.remote.root_label.as_deref().unwrap_or("remote root"),
-            app.remote.status.label()
-        )
-    };
-    let open_folder = button("Open Folder…")
-        .on_press_maybe((!app.folder_picker_in_flight()).then_some(Message::OpenFolder));
-
-    container(
-        row![
-            text("strukt").size(16),
-            text(format!("  /  {workspace_label}")).size(13),
-            Space::new().width(Fill),
-            open_folder,
-            button("Toggle theme").on_press(Message::ToggleTheme),
-            button("Context").on_press(Message::ToggleContext),
-            button(if app.language.problems_visible() {
-                "Hide problems"
-            } else {
-                "Problems"
-            })
-            .on_press(Message::ToggleProblems),
-        ]
-        .spacing(8),
-    )
-    .padding(10)
-    .width(Fill)
-    .style(panel_style(tokens, tokens.panel))
-    .into()
-}
-
-fn activity_rail(tokens: ThemeTokens) -> Element<'static, Message> {
-    container(
-        column![
-            activity_button("Files", Activity::Files),
-            activity_button("Search", Activity::Search),
-            activity_button("Git", Activity::SourceControl),
-            activity_button("Sessions", Activity::Sessions),
-            activity_button("Tasks", Activity::Tasks),
-            activity_button("Connect", Activity::Connections),
-            activity_button("Extend", Activity::Extensions),
-            Space::new().height(Fill),
-            activity_button("Settings", Activity::Settings),
-        ]
-        .spacing(6),
-    )
-    .padding(6)
-    .width(Length::Fixed(92.0))
-    .style(panel_style(tokens, tokens.panel))
-    .into()
+    shell::view(app)
 }
 
 fn explorer(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> {
@@ -219,7 +142,7 @@ fn explorer(app: &StruktApp, tokens: ThemeTokens) -> Element<'_, Message> {
         .spacing(10),
     )
     .padding(10)
-    .width(Length::Fixed(235.0))
+    .width(Length::Fixed(f32::from(app.shell.sidebar.width)))
     .style(panel_style(tokens, tokens.panel))
     .into()
 }
@@ -1577,7 +1500,7 @@ fn context_panel(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Messa
 
     container(content)
         .padding(10)
-        .width(Length::Fixed(250.0))
+        .width(Length::Fixed(f32::from(app.shell.context.width)))
         .style(panel_style(tokens, tokens.panel))
         .into()
 }
@@ -1586,12 +1509,19 @@ fn context_panel(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Messa
     clippy::too_many_lines,
     reason = "terminal drawer chrome keeps its empty, active, and confirmation states together"
 )]
-fn drawer(app: &StruktApp, tokens: ThemeTokens) -> Element<'static, Message> {
+fn drawer(
+    app: &StruktApp,
+    tokens: ThemeTokens,
+    theme: &strukt_ui::UiTheme,
+) -> Element<'static, Message> {
     if !app.shell.drawer_visible {
-        return button("Open terminal drawer")
-            .on_press(Message::ToggleDrawer)
-            .width(Fill)
-            .into();
+        return strukt_ui::quiet_button(
+            "TERMINAL                                      Primary+J",
+            Some(Message::ToggleDrawer),
+            theme,
+        )
+        .width(Fill)
+        .into();
     }
 
     let enabled = app.capabilities.is_enabled(CapabilityId::TERMINAL);

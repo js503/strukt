@@ -614,6 +614,26 @@ mod tests {
     }
 
     #[test]
+    fn native_widget_palette_is_derived_from_quiet_precision_tokens() {
+        let app = StruktApp::default();
+        let tokens = strukt_theme::ThemeTokens::builtin(app.shell.theme_mode);
+        let palette = app.theme().palette();
+
+        assert_eq!(
+            palette.background,
+            iced::Color::from_rgb8(tokens.canvas.red, tokens.canvas.green, tokens.canvas.blue)
+        );
+        assert_eq!(
+            palette.primary,
+            iced::Color::from_rgb8(
+                tokens.panel_active.red,
+                tokens.panel_active.green,
+                tokens.panel_active.blue,
+            )
+        );
+    }
+
+    #[test]
     fn terminal_commands_require_a_workspace_and_never_spawn_on_open() {
         let project = tempdir().unwrap();
         let mut app = StruktApp::default();
@@ -1478,7 +1498,7 @@ mod tests {
 
         let _ = app.update(Message::ToggleContext);
         let _ = app.update(Message::ToggleDrawer);
-        assert!(!app.shell.context_visible);
+        assert!(app.shell.context_visible);
         assert!(app.shell.drawer_visible);
     }
 
@@ -1885,7 +1905,48 @@ mod tests {
 
         assert!(!app.shell.explorer_visible);
         assert!(app.shell.drawer_visible);
+        assert!(app.shell.context_visible);
+    }
+
+    #[test]
+    fn command_center_traps_focus_and_escape_restores_the_prior_region() {
+        let mut app = StruktApp::default();
+        app.shell.apply(strukt_shell::ShellAction::Focus(
+            strukt_shell::FocusRegion::Sidebar,
+        ));
+
+        let _ = app.update(key_pressed("k", key::Code::KeyK, Modifiers::COMMAND));
+        assert!(app.command_center_visible);
+        assert_eq!(
+            app.shell.focus_region,
+            strukt_shell::FocusRegion::CommandCenter
+        );
+
+        let _ = app.update(Message::CommandQueryChanged("terminal".to_owned()));
+        assert_eq!(app.command_query, "terminal");
+        let _ = app.update(named_key_pressed(
+            key::Named::Escape,
+            key::Code::Escape,
+            Modifiers::empty(),
+        ));
+
+        assert!(!app.command_center_visible);
+        assert!(app.command_query.is_empty());
+        assert_eq!(app.shell.focus_region, strukt_shell::FocusRegion::Sidebar);
+    }
+
+    #[test]
+    fn command_center_selection_closes_overlay_before_dispatch() {
+        let mut app = StruktApp::default();
         assert!(!app.shell.context_visible);
+
+        let _ = app.update(Message::ToggleCommandCenter);
+        let _ = app.update(Message::CommandQueryChanged("toggle context".to_owned()));
+        let _ = app.update(Message::ExecuteCommandIndex(0));
+
+        assert!(!app.command_center_visible);
+        assert!(app.command_query.is_empty());
+        assert!(app.shell.context_visible);
     }
 
     #[test]
@@ -1898,7 +1959,7 @@ mod tests {
 
         assert!(app.shell.explorer_visible);
         assert!(!app.shell.drawer_visible);
-        assert!(app.shell.context_visible);
+        assert!(!app.shell.context_visible);
     }
 
     #[test]

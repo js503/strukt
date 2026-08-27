@@ -17,7 +17,7 @@ fn panels_toggle_independently() {
     state.apply(ShellAction::ToggleContext);
     state.apply(ShellAction::ToggleDrawer);
 
-    assert!(!state.context_visible);
+    assert!(state.context_visible);
     assert!(state.drawer_visible);
 }
 

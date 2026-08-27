@@ -509,11 +509,11 @@ git commit -m "feat(shell): add unified command center"
 - Modify: `crates/strukt-app/src/main.rs`
 - Modify: `crates/strukt-app/src/app.rs`
 
-- [ ] **Step 1: Add failing shell-view state tests**
+- [x] **Step 1: Add failing shell-view state tests**
 
 Test that only the active activity is selected; sidebar/context/drawer presence follows composition state; command center traps focus while open; Escape closes the top overlay; closing a panel returns focus; and remote boundaries appear in the title/status chrome.
 
-- [ ] **Step 2: Perform the mechanical module move**
+- [x] **Step 2: Perform the mechanical module move**
 
 Move `view.rs` to `view/mod.rs` without behavior changes, run `cargo fmt`, and prove the app tests remain green before extracting submodules.
 
@@ -523,19 +523,19 @@ cargo test -p strukt-app --all-targets --locked --offline
 
 Expected: the pre-redesign app tests pass after the move.
 
-- [ ] **Step 3: Add `strukt-ui` to the app and replace top-level chrome**
+- [x] **Step 3: Add `strukt-ui` to the app and replace top-level chrome**
 
 Build the stable activity rail, contextual sidebar slot, adaptive canvas slot, on-demand context slot, promoteable drawer slot, and compact status strip using `strukt-ui`. Remove the current header full of equal-weight accent buttons. Keep the platform title bar native and use low-radius, low-noise controls.
 
-- [ ] **Step 4: Implement the command-center overlay**
+- [x] **Step 4: Implement the command-center overlay**
 
 Open it with logical `Primary+K`; search commands as the user types; display category, shortcut, and execution boundary; dispatch only after confirmation; close on Escape or successful selection; return focus to the prior region.
 
-- [ ] **Step 5: Implement explicit state-language views**
+- [x] **Step 5: Implement explicit state-language views**
 
 Use shared empty, loading, recoverable error, unavailable, disconnected, and disabled presentations. Every recoverable failure includes one primary recovery action and optional detail disclosure; raw error strings do not become the visual hierarchy.
 
-- [ ] **Step 6: Verify shell chrome**
+- [x] **Step 6: Verify shell chrome**
 
 ```bash
 cargo fmt --all -- --check
@@ -545,7 +545,7 @@ cargo test -p strukt-app --all-targets --locked --offline
 
 Expected: all shell state tests and existing app behavior tests pass.
 
-- [ ] **Step 7: Commit the shell chrome**
+- [x] **Step 7: Commit the shell chrome**
 
 ```bash
 git add crates/strukt-app

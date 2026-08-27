@@ -47,7 +47,7 @@ impl Default for ShellState {
         Self {
             active_activity: Activity::Files,
             explorer_visible: true,
-            context_visible: true,
+            context_visible: false,
             drawer_visible: false,
             theme_mode: ThemeMode::Dark,
             theme_id: ThemeId::quiet_precision(),
@@ -57,7 +57,7 @@ impl Default for ShellState {
                 width: 256,
             },
             context: PanelState {
-                visible: true,
+                visible: false,
                 surface: None,
                 width: 320,
             },

@@ -1,0 +1,95 @@
+use iced::widget::{Space, column, container, row, stack, text};
+use iced::{Alignment, Element, Fill, Length};
+use strukt_theme::ThemeRegistry;
+use strukt_ui::{BadgeKind, ChromeRole, UiTheme, badge, chrome, quiet_button};
+
+use crate::app::{Message, StruktApp};
+use crate::remote::RemoteStatus;
+
+use super::{activity, command_center, context_panel, drawer, explorer, primary_canvas, status};
+
+pub(super) fn view(app: &StruktApp) -> Element<'_, Message> {
+    let registry = ThemeRegistry::with_builtins();
+    let theme = UiTheme::from(registry.resolve(&app.shell.theme_id, app.shell.theme_mode));
+    let tokens = theme.tokens;
+    let body = row![
+        activity::rail(app, &theme),
+        explorer(app, tokens),
+        primary_canvas(app, tokens),
+        context_panel(app, tokens),
+    ]
+    .height(Fill);
+    let workspace = column![
+        workspace_bar(app, &theme),
+        body,
+        drawer(app, tokens, &theme),
+        status::strip(app, &theme),
+    ]
+    .height(Fill);
+    let content: Element<'_, Message> = if app.command_center_visible {
+        stack![workspace, command_center::overlay(app, &theme)].into()
+    } else {
+        workspace.into()
+    };
+
+    chrome(content, &theme, ChromeRole::Canvas)
+        .width(Fill)
+        .height(Fill)
+        .into()
+}
+
+fn workspace_bar(app: &StruktApp, theme: &UiTheme) -> Element<'static, Message> {
+    let (scope, boundary, boundary_detail, kind) =
+        if app.remote.status == RemoteStatus::Disconnected {
+            let scope = app.workspace.as_ref().map_or_else(
+                || "No folder open".to_owned(),
+                |workspace| {
+                    format!(
+                        "{} / {}",
+                        workspace.root.display_name(),
+                        workspace.root.path().display()
+                    )
+                },
+            );
+            (scope, "LOCAL", String::new(), BadgeKind::Neutral)
+        } else {
+            (
+                app.remote
+                    .root_label
+                    .clone()
+                    .unwrap_or_else(|| "Remote workspace".to_owned()),
+                "REMOTE",
+                app.remote
+                    .host_label
+                    .clone()
+                    .unwrap_or_else(|| "REMOTE".to_owned()),
+                BadgeKind::Remote,
+            )
+        };
+    let content = row![
+        text("strukt").size(14),
+        badge(boundary, kind, theme),
+        text(boundary_detail).size(12),
+        text(scope).size(12),
+        Space::new().width(Fill),
+        quiet_button(command_prompt(), Some(Message::ToggleCommandCenter), theme,)
+            .width(Length::Fixed(360.0)),
+    ]
+    .align_y(Alignment::Center)
+    .spacing(theme.metrics.space_2);
+    container(chrome(content, theme, ChromeRole::Panel))
+        .height(41)
+        .padding([0.0, theme.metrics.space_3])
+        .into()
+}
+
+const fn command_prompt() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "Search files, commands, sessions…                 ⌘K"
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "Search files, commands, sessions…             Ctrl+K"
+    }
+}
