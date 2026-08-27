@@ -25,11 +25,11 @@ software engineering: one context, every tool, and any model.
 
 ## Status
 
-- Stage: M5.5 visual and interaction foundation implementation
+- Stage: M5.5 visual and interaction foundation review
 - Current foundation: native shell plus real local workspace, file, editor, and
   language workflows, ephemeral terminals, native local persistent sessions,
   first-class SSH workspaces, native remote persistence, and tmux interoperability
-- Milestones: M1 through M5 complete; M5.5 Quiet Precision redesign is planned;
+- Milestones: M1 through M5 complete; M5.5 Quiet Precision redesign is implemented and under review;
   the Public Alpha release gate follows M5.5
 
 ## Key Docs
@@ -51,6 +51,16 @@ cargo test --workspace
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
+
+The application still starts with `cargo run -p strukt-app`. M5.5 adds the Quiet
+Precision dark/light theme system, a stable activity rail, contextual sidebar,
+adaptive primary canvas, on-demand workspace context, status strip, and a bottom
+drawer that can promote a terminal to split or full-canvas placement without
+restarting it. Use the platform Primary modifier (Command on macOS, Control on
+Windows/Linux): `Primary+K` opens the unified command center, `Primary+B` toggles
+the sidebar, `Primary+J` opens or focuses the terminal drawer, and
+`Primary+\\` toggles workspace context. Settings switches the built-in theme;
+the versioned semantic theme definition is the future custom-theme boundary.
 
 The native application can open a real local folder and expose its files through the
 explorer. Hidden and ignored visibility are independent, persisted workspace
@@ -118,6 +128,14 @@ output, cleanup, and absence of workspace metadata:
 
 ```bash
 bash scripts/m5-remote-sessions-smoke.sh
+```
+
+The deterministic M5.5 smoke and semantic ownership guard exercise shell
+composition without opening a native window or touching a workspace:
+
+```bash
+bash scripts/check-ui-semantics.sh
+bash scripts/m5-5-visual-foundation-smoke.sh
 ```
 
 The deterministic M3 smoke accepts any existing folder and uses only the bundled

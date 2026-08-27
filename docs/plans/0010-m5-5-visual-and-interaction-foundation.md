@@ -640,7 +640,7 @@ cargo run -p strukt-app --locked --offline -- --m2-integration-smoke "$fixture"
 
 Expected: all commands exit 0 in both built-in theme modes.
 
-- [ ] **Step 5: Commit editor and context migration**
+- [x] **Step 5: Commit editor and context migration**
 
 ```bash
 git add crates/strukt-app
@@ -679,7 +679,7 @@ cargo run -p strukt-app --locked --offline -- --terminal-smoke "$fixture"
 
 Expected: runtime identity tests pass and the M1 smoke exits 0.
 
-- [ ] **Step 5: Commit terminal presentation**
+- [x] **Step 5: Commit terminal presentation**
 
 ```bash
 git add crates/strukt-app
@@ -715,7 +715,7 @@ cargo run -p strukt-app --locked --offline -- --session-smoke "$fixture"
 
 Expected: all commands exit 0 and all pre-existing session operations remain reachable.
 
-- [ ] **Step 4: Commit local session migration**
+- [x] **Step 4: Commit local session migration**
 
 ```bash
 git add crates/strukt-app
@@ -767,7 +767,7 @@ Record evidence for: connect, trust host key, choose remote root, browse/open/sa
 
 No disposable live SSH target was configured for this change. The conditional walkthrough was therefore not run; the real helper/fake SSH integration suites and M4/M5 deterministic smokes provide the recorded verification boundary.
 
-- [ ] **Step 7: Commit remote workflow migration**
+- [x] **Step 7: Commit remote workflow migration**
 
 ```bash
 git add crates/strukt-app
@@ -814,7 +814,7 @@ cargo test -p strukt-app --all-targets --locked --offline
 
 Expected: all commands exit 0 and every required focus/state/size contract is asserted.
 
-- [ ] **Step 6: Commit accessibility and responsive behavior**
+- [x] **Step 6: Commit accessibility and responsive behavior**
 
 ```bash
 git add crates/strukt-ui crates/strukt-app
@@ -862,7 +862,7 @@ Run the semantic check and M5.5 smoke in the existing macOS/Windows/Ubuntu matri
 
 Expected output ends with `M5.5 visual foundation smoke passed` and exits 0.
 
-- [ ] **Step 6: Commit deterministic verification**
+- [x] **Step 6: Commit deterministic verification**
 
 ```bash
 git add crates/strukt-app/src/m5_5_smoke.rs crates/strukt-app/src/main.rs scripts/check-ui-semantics.sh scripts/m5-5-visual-foundation-smoke.sh .github/workflows/ci.yml docs/evidence/m5-5-visual-foundation.md
@@ -878,7 +878,7 @@ git commit -m "test: add M5.5 visual foundation smoke"
 - Modify: `docs/evidence/m5-5-visual-foundation.md`
 - Modify: `docs/plans/0010-m5-5-visual-and-interaction-foundation.md`
 
-- [ ] **Step 1: Run formatting, linting, unit, and build gates**
+- [x] **Step 1: Run formatting, linting, unit, and build gates**
 
 ```bash
 git diff --check
@@ -890,7 +890,7 @@ cargo build --workspace --all-targets --locked --offline
 
 Expected: every command exits 0 with no warnings promoted by Clippy.
 
-- [ ] **Step 2: Run every milestone smoke**
+- [x] **Step 2: Run every milestone smoke**
 
 ```bash
 fixture="$(mktemp -d)"
@@ -910,7 +910,7 @@ bash scripts/m5-5-visual-foundation-smoke.sh
 
 Expected: every command exits 0 and prints its documented success marker.
 
-- [ ] **Step 3: Record performance evidence**
+- [x] **Step 3: Record performance evidence**
 
 Build a release binary, run the deterministic native startup smoke ten times, and record the median wall-clock result next to the existing M1 startup evidence. Exercise theme switching and drawer promotion in the deterministic composition test while asserting that terminal, language, session, and remote runtime IDs do not change. Record the large-terminal, editor-input, explorer, diagnostics, session-history, and reconnect regression results from the retained suites. Any measurable startup regression above 10 percent or interaction stall above one 16.7 ms frame is a blocking finding unless the PR documents and explicitly accepts the release risk.
 
@@ -922,7 +922,7 @@ On macOS, and on Windows before merge, verify dark and light themes at constrain
 
 Push the branch, wait for GitHub Actions, and record the passing workflow URL and exact commit SHA in the evidence document. Any code change after that run invalidates the evidence and requires another exact-head run.
 
-- [ ] **Step 6: Complete agentic review**
+- [x] **Step 6: Complete agentic review**
 
 Run a review against the approved spec, this plan, the full diff, architecture boundaries, security-sensitive remote states, persistence redaction, accessibility, and regression evidence. Resolve every blocking finding and rerun affected gates.
 
@@ -930,7 +930,7 @@ Run a review against the approved spec, this plan, the full diff, architecture b
 
 Document the new shell, keyboard entrypoints, themes, and unchanged startup command in `README.md`. Mark M5.5 `Complete` in roadmap/tracker only after all acceptance criteria pass. Link the umbrella issue, all slice PRs, and the evidence document. Mark this plan `Complete` and check every executed step.
 
-- [ ] **Step 8: Run forj merge-readiness checks**
+- [x] **Step 8: Run forj merge-readiness checks**
 
 ```bash
 forj check docs/specs/0010-m5-5-visual-and-interaction-foundation.md
