@@ -4,6 +4,7 @@ mod editor_store;
 mod language_store;
 mod remote_store;
 mod session_store;
+mod shell_store;
 mod terminal_store;
 mod workspace_store;
 
@@ -24,6 +25,10 @@ pub use session_store::{
     SESSION_CONTRIBUTION_ID, SessionContribution, SessionMigrationError, SessionMigrationOutcome,
     SessionMigrationPlan, apply_session_migration_metadata, plan_session_migration,
     session_contribution, set_session_contribution,
+};
+pub use shell_store::{
+    PersistedCanvasLayout, SHELL_CONTRIBUTION_ID, SHELL_SCHEMA_VERSION, ShellSnapshotV1,
+    ShellStoreError, set_shell_contribution, shell_contribution,
 };
 pub use terminal_store::{
     TERMINAL_CONTRIBUTION_ID, TerminalSessionSnapshot, TerminalStoreError,

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -22,12 +22,13 @@ use strukt_fs::{
 use strukt_persistence::{
     EditorRecoveryStore, EditorSessionSnapshot, EditorTabSnapshot, LanguageSessionSnapshot,
     RecentWorkspaces, RecoveryKey, RecoveryKeyError, RecoveryKeyProvider, RecoveryMetadata,
-    RecoveryPayload, RemoteStore, TerminalSessionSnapshot, WorkspaceStore,
+    RecoveryPayload, RemoteStore, ShellSnapshotV1, TerminalSessionSnapshot, WorkspaceStore,
     apply_session_migration_metadata, language_contribution, session_contribution,
-    set_language_contribution, set_terminal_contribution, terminal_contribution,
+    set_language_contribution, set_shell_contribution, set_terminal_contribution,
+    shell_contribution, terminal_contribution,
 };
 use strukt_session::{ClientHealth, PaneId, RequestBody, ResponseBody, SessionId, WindowId};
-use strukt_shell::{Activity, ShellAction, ShellState};
+use strukt_shell::{Activity, ShellAction, ShellState, SurfaceId};
 use strukt_terminal::{
     Color as TerminalColor, DrainBudget, PaneState, PasteDecision, PortableTransport,
     RuntimePaneState, Selection, SpawnRequest, SplitAxis, TerminalKey, TerminalPaneId,
@@ -63,6 +64,29 @@ pub(crate) const TERMINAL_SMOKE_SUCCESS: &str =
     "strukt terminal smoke: pty, unicode, ansi, resize, isolation, bounds, and restore passed";
 pub(crate) const LANGUAGE_SMOKE_SUCCESS: &str = "strukt language smoke: discovery, sync, diagnostics, completion, hover, definition, cancellation, shutdown, and restore passed";
 pub(crate) const M2_INTEGRATION_SMOKE_SUCCESS: &str = "strukt M2 integration smoke: files, editor, terminal, language, persistence, isolation, and stopped restore passed";
+
+fn built_in_shell_surfaces() -> BTreeSet<SurfaceId> {
+    let activities = [
+        Activity::Files,
+        Activity::Search,
+        Activity::SourceControl,
+        Activity::Sessions,
+        Activity::Tasks,
+        Activity::Connections,
+        Activity::Extensions,
+        Activity::Settings,
+    ];
+    activities
+        .into_iter()
+        .flat_map(|activity| [Some(activity.canvas_surface()), activity.sidebar_surface()])
+        .flatten()
+        .chain([
+            SurfaceId::new("terminal.local.primary").expect("built-in surface id"),
+            SurfaceId::new("problems").expect("built-in surface id"),
+            SurfaceId::new("workspace.context").expect("built-in surface id"),
+        ])
+        .collect()
+}
 pub(crate) const SESSION_SMOKE_SUCCESS: &str = "strukt M3 session smoke: hierarchy, isolation, detach, reattach, history, termination, and stopped restore passed";
 pub(crate) const REMOTE_SMOKE_SUCCESS: &str = "strukt M4 remote smoke: ssh, fallback, files, edit, search, git, task, language, disconnect, and reconnect passed";
 pub(crate) const REMOTE_SESSIONS_SMOKE_SUCCESS: &str = "strukt M5 remote session smoke: multiple native sessions, SSH detach, service identity, output, layout, and reconnect passed";
@@ -2197,6 +2221,10 @@ impl StruktApp {
             }
             Message::WorkspaceOpened(Ok(mut opened)) => {
                 let terminal_restore = terminal_contribution(&opened.state).ok().flatten();
+                let restored_shell = shell_contribution(&opened.state)
+                    .ok()
+                    .flatten()
+                    .and_then(|snapshot| snapshot.restore(&built_in_shell_surfaces()).ok());
                 self.terminal_migrated_to_sessions =
                     session_contribution(&opened.state).ok().flatten().is_some();
                 match TerminalSurfaces::restore(terminal_restore.as_ref()) {
@@ -2251,7 +2279,12 @@ impl StruktApp {
                     show_ignored: opened.state.explorer.show_ignored,
                     ..DiscoveryOptions::default()
                 };
-                self.shell.explorer_visible = opened.state.explorer.visible;
+                self.shell = restored_shell.unwrap_or_else(|| {
+                    let mut shell = ShellState::default();
+                    shell.explorer_visible = opened.state.explorer.visible;
+                    shell.sidebar.visible = opened.state.explorer.visible;
+                    shell
+                });
                 self.files = opened.discovery.entries;
                 self.file_warnings = opened.discovery.warnings;
                 self.filesystem_truncated = opened.discovery.truncated;
@@ -4225,7 +4258,7 @@ impl StruktApp {
                 panic!("strukt workspace files smoke failed: {error}");
             }
         };
-        let explorer_was_visible = self.shell.explorer_visible;
+        let shell_before = self.shell.clone();
         let drawer_was_visible = self.shell.drawer_visible;
         if let Some(action) = action {
             self.shell.apply(action);
@@ -4234,10 +4267,12 @@ impl StruktApp {
             self.terminal_input_active = false;
         }
 
-        if self.shell.explorer_visible != explorer_was_visible
-            && let Some(workspace) = &mut self.workspace
-        {
-            workspace.explorer.visible = self.shell.explorer_visible;
+        if self.shell.explorer_visible != shell_before.explorer_visible {
+            if let Some(workspace) = &mut self.workspace {
+                workspace.explorer.visible = self.shell.explorer_visible;
+            }
+        }
+        if self.shell != shell_before && self.workspace.is_some() {
             return self.request_persistence(false);
         }
 
@@ -4754,6 +4789,11 @@ impl StruktApp {
         let Some(mut state) = self.workspace.clone() else {
             return Task::none();
         };
+        let shell_snapshot = ShellSnapshotV1::from_state(&self.shell);
+        let _ = set_shell_contribution(&mut state, &shell_snapshot);
+        if let Some(workspace) = &mut self.workspace {
+            let _ = set_shell_contribution(workspace, &shell_snapshot);
+        }
         if !self.terminal_migrated_to_sessions {
             let terminal_snapshot = self.terminal.session_snapshot();
             let _ = set_terminal_contribution(&mut state, &terminal_snapshot);

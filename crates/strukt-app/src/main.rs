@@ -118,7 +118,8 @@ mod tests {
     };
     use strukt_persistence::{
         EditorRecoveryStore, EditorSessionSnapshot, RecoveryMetadata, RecoveryPayload,
-        TerminalSessionSnapshot, WorkspaceStore, set_terminal_contribution, terminal_contribution,
+        ShellSnapshotV1, TerminalSessionSnapshot, WorkspaceStore, set_shell_contribution,
+        set_terminal_contribution, shell_contribution, terminal_contribution,
     };
     use strukt_session::ClientHealth;
     use strukt_shell::Activity;
@@ -1479,6 +1480,35 @@ mod tests {
         let _ = app.update(Message::ToggleDrawer);
         assert!(!app.shell.context_visible);
         assert!(app.shell.drawer_visible);
+    }
+
+    #[test]
+    fn workspace_open_restores_shell_composition_and_shell_actions_persist_it() {
+        let project = tempdir().unwrap();
+        let mut opened = open_workspace(&project);
+        let mut persisted_shell = strukt_shell::ShellState::default();
+        persisted_shell.sidebar.width = 420;
+        persisted_shell.context_visible = false;
+        persisted_shell.context.visible = false;
+        persisted_shell.theme_mode = strukt_theme::ThemeMode::Light;
+        set_shell_contribution(
+            &mut opened.state,
+            &ShellSnapshotV1::from_state(&persisted_shell),
+        )
+        .unwrap();
+        let mut app = StruktApp::default();
+
+        let _ = app.update(Message::WorkspaceOpened(Ok(opened)));
+
+        assert_eq!(app.shell.sidebar.width, 420);
+        assert!(!app.shell.context.visible);
+        assert_eq!(app.shell.theme_mode, strukt_theme::ThemeMode::Light);
+
+        let _ = app.update(Message::ToggleContext);
+        let snapshot = shell_contribution(app.workspace.as_ref().unwrap())
+            .unwrap()
+            .expect("shell snapshot");
+        assert!(snapshot.context_visible);
     }
 
     #[test]

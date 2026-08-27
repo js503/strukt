@@ -379,11 +379,11 @@ git commit -m "feat(shell): model adaptive workspace composition"
 - Modify: `crates/strukt-app/src/app.rs`
 - Modify: `crates/strukt-app/src/workspace.rs`
 
-- [ ] **Step 1: Write failing shell snapshot tests**
+- [x] **Step 1: Write failing shell snapshot tests**
 
 Test round-trip persistence, schema rejection, width/height/ratio clamping, missing-surface fallback, corrupt JSON fallback, and preservation of unrelated workspace contributions.
 
-- [ ] **Step 2: Confirm tests fail for the missing store**
+- [x] **Step 2: Confirm tests fail for the missing store**
 
 ```bash
 cargo test -p strukt-persistence --test shell_store --locked --offline
@@ -391,7 +391,7 @@ cargo test -p strukt-persistence --test shell_store --locked --offline
 
 Expected: compilation fails because `shell_store` is not exported.
 
-- [ ] **Step 3: Implement the bounded schema**
+- [x] **Step 3: Implement the bounded schema**
 
 ```rust
 pub const SHELL_CONTRIBUTION_ID: &str = "shell";
@@ -416,11 +416,11 @@ pub struct ShellSnapshotV1 {
 
 Clamp sidebar and context widths to `180..=640`, drawer height to `120..=720`, and split ratio to `0.2..=0.8`. Store IDs and geometry only. Return a structured warning and default snapshot for invalid data instead of failing workspace startup.
 
-- [ ] **Step 4: Wire restore and save through the existing contribution map**
+- [x] **Step 4: Wire restore and save through the existing contribution map**
 
 On workspace load, restore shell composition after contributions register so missing IDs can be sanitized. On each accepted shell transition, update only `WorkspaceState.contributions[SHELL_CONTRIBUTION_ID]`; preserve every sibling key byte-for-byte through the Serde value boundary.
 
-- [ ] **Step 5: Verify persistence and app regressions**
+- [x] **Step 5: Verify persistence and app regressions**
 
 ```bash
 cargo test -p strukt-persistence --all-targets --locked --offline
@@ -429,7 +429,7 @@ cargo test -p strukt-app --all-targets --locked --offline
 
 Expected: shell persistence tests and all existing app tests pass.
 
-- [ ] **Step 6: Commit shell persistence**
+- [x] **Step 6: Commit shell persistence**
 
 ```bash
 git add crates/strukt-persistence crates/strukt-app/src/app.rs crates/strukt-app/src/workspace.rs
