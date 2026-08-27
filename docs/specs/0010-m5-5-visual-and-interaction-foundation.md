@@ -1,6 +1,6 @@
 # M5.5 — Visual and Interaction Foundation
 
-Status: Draft — awaiting written review
+Status: Approved
 
 ## Summary
 
