@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust 1.97.1, Iced 0.14 (`wgpu`, `advanced`, `canvas`, `highlighter`, `tokio`), Serde/JSON, existing workspace crates and shell smoke scripts, GitHub Actions on macOS/Windows/Ubuntu.
 
-**Status:** Draft — awaiting written review
+**Status:** Approved — implementation in progress
 
 **Approved spec:** [`../specs/0010-m5-5-visual-and-interaction-foundation.md`](../specs/0010-m5-5-visual-and-interaction-foundation.md)
 
@@ -42,11 +42,12 @@ The work is sequential at the slice level because later views consume earlier co
 ### Task 1: Establish delivery tracking
 
 **Files:**
+- Modify: `README.md`
 - Modify: `docs/tracker.md`
 - Modify: `docs/roadmap.md`
 - Create through GitHub: one M5.5 umbrella issue
 
-- [ ] **Step 1: Create the umbrella issue from the approved scope**
+- [x] **Step 1: Create the umbrella issue from the approved scope**
 
 Run:
 
@@ -56,11 +57,11 @@ gh issue create --title "M5.5: Visual and Interaction Foundation" --body-file do
 
 Expected: GitHub prints the new issue URL. Record its number as `M5_5_ISSUE` for the remaining delivery slices.
 
-- [ ] **Step 2: Update roadmap and tracker links**
+- [x] **Step 2: Update roadmap and tracker links**
 
 Change M5.5 from `Shaping` to `Planned`, link this plan, and link the umbrella issue. Leave PR and evidence columns empty until those artifacts exist.
 
-- [ ] **Step 3: Validate documentation**
+- [x] **Step 3: Validate documentation**
 
 Run:
 
@@ -72,11 +73,11 @@ git diff --check
 
 Expected: both `forj check` commands and `git diff --check` exit 0.
 
-- [ ] **Step 4: Commit the tracking transition**
+- [x] **Step 4: Commit the tracking transition**
 
 ```bash
-git add docs/specs/0010-m5-5-visual-and-interaction-foundation.md docs/plans/0010-m5-5-visual-and-interaction-foundation.md docs/tracker.md docs/roadmap.md
-git commit -m "docs: plan M5.5 visual foundation"
+git add README.md docs/plans/0010-m5-5-visual-and-interaction-foundation.md docs/tracker.md docs/roadmap.md
+git commit -m "docs: start M5.5 implementation"
 ```
 
 ### Task 2: Define and validate the versioned theme contract

@@ -35,7 +35,7 @@ exit criteria are satisfied and verified, not when a target date arrives.
 | M3 | Local persistent sessions | Complete | M2 | Named local sessions with windows, split panes, detach/reattach, and restoration |
 | M4 | SSH remote workspace | Complete | M2 | A remote development box behaves as a first-class workspace over standard SSH |
 | M5 | Remote persistent sessions | Complete | M3, M4 | Multiple persistent sessions per remote host, reconnect recovery, and tmux interoperability |
-| M5.5 | Visual and interaction foundation | Shaping | M1–M5 | Quiet Precision visual system, adaptive workspace shell, reusable native components, and extensible themes across existing workflows |
+| M5.5 | Visual and interaction foundation | Planned | M1–M5 | Quiet Precision visual system, adaptive workspace shell, reusable native components, and extensible themes across existing workflows |
 | Alpha | Public alpha release | Not planned | M3, M4, M5, M5.5 | Installable, documented local and remote development release for macOS and Windows with Linux in the build pipeline |
 | M6 | AI and workspace context | Post-alpha | Alpha | Optional, model-agnostic AI grounded in explicit local and remote workspace context |
 | M7 | Plugin and MCP foundation | Post-alpha | Alpha, M6 | Sandboxed extensions, MCP discovery, permissions, and host-controlled contributions |

@@ -25,11 +25,11 @@ software engineering: one context, every tool, and any model.
 
 ## Status
 
-- Stage: M5.5 visual and interaction foundation shaping
+- Stage: M5.5 visual and interaction foundation implementation
 - Current foundation: native shell plus real local workspace, file, editor, and
   language workflows, ephemeral terminals, native local persistent sessions,
   first-class SSH workspaces, native remote persistence, and tmux interoperability
-- Milestones: M1 through M5 complete; M5.5 Quiet Precision redesign is shaping;
+- Milestones: M1 through M5 complete; M5.5 Quiet Precision redesign is planned;
   the Public Alpha release gate follows M5.5
 
 ## Key Docs
