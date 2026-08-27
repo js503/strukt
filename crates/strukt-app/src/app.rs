@@ -399,8 +399,17 @@ pub enum SessionConfirmation {
 }
 
 #[derive(Clone, Debug)]
+pub enum CommandResource {
+    File(PathBuf),
+    Workspace(PathBuf),
+    Session(SessionId),
+    RemoteRecord(usize),
+}
+
+#[derive(Clone, Debug)]
 pub enum Message {
     WindowResized(iced::Size),
+    CommandResourceSelected(CommandResource),
     CommandSelected(CommandId),
     ToggleCommandCenter,
     CommandQueryChanged(String),
@@ -449,6 +458,8 @@ pub enum Message {
     RemoteLanguageFinished(RemoteLanguageCompletion),
     ToggleContext,
     ToggleDrawer,
+    ShowTerminalDrawer,
+    ShowProblemsDrawer,
     ToggleExplorer,
     ToggleTheme,
     SetThemeMode(ThemeMode),
@@ -1305,6 +1316,19 @@ impl StruktApp {
             Message::WindowResized(size) => {
                 self.viewport_width = logical_viewport_width(size.width);
                 return Task::none();
+            }
+            Message::CommandResourceSelected(resource) => {
+                self.close_command_center();
+                return self.update(match resource {
+                    CommandResource::File(path) => Message::OpenDocument {
+                        path,
+                        disposition: OpenDisposition::Preview,
+                        force_full: false,
+                    },
+                    CommandResource::Workspace(path) => Message::FolderPicked(Some(path)),
+                    CommandResource::Session(session) => Message::SelectSession(session),
+                    CommandResource::RemoteRecord(index) => Message::SelectRemoteRecord(index),
+                });
             }
             Message::CommandSelected(id) => {
                 self.close_command_center();
@@ -3578,6 +3602,26 @@ impl StruktApp {
                 }
                 return self.request_persistence(false);
             }
+            Message::ShowTerminalDrawer => {
+                if self.language.problems_visible() {
+                    self.language.toggle_problems();
+                }
+                self.shell.apply(ShellAction::OpenDrawer(
+                    SurfaceId::new("terminal.local.primary").expect("built-in surface id"),
+                ));
+                self.shell.focus_region = FocusRegion::Drawer;
+                return self.request_persistence(false);
+            }
+            Message::ShowProblemsDrawer => {
+                if !self.language.problems_visible() {
+                    self.language.toggle_problems();
+                }
+                self.shell.apply(ShellAction::OpenDrawer(
+                    SurfaceId::new("problems").expect("built-in surface id"),
+                ));
+                self.shell.focus_region = FocusRegion::Drawer;
+                return self.request_persistence(false);
+            }
             Message::SetProblemFilter(filter) => {
                 self.language.set_problem_filter(filter);
                 return Task::none();
@@ -4507,6 +4551,7 @@ impl StruktApp {
             Message::SetThemeMode(mode) => Some(ShellAction::SetThemeMode(mode)),
             Message::OpenFolder
             | Message::WindowResized(_)
+            | Message::CommandResourceSelected(_)
             | Message::CommandSelected(_)
             | Message::ToggleCommandCenter
             | Message::CommandQueryChanged(_)
@@ -4650,6 +4695,8 @@ impl StruktApp {
             | Message::RestartLanguage(_)
             | Message::CopyLanguageFailure(_)
             | Message::ToggleProblems
+            | Message::ShowTerminalDrawer
+            | Message::ShowProblemsDrawer
             | Message::SetProblemFilter(_)
             | Message::RequestLanguageFeature(_)
             | Message::ApplyCompletion(_)

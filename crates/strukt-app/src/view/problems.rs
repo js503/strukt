@@ -46,6 +46,8 @@ pub(super) fn drawer(app: &StruktApp, theme: &UiTheme) -> Element<'static, Messa
     }
     let header = row![
         text("PROBLEMS").size(11),
+        quiet_button("Terminal", Some(Message::ShowTerminalDrawer), theme),
+        quiet_button("Problems", None, theme),
         text(format!(
             "{} errors · {} warnings · {} info · {} hints",
             counts.errors, counts.warnings, counts.information, counts.hints

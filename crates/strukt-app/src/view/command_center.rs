@@ -2,7 +2,7 @@ use iced::widget::{Space, button, column, container, row, scrollable, text, text
 use iced::{Alignment, Element, Fill, Length};
 use strukt_ui::{BadgeKind, ChromeRole, UiTheme, badge, chrome, divider};
 
-use crate::app::{Message, StruktApp};
+use crate::app::{CommandResource, Message, StruktApp};
 
 use super::state;
 
@@ -13,11 +13,11 @@ pub(super) fn input_id() -> iced::widget::Id {
 pub(super) fn overlay<'a>(app: &'a StruktApp, theme: &UiTheme) -> Element<'a, Message> {
     let catalog = app.command_catalog();
     let matches = catalog.search(&app.command_query);
-    let has_matches = !matches.is_empty();
+    let has_command_matches = !matches.is_empty();
     let remote_alias = app.remote.host_label.as_deref().or_else(|| {
         (!app.remote.alias_input.is_empty()).then_some(app.remote.alias_input.as_str())
     });
-    let mut results = column![].spacing(theme.metrics.space_1);
+    let (mut results, resource_count) = resource_results(app, theme, remote_alias);
     for (index, entry) in matches.into_iter().take(12).enumerate() {
         let command = entry.command;
         let shortcut = command
@@ -52,7 +52,7 @@ pub(super) fn overlay<'a>(app: &'a StruktApp, theme: &UiTheme) -> Element<'a, Me
                 .on_press_maybe(enabled.then_some(Message::ExecuteCommandIndex(index))),
         );
     }
-    if !has_matches {
+    if !has_command_matches && resource_count == 0 {
         results = results.push(state::empty(
             "No matching results",
             "Try a file, command, session, activity, or setting name.",
@@ -87,6 +87,99 @@ pub(super) fn overlay<'a>(app: &'a StruktApp, theme: &UiTheme) -> Element<'a, Me
     .center_x(Fill)
     .center_y(Fill)
     .into()
+}
+
+fn resource_results(
+    app: &StruktApp,
+    theme: &UiTheme,
+    remote_alias: Option<&str>,
+) -> (iced::widget::Column<'static, Message>, usize) {
+    let query = app.command_query.trim().to_ascii_lowercase();
+    let mut count = 0_usize;
+    let mut results = column![].spacing(theme.metrics.space_1);
+    if query.is_empty() {
+        return (results, count);
+    }
+    for file in app
+        .files
+        .iter()
+        .filter(|entry| entry.kind == strukt_fs::FileKind::File)
+        .filter(|entry| {
+            entry
+                .relative_path
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .contains(&query)
+        })
+        .take(4)
+    {
+        count += 1;
+        results = results.push(strukt_ui::list_row_owned(
+            format!("File · {}  ·  LOCAL", file.relative_path.display()),
+            false,
+            Some(Message::CommandResourceSelected(CommandResource::File(
+                file.relative_path.clone(),
+            ))),
+            theme,
+        ));
+    }
+    for root in app
+        .recent_workspaces
+        .iter()
+        .filter(|root| root.to_string_lossy().to_ascii_lowercase().contains(&query))
+        .take(3)
+    {
+        count += 1;
+        results = results.push(strukt_ui::list_row_owned(
+            format!("Workspace · {}  ·  LOCAL", root.display()),
+            false,
+            Some(Message::CommandResourceSelected(
+                CommandResource::Workspace(root.clone()),
+            )),
+            theme,
+        ));
+    }
+    if let Some(snapshot) = app.sessions.catalog() {
+        for session in snapshot
+            .catalog()
+            .sessions()
+            .filter(|session| session.name().to_ascii_lowercase().contains(&query))
+            .take(3)
+        {
+            count += 1;
+            results = results.push(strukt_ui::list_row_owned(
+                format!(
+                    "Session · {}  ·  {}",
+                    session.name(),
+                    remote_alias.unwrap_or("LOCAL")
+                ),
+                false,
+                Some(Message::CommandResourceSelected(CommandResource::Session(
+                    session.id(),
+                ))),
+                theme,
+            ));
+        }
+    }
+    for (index, record) in app
+        .remote
+        .records
+        .iter()
+        .enumerate()
+        .filter(|(_, record)| record.alias.to_ascii_lowercase().contains(&query))
+        .take(3)
+    {
+        count += 1;
+        results = results.push(strukt_ui::list_row_owned(
+            format!("Remote workspace · {}  ·  REMOTE", record.alias),
+            false,
+            Some(Message::CommandResourceSelected(
+                CommandResource::RemoteRecord(index),
+            )),
+            theme,
+        ));
+    }
+    (results, count)
 }
 
 fn display_shortcut(shortcut: &str) -> String {

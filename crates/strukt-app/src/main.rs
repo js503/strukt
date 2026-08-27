@@ -2107,6 +2107,21 @@ mod tests {
     }
 
     #[test]
+    fn command_center_resources_close_the_overlay_before_activation() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        let _ = app.update(Message::ToggleCommandCenter);
+
+        let task = app.update(Message::CommandResourceSelected(
+            crate::app::CommandResource::Workspace(project.path().to_path_buf()),
+        ));
+
+        assert!(!app.command_center_visible);
+        assert!(app.command_query.is_empty());
+        assert_eq!(task.units(), 1);
+    }
+
+    #[test]
     fn problems_uses_the_supporting_drawer_without_forcing_context_open() {
         let mut app = StruktApp::default();
         assert!(!app.shell.context_visible);
@@ -2129,6 +2144,39 @@ mod tests {
         let _ = app.update(Message::ToggleProblems);
         assert!(!app.language.problems_visible());
         assert!(!app.shell.drawer_visible);
+    }
+
+    #[test]
+    fn drawer_tabs_switch_tools_without_terminating_terminal_state() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        app.workspace = Some(workspace_state(project.path()));
+        let _ = app.update(Message::NewTerminal);
+        let pane = app.terminal.workspace().focused_pane();
+
+        let _ = app.update(Message::ShowProblemsDrawer);
+        assert!(app.language.problems_visible());
+        assert_eq!(
+            app.shell
+                .drawer
+                .surface
+                .as_ref()
+                .map(strukt_shell::SurfaceId::as_str),
+            Some("problems")
+        );
+
+        let _ = app.update(Message::ShowTerminalDrawer);
+        assert!(!app.language.problems_visible());
+        assert_eq!(
+            app.shell
+                .drawer
+                .surface
+                .as_ref()
+                .map(strukt_shell::SurfaceId::as_str),
+            Some("terminal.local.primary")
+        );
+        assert_eq!(app.terminal.workspace().focused_pane(), pane);
+        assert_eq!(app.terminal.running_processes(), 0);
     }
 
     #[test]

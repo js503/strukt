@@ -1431,6 +1431,8 @@ pub(super) fn terminal_drawer(
 
     let controls = row![
         text("TERMINAL  ·  LOCAL").size(12),
+        strukt_ui::quiet_button("Terminal", None, theme),
+        strukt_ui::quiet_button("Problems", Some(Message::ShowProblemsDrawer), theme),
         tabs,
         Space::new().width(Fill),
         button("New").on_press_maybe((enabled && has_workspace).then_some(Message::NewTerminal)),
