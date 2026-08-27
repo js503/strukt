@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 strukt-core.workspace = true
 strukt-theme.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

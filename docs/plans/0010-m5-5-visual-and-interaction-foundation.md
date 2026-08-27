@@ -288,11 +288,11 @@ git commit -m "feat(ui): add quiet precision component foundation"
 - Create: `crates/strukt-shell/tests/composition_state.rs`
 - Modify: `crates/strukt-shell/tests/shell_state.rs`
 
-- [ ] **Step 1: Write failing composition transition tests**
+- [x] **Step 1: Write failing composition transition tests**
 
 Cover: changing activities updates the contextual sidebar and canvas owner; opening a tool in the drawer does not replace the canvas; promoting a drawer tool to split or full preserves its `SurfaceId`; demoting restores the prior canvas; hiding a focused panel returns focus to the canvas; removing a contribution removes all of its navigation and surface references; invalid ratios are clamped.
 
-- [ ] **Step 2: Confirm the new tests fail**
+- [x] **Step 2: Confirm the new tests fail**
 
 ```bash
 cargo test -p strukt-shell --test composition_state --locked --offline
@@ -300,7 +300,7 @@ cargo test -p strukt-shell --test composition_state --locked --offline
 
 Expected: compilation fails because explicit composition types do not exist.
 
-- [ ] **Step 3: Implement UI-independent composition types**
+- [x] **Step 3: Implement UI-independent composition types**
 
 Use stable identifiers and explicit placement:
 
@@ -334,7 +334,7 @@ pub enum FocusRegion {
 
 `ShellState` owns the active activity, optional sidebar/context visibility, canvas layout, drawer state, focus region, and theme selection. Feature-specific runtime state remains outside this crate.
 
-- [ ] **Step 4: Add feature contribution contracts**
+- [x] **Step 4: Add feature contribution contracts**
 
 ```rust
 pub struct ShellContribution {
@@ -347,11 +347,11 @@ pub struct ShellContribution {
 
 Registration must reject duplicate contribution, activity, surface, and command IDs. Unregistration must atomically sanitize shell state and select the Files contribution or first available contribution as fallback.
 
-- [ ] **Step 5: Preserve compatibility actions while migrating callers**
+- [x] **Step 5: Preserve compatibility actions while migrating callers**
 
 Keep current public `Activity` variants and translate old `ToggleExplorer`, `ToggleContext`, and `ToggleDrawer` actions into explicit transitions. Mark compatibility paths with Rust deprecation attributes only after all app callers migrate in Slice 2.
 
-- [ ] **Step 6: Verify shell state**
+- [x] **Step 6: Verify shell state**
 
 ```bash
 cargo fmt --all -- --check
@@ -361,7 +361,7 @@ cargo test -p strukt-shell --all-targets --locked --offline
 
 Expected: all existing shell tests and new transition tests pass.
 
-- [ ] **Step 7: Commit composition state**
+- [x] **Step 7: Commit composition state**
 
 ```bash
 git add crates/strukt-shell
