@@ -1,6 +1,6 @@
 # M5.5 — Visual and Interaction Foundation
 
-Status: Approved
+Status: Approved — visual fidelity correction approved
 
 ## Summary
 
@@ -84,8 +84,95 @@ post-Alpha.
 - Product and remote-development foundation:
   [`0001-workspace-shell-and-remote-development.md`](0001-workspace-shell-and-remote-development.md)
 
-The mockups define hierarchy, density, and interaction intent. They are not a
-pixel-perfect substitute for native platform review.
+The mockups define the visual contract for hierarchy, density, geometry, color
+emphasis, and interaction presentation. Native platform conventions may change
+window decorations, font rasterization, and operating-system controls, but they
+must not change the workspace composition or reintroduce prototype-style widgets.
+
+## Visual Fidelity Correction
+
+The first implementation review confirmed the architectural composition but
+rejected the rendered result. The native shell reproduced the names of the mockup
+regions while retaining prototype presentation: filled default buttons, excessive
+panel controls, oversized padding, weak editor structure, and an over-prominent
+context panel. Structural and behavioral tests passed because M5.5 did not yet
+contain a direct visual-comparison gate.
+
+This correction makes the approved **Quiet Precision / Promoteable drawer** mockup
+the authoritative visual baseline. It does not add product behavior.
+
+### Required reference state
+
+The primary reference state is a local workspace with:
+
+- Files selected in the activity rail;
+- the contextual explorer visible;
+- two editor tabs with one active document;
+- editor breadcrumbs and code content;
+- the local terminal open in its compact bottom drawer;
+- workspace context visible on wide layouts; and
+- the status strip visible.
+
+The implementation must also be reviewed with no document open, the terminal
+drawer closed, the context panel hidden, and at the compact breakpoint. Empty
+states may change the content of a region but not its shell geometry or visual
+language.
+
+### Shell geometry contract
+
+At the wide reference viewport, the native content area follows the mockup's
+compact proportions:
+
+- workspace bar: 40–42 pixels high;
+- activity rail: 44–48 pixels wide;
+- explorer: 195–220 pixels wide by default;
+- context panel: 220–240 pixels wide when visible;
+- status strip: 24–26 pixels high;
+- editor tab strip: 32–34 pixels high;
+- breadcrumb strip: 27–29 pixels high; and
+- terminal drawer: approximately 200–220 pixels high by default.
+
+The canvas and its active surface render edge-to-edge inside the shell. Global
+canvas padding is prohibited. Individual empty states and forms may introduce
+their own bounded padding.
+
+### Component presentation contract
+
+- Resting quiet controls have no filled accent background. Hover, focus,
+  selection, and press states introduce restrained semantic emphasis.
+- The accent is limited to active selection indicators, focus, status, syntax,
+  and genuinely primary actions. It never fills every file row or ordinary
+  toolbar action.
+- Activity items are icon-first, visually unboxed at rest, and use a narrow active
+  indicator plus a subtle selected background.
+- Explorer rows are flat, compact tree rows. File operations live in the header,
+  an overflow surface, or contextual commands rather than a permanent grid of
+  large buttons.
+- Editor tabs, breadcrumbs, code, drawer headers, and the status strip use
+  hairline boundaries and contiguous surfaces rather than card spacing.
+- The context panel remains secondary: muted headings, compact sections, and no
+  large action controls unless the active workflow requires one.
+- Application-owned surfaces may not use an unstyled default `iced` button,
+  pick-list, text input, editor, or container when that default can visibly
+  conflict with Quiet Precision.
+
+### Visual acceptance gate
+
+M5.5 cannot return to review-ready status until all of the following are captured
+from the native application and compared directly with the approved mockups:
+
+1. dark theme at the wide reference state;
+2. light theme at the same reference state;
+3. compact layout with context automatically hidden;
+4. terminal drawer closed and open;
+5. terminal promoted to split canvas; and
+6. local and remote workspace boundary states.
+
+Review records the screenshot paths, viewport dimensions, platform, commit, and
+material deltas. Automated tests continue to cover behavior and semantic token
+ownership, but they do not substitute for this human visual gate. A visual
+acceptance failure returns M5.5 to implementation even when all automated checks
+pass.
 
 ## Quiet Precision Visual Language
 
