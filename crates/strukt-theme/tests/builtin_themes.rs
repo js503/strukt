@@ -12,10 +12,10 @@ fn quiet_precision_matches_the_approved_mock_palette_and_density() {
     assert_eq!(tokens.text_primary, Rgb::new(232, 235, 237));
     assert_eq!(tokens.text_muted, Rgb::new(146, 154, 161));
     assert_eq!(tokens.accent, Rgb::new(128, 183, 170));
-    assert_eq!(definition.metrics.sidebar_width, 218.0);
-    assert_eq!(definition.metrics.context_width, 235.0);
-    assert_eq!(definition.metrics.drawer_height, 205.0);
-    assert_eq!(definition.metrics.row_height, 27.0);
+    assert!((definition.metrics.sidebar_width - 218.0).abs() < f32::EPSILON);
+    assert!((definition.metrics.context_width - 235.0).abs() < f32::EPSILON);
+    assert!((definition.metrics.drawer_height - 205.0).abs() < f32::EPSILON);
+    assert!((definition.metrics.row_height - 27.0).abs() < f32::EPSILON);
 }
 
 #[test]

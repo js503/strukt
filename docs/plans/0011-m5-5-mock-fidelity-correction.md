@@ -12,6 +12,22 @@
 
 **North-star mock:** [`../mockups/visual-foundation/quiet-precision-spatial-policy.html`](../mockups/visual-foundation/quiet-precision-spatial-policy.html), option A
 
+## Execution status
+
+- [x] Task 1 — north-star tokens and geometry locked.
+- [x] Task 2 — shared controls flattened and semantic states corrected.
+- [x] Task 3 — shell frame, default launch size, explorer, activity rail, command
+  control, persistence migration, and status strip corrected.
+- [x] Task 4 — contiguous editor tabs, breadcrumbs, and terminal drawer geometry
+  implemented with existing behavior preserved.
+- [x] Task 5 — persistent-chrome default button leakage removed and guarded.
+- [ ] Task 6 — dark wide shell capture reviewed; the complete native screenshot
+  matrix remains open.
+- [ ] Task 7 — final review readiness remains blocked on Task 6 visual acceptance.
+
+Native capture findings and the remaining matrix are recorded in
+[`../evidence/m5-5-visual-fidelity-validation.md`](../evidence/m5-5-visual-fidelity-validation.md).
+
 ---
 
 ## File ownership map

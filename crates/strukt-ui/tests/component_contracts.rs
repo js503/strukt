@@ -169,7 +169,7 @@ fn compact_inputs_use_quiet_surfaces_until_focused() {
 
     let input = text_input_appearance(&ui, iced::widget::text_input::Status::Active);
     assert_eq!(input.background, iced::Background::Color(color(23, 26, 29)));
-    assert_eq!(input.border.width, 1.0);
+    assert!((input.border.width - 1.0).abs() < f32::EPSILON);
     assert_eq!(input.border.color, color(48, 54, 59));
 
     let focused = text_input_appearance(
@@ -194,9 +194,9 @@ fn embedded_chrome_inputs_have_no_resting_box() {
         input.background,
         iced::Background::Color(Color::TRANSPARENT)
     );
-    assert_eq!(input.border.width, 0.0);
+    assert!(input.border.width.abs() < f32::EPSILON);
 
     let pick = quiet_pick_list_appearance(&ui, iced::widget::pick_list::Status::Active);
     assert_eq!(pick.background, iced::Background::Color(Color::TRANSPARENT));
-    assert_eq!(pick.border.width, 0.0);
+    assert!(pick.border.width.abs() < f32::EPSILON);
 }

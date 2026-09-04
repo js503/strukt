@@ -2,6 +2,10 @@
 
 Status: In progress
 
+> The original implementation-level review did not establish mock fidelity.
+> Native comparison findings and the corrective visual gate now live in
+> [`m5-5-visual-fidelity-validation.md`](m5-5-visual-fidelity-validation.md).
+
 ## Deterministic verification
 
 - `scripts/check-ui-semantics.sh` owns chrome-color enforcement.
@@ -55,6 +59,7 @@ Two material findings were identified and resolved before handoff:
   explicit tool tabs and verifies that switching tools preserves terminal runtime
   identity.
 
-No remaining material code findings were identified after the fixes and affected
-tests. Remaining verification gaps are human Windows rendering/accessibility and
-exact-head hosted CI; both are intentionally visible in milestone status.
+No remaining material behavioral code findings were identified after those
+fixes and affected tests. Visual fidelity is still under review; the remaining
+native screenshot matrix, human Windows rendering/accessibility, and exact-head
+hosted CI are intentionally visible in milestone status.
