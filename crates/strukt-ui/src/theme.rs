@@ -196,6 +196,21 @@ pub fn text_input_appearance(
 }
 
 #[must_use]
+pub fn quiet_text_input_appearance(
+    theme: &UiTheme,
+    status: iced::widget::text_input::Status,
+) -> iced::widget::text_input::Style {
+    let mut style = text_input_appearance(theme, status);
+    if matches!(status, iced::widget::text_input::Status::Focused { .. }) {
+        style.background = Background::Color(color(theme.tokens.panel_active));
+    } else {
+        style.background = Background::Color(Color::TRANSPARENT);
+        style.border.width = 0.0;
+    }
+    style
+}
+
+#[must_use]
 pub fn pick_list_appearance(
     theme: &UiTheme,
     status: iced::widget::pick_list::Status,
@@ -223,6 +238,21 @@ pub fn pick_list_appearance(
             radius: theme.metrics.radius_small.into(),
         },
     }
+}
+
+#[must_use]
+pub fn quiet_pick_list_appearance(
+    theme: &UiTheme,
+    status: iced::widget::pick_list::Status,
+) -> iced::widget::pick_list::Style {
+    let mut style = pick_list_appearance(theme, status);
+    if matches!(status, iced::widget::pick_list::Status::Opened { .. }) {
+        style.background = Background::Color(color(theme.tokens.panel_active));
+    } else {
+        style.background = Background::Color(Color::TRANSPARENT);
+        style.border.width = 0.0;
+    }
+    style
 }
 
 pub(crate) const fn color(rgb: Rgb) -> Color {

@@ -3,8 +3,8 @@ use strukt_theme::{ThemeMode, ThemeRegistry, ThemeTokens};
 use strukt_ui::{
     BadgeKind, ChromeRole, ComponentState, Emphasis, Icon, SelectionState, UiTheme,
     activity_rail_item, badge, button_appearance, chrome_appearance, command_button, divider,
-    list_row_appearance, pick_list_appearance, state_appearance, text_input_appearance,
-    toolbar_group,
+    list_row_appearance, pick_list_appearance, quiet_pick_list_appearance,
+    quiet_text_input_appearance, state_appearance, text_input_appearance, toolbar_group,
 };
 
 fn color(red: u8, green: u8, blue: u8) -> Color {
@@ -169,4 +169,22 @@ fn compact_inputs_use_quiet_surfaces_until_focused() {
     let pick = pick_list_appearance(&ui, iced::widget::pick_list::Status::Active);
     assert_eq!(pick.background, iced::Background::Color(color(23, 26, 29)));
     assert_eq!(pick.border.color, color(48, 54, 59));
+}
+
+#[test]
+fn embedded_chrome_inputs_have_no_resting_box() {
+    let resolved = ThemeRegistry::with_builtins()
+        .resolve(&strukt_theme::ThemeId::quiet_precision(), ThemeMode::Dark);
+    let ui = UiTheme::from(resolved);
+
+    let input = quiet_text_input_appearance(&ui, iced::widget::text_input::Status::Active);
+    assert_eq!(
+        input.background,
+        iced::Background::Color(Color::TRANSPARENT)
+    );
+    assert_eq!(input.border.width, 0.0);
+
+    let pick = quiet_pick_list_appearance(&ui, iced::widget::pick_list::Status::Active);
+    assert_eq!(pick.background, iced::Background::Color(Color::TRANSPARENT));
+    assert_eq!(pick.border.width, 0.0);
 }

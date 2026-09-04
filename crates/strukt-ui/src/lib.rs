@@ -13,5 +13,6 @@ pub use icon::Icon;
 pub use theme::{
     ChromeAppearance, ComponentAppearance, ComponentState, Emphasis, SelectionState,
     StateAppearance, UiTheme, button_appearance, chrome_appearance, list_row_appearance,
-    pick_list_appearance, semantic_color, state_appearance, text_input_appearance,
+    pick_list_appearance, quiet_pick_list_appearance, quiet_text_input_appearance, semantic_color,
+    state_appearance, text_input_appearance,
 };
