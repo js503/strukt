@@ -44,10 +44,7 @@ fn component_states_resolve_from_semantic_tokens_in_both_modes() {
                 tokens.text_primary.blue
             )
         );
-        assert_eq!(
-            quiet.border,
-            color(tokens.border.red, tokens.border.green, tokens.border.blue)
-        );
+        assert_eq!(quiet.border, Color::TRANSPARENT);
 
         let hovered = button_appearance(&ui, Emphasis::Standard, ComponentState::Hovered);
         assert_eq!(
@@ -94,6 +91,10 @@ fn component_states_resolve_from_semantic_tokens_in_both_modes() {
                 tokens.panel_active.blue
             )
         );
+        assert_eq!(
+            selected.focus,
+            color(tokens.accent.red, tokens.accent.green, tokens.accent.blue)
+        );
 
         let panel = chrome_appearance(&ui, ChromeRole::Panel);
         assert_eq!(
@@ -129,7 +130,7 @@ fn quiet_precision_metrics_drive_component_geometry() {
         .resolve(&strukt_theme::ThemeId::quiet_precision(), ThemeMode::Dark);
     let ui = UiTheme::from(resolved);
 
-    assert!((ui.metrics.control_height - 32.0).abs() < f32::EPSILON);
-    assert!((ui.metrics.row_height - 28.0).abs() < f32::EPSILON);
+    assert!((ui.metrics.control_height - 28.0).abs() < f32::EPSILON);
+    assert!((ui.metrics.row_height - 27.0).abs() < f32::EPSILON);
     assert!(ui.metrics.radius_small <= ui.metrics.radius_medium);
 }

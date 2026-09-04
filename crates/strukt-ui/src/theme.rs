@@ -82,10 +82,27 @@ pub fn button_appearance(
         (Emphasis::Strong, _) => tokens.canvas,
         _ => tokens.text_primary,
     };
+    let border = match (emphasis, state) {
+        (_, ComponentState::Focused) => tokens.focus,
+        (Emphasis::Quiet, _) => Rgb::new(0, 0, 0),
+        (Emphasis::Strong, _) => tokens.accent,
+        (Emphasis::Destructive, _) => tokens.diagnostic_error,
+        (Emphasis::Standard, _) => tokens.border,
+    };
     ComponentAppearance {
         background: color(background),
         text: color(text),
-        border: color(tokens.border),
+        border: if matches!(
+            (emphasis, state),
+            (
+                Emphasis::Quiet,
+                ComponentState::Resting | ComponentState::Disabled
+            )
+        ) {
+            Color::TRANSPARENT
+        } else {
+            color(border)
+        },
         focus: color(tokens.focus),
     }
 }
@@ -108,7 +125,7 @@ pub fn list_row_appearance(theme: &UiTheme, state: SelectionState) -> ComponentA
         background: color(background),
         text: color(text),
         border: color(tokens.border),
-        focus: color(tokens.focus),
+        focus: color(tokens.accent),
     }
 }
 
