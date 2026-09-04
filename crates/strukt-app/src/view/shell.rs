@@ -7,6 +7,7 @@ use strukt_ui::{BadgeKind, ChromeRole, UiTheme, badge, chrome, quiet_button};
 use crate::app::{Message, StruktApp};
 use crate::remote::RemoteStatus;
 
+use super::layout::WORKSPACE_BAR_HEIGHT;
 use super::{
     activity, command_center, connections, context, files, primary_canvas, remote_workspace,
     search, sessions, settings, source_control, status,
@@ -126,7 +127,7 @@ fn workspace_bar(app: &StruktApp, theme: &UiTheme) -> Element<'static, Message> 
     .align_y(Alignment::Center)
     .spacing(theme.metrics.space_2);
     container(chrome(content, theme, ChromeRole::Panel))
-        .height(41)
+        .height(WORKSPACE_BAR_HEIGHT)
         .padding([0.0, theme.metrics.space_3])
         .into()
 }

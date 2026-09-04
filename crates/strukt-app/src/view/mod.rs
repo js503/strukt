@@ -17,6 +17,69 @@ use crate::language::LanguageState;
 use crate::remote::RemoteStatus;
 use crate::terminal_widget::TerminalWidget;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExplorerAction {
+    CreateFolder,
+    Rename,
+    Duplicate,
+    Trash,
+    ToggleHidden,
+    ToggleIgnored,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EditorAction {
+    Save,
+    Undo,
+    Redo,
+    Find,
+    Complete,
+    Hover,
+    Definition,
+    Back,
+    OpenFullFile,
+}
+
+impl std::fmt::Display for EditorAction {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Save => "Save",
+            Self::Undo => "Undo",
+            Self::Redo => "Redo",
+            Self::Find => "Find and replace",
+            Self::Complete => "Completion",
+            Self::Hover => "Hover",
+            Self::Definition => "Go to definition",
+            Self::Back => "Navigate back",
+            Self::OpenFullFile => "Open full file",
+        })
+    }
+}
+
+impl std::fmt::Display for ExplorerAction {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::CreateFolder => "New folder",
+            Self::Rename => "Rename",
+            Self::Duplicate => "Duplicate",
+            Self::Trash => "Move to Trash",
+            Self::ToggleHidden => "Toggle hidden files",
+            Self::ToggleIgnored => "Toggle ignored files",
+        })
+    }
+}
+
+const fn explorer_action_message(action: ExplorerAction) -> Message {
+    match action {
+        ExplorerAction::CreateFolder => Message::BeginCreateDirectory,
+        ExplorerAction::Rename => Message::BeginRename,
+        ExplorerAction::Duplicate => Message::BeginDuplicate,
+        ExplorerAction::Trash => Message::BeginTrash,
+        ExplorerAction::ToggleHidden => Message::ToggleHiddenFiles,
+        ExplorerAction::ToggleIgnored => Message::ToggleIgnoredFiles,
+    }
+}
+
 mod accessibility;
 mod activity;
 mod command_center;
@@ -24,6 +87,7 @@ mod connections;
 mod context;
 mod editor;
 mod files;
+mod layout;
 mod problems;
 mod remote_workspace;
 mod responsive;
@@ -69,6 +133,7 @@ pub fn view(app: &StruktApp) -> Element<'_, Message> {
     reason = "file operations, filters, notices, and the tree remain one auditable sidebar"
 )]
 fn explorer<'a>(app: &'a StruktApp, theme: &strukt_ui::UiTheme) -> Element<'a, Message> {
+    debug_assert_eq!(layout::EXPLORER_PERMANENT_ACTION_ROWS, 0);
     let tokens = theme.tokens;
     if !app.shell.explorer_visible {
         return container(Space::new()).width(Length::Shrink).into();
@@ -78,69 +143,42 @@ fn explorer<'a>(app: &'a StruktApp, theme: &strukt_ui::UiTheme) -> Element<'a, M
     let operation_ready = has_workspace
         && app.explorer_dialog == ExplorerDialog::None
         && !app.file_operation_in_flight();
-    let selection_ready = operation_ready && app.selected_entry.is_some();
-    let controls = row![
-        strukt_ui::quiet_button(
-            if app.explorer_options.show_hidden {
-                "✓ Hidden"
-            } else {
-                "Hidden"
-            },
-            operation_ready.then_some(Message::ToggleHiddenFiles),
-            theme,
-        ),
-        strukt_ui::quiet_button(
-            if app.explorer_options.show_ignored {
-                "✓ Ignored"
-            } else {
-                "Ignored"
-            },
-            operation_ready.then_some(Message::ToggleIgnoredFiles),
-            theme,
-        ),
-    ]
-    .spacing(6);
-    let operations = column![
-        row![
-            strukt_ui::quiet_button(
-                "+ File",
-                operation_ready.then_some(Message::BeginCreateFile),
-                theme,
-            ),
-            strukt_ui::quiet_button(
-                "+ Folder",
-                operation_ready.then_some(Message::BeginCreateDirectory),
-                theme,
-            ),
-        ]
-        .spacing(6),
-        row![
-            strukt_ui::quiet_button(
-                "Rename",
-                selection_ready.then_some(Message::BeginRename),
-                theme,
-            ),
-            strukt_ui::quiet_button(
-                "Duplicate",
-                selection_ready.then_some(Message::BeginDuplicate),
-                theme,
-            ),
-            strukt_ui::quiet_button(
-                "Trash",
-                selection_ready.then_some(Message::BeginTrash),
-                theme,
-            ),
-        ]
-        .spacing(6),
-    ]
-    .spacing(6);
-
+    let mut overflow_actions = vec![
+        ExplorerAction::CreateFolder,
+        ExplorerAction::ToggleHidden,
+        ExplorerAction::ToggleIgnored,
+    ];
+    if app.selected_entry.is_some() {
+        overflow_actions.extend([
+            ExplorerAction::Rename,
+            ExplorerAction::Duplicate,
+            ExplorerAction::Trash,
+        ]);
+    }
     let mut file_rows = column![].spacing(4);
     if !has_workspace {
-        file_rows = file_rows.push(text("Open a folder to browse real files."));
+        file_rows = file_rows.push(
+            column![
+                text("Open a folder to browse real files.").size(12),
+                strukt_ui::primary_button(
+                    "Open Folder…",
+                    (!app.folder_picker_in_flight()).then_some(Message::OpenFolder),
+                    theme,
+                ),
+            ]
+            .padding(theme.metrics.space_3)
+            .spacing(theme.metrics.space_2),
+        );
     } else if app.files.is_empty() {
         file_rows = file_rows.push(text("This workspace has no visible files."));
     } else {
+        if let Some(workspace) = &app.workspace {
+            file_rows = file_rows.push(
+                container(text(format!("⌄ {}", workspace.root.display_name())).size(12))
+                    .height(theme.metrics.row_height)
+                    .padding([0.0, theme.metrics.space_2]),
+            );
+        }
         for entry in &app.files {
             let selected = app.selected_entry.as_ref() == Some(&entry.relative_path);
             let row_label = if entry.ignored {
@@ -173,23 +211,29 @@ fn explorer<'a>(app: &'a StruktApp, theme: &strukt_ui::UiTheme) -> Element<'a, M
             row![
                 text("EXPLORER").size(11),
                 Space::new().width(Fill),
-                strukt_ui::quiet_button("×", Some(Message::ToggleExplorer), theme,),
+                strukt_ui::quiet_button(
+                    "+",
+                    operation_ready.then_some(Message::BeginCreateFile),
+                    theme,
+                )
+                .width(Length::Shrink),
+                pick_list(
+                    overflow_actions,
+                    None::<ExplorerAction>,
+                    explorer_action_message,
+                )
+                .placeholder("···")
+                .width(Length::Fixed(46.0)),
             ]
-            .align_y(iced::Alignment::Center),
-            strukt_ui::primary_button(
-                "Open Folder…",
-                (!app.folder_picker_in_flight()).then_some(Message::OpenFolder),
-                theme,
-            ),
-            controls,
-            operations,
+            .height(41)
+            .align_y(iced::Alignment::Center)
+            .padding([0.0, theme.metrics.space_2]),
             explorer_dialog(app),
             notices,
             scrollable(file_rows),
         ]
-        .spacing(10),
+        .spacing(0),
     )
-    .padding(10)
     .width(Length::Fixed(f32::from(app.shell.sidebar.width)))
     .style(panel_style(tokens, tokens.panel))
     .into()
@@ -341,7 +385,7 @@ fn primary_canvas<'a>(
     };
 
     container(content)
-        .padding(20)
+        .padding(layout::CANVAS_OUTER_PADDING)
         .width(Fill)
         .height(Fill)
         .style(panel_style(tokens, tokens.canvas))
@@ -946,6 +990,7 @@ fn app_theme(app: &StruktApp) -> ThemeTokens {
     reason = "the native editor canvas keeps tab, toolbar, find, status, and close-dialog composition together"
 )]
 fn editor_canvas<'a>(app: &'a StruktApp, theme: &strukt_ui::UiTheme) -> Element<'a, Message> {
+    debug_assert_eq!(layout::EDITOR_PERMANENT_TOOLBAR_ROWS, 0);
     if let Some(notice) = &app.document_notice {
         return document_notice_canvas(notice).into();
     }
@@ -963,7 +1008,7 @@ fn editor_canvas<'a>(app: &'a StruktApp, theme: &strukt_ui::UiTheme) -> Element<
         return text("The native editor surface is unavailable.").into();
     };
 
-    let mut tabs = row![].spacing(4);
+    let mut tabs = row![].spacing(layout::EDITOR_TAB_GAP);
     for tab in state.tabs {
         let status = workspace
             .document(tab.id)
@@ -974,22 +1019,35 @@ fn editor_canvas<'a>(app: &'a StruktApp, theme: &strukt_ui::UiTheme) -> Element<
                 DocumentStatus::Missing => " ?",
             });
         let preview = if tab.pinned { "" } else { " (preview)" };
+        let tab_name = std::path::Path::new(tab.path.as_str())
+            .file_name()
+            .map_or_else(
+                || tab.path.as_str(),
+                |name| name.to_str().unwrap_or(tab.path.as_str()),
+            );
         tabs = tabs.push(
             row![
                 strukt_ui::list_row_owned(
-                    format!("{}{}{}", tab.path.as_str(), preview, status),
+                    format!("{tab_name}{preview}{status}"),
                     tab.id == active_id,
                     Some(Message::SelectDocument(tab.id)),
                     theme,
                 )
+                .height(layout::EDITOR_TAB_HEIGHT)
                 .width(Length::Shrink),
-                button(if tab.pinned { "×" } else { "Pin" }).on_press(if tab.pinned {
-                    Message::CloseDocument(tab.id)
-                } else {
-                    Message::PinDocument(tab.id)
-                }),
+                strukt_ui::quiet_button(
+                    if tab.pinned { "×" } else { "Pin" },
+                    Some(if tab.pinned {
+                        Message::CloseDocument(tab.id)
+                    } else {
+                        Message::PinDocument(tab.id)
+                    }),
+                    theme,
+                )
+                .height(layout::EDITOR_TAB_HEIGHT)
+                .width(Length::Shrink),
             ]
-            .spacing(2),
+            .spacing(0),
         );
     }
 
@@ -1014,30 +1072,28 @@ fn editor_canvas<'a>(app: &'a StruktApp, theme: &strukt_ui::UiTheme) -> Element<
         })
     };
 
-    let mut controls = row![
-        button("Save").on_press_maybe((!document.is_read_only()).then_some(
-            Message::SaveDocument {
-                id: active_id,
-                mode: strukt_fs::SaveMode::IfUnchanged,
-            }
-        )),
-        button("Undo")
-            .on_press_maybe((!document.is_read_only()).then_some(Message::UndoDocument(active_id))),
-        button("Redo")
-            .on_press_maybe((!document.is_read_only()).then_some(Message::RedoDocument(active_id))),
-        button("Find").on_press(Message::ToggleEditorFind),
-        button("Complete").on_press(Message::RequestLanguageFeature(
-            strukt_language::FeatureRequestKind::Completion,
-        )),
-        button("Hover").on_press(Message::RequestLanguageFeature(
-            strukt_language::FeatureRequestKind::Hover,
-        )),
-        button("Definition").on_press(Message::RequestLanguageFeature(
-            strukt_language::FeatureRequestKind::Definition,
-        )),
-        button("Back").on_press_maybe(
-            (!app.language_navigation_back.is_empty()).then_some(Message::NavigateLanguageBack),
-        ),
+    let mut editor_actions = vec![
+        EditorAction::Find,
+        EditorAction::Complete,
+        EditorAction::Hover,
+        EditorAction::Definition,
+    ];
+    if document.is_read_only() {
+        editor_actions.push(EditorAction::OpenFullFile);
+    } else {
+        editor_actions.splice(
+            0..0,
+            [EditorAction::Save, EditorAction::Undo, EditorAction::Redo],
+        );
+    }
+    if !app.language_navigation_back.is_empty() {
+        editor_actions.push(EditorAction::Back);
+    }
+    let breadcrumb = row![
+        text(document.path().as_str().replace('/', " › "))
+            .size(11)
+            .color(semantic_color(theme.tokens.text_muted)),
+        Space::new().width(Fill),
         pick_list(
             std::iter::once("auto")
                 .chain(GrammarRegistry::all().iter().map(|grammar| grammar.id))
@@ -1047,33 +1103,47 @@ fn editor_canvas<'a>(app: &'a StruktApp, theme: &strukt_ui::UiTheme) -> Element<
                 id: active_id,
                 language: (language != "auto").then(|| language.to_owned()),
             },
-        ),
+        )
+        .width(Length::Fixed(92.0)),
+        pick_list(editor_actions, None::<EditorAction>, move |action| match action {
+            EditorAction::Save => Message::SaveDocument {
+                id: active_id,
+                mode: strukt_fs::SaveMode::IfUnchanged,
+            },
+            EditorAction::Undo => Message::UndoDocument(active_id),
+            EditorAction::Redo => Message::RedoDocument(active_id),
+            EditorAction::Find => Message::ToggleEditorFind,
+            EditorAction::Complete => Message::RequestLanguageFeature(
+                strukt_language::FeatureRequestKind::Completion,
+            ),
+            EditorAction::Hover => Message::RequestLanguageFeature(
+                strukt_language::FeatureRequestKind::Hover,
+            ),
+            EditorAction::Definition => Message::RequestLanguageFeature(
+                strukt_language::FeatureRequestKind::Definition,
+            ),
+            EditorAction::Back => Message::NavigateLanguageBack,
+            EditorAction::OpenFullFile => Message::OpenDocument {
+                path: std::path::PathBuf::from(document.path().as_str()),
+                disposition: OpenDisposition::Pinned,
+                force_full: true,
+            },
+        })
+        .placeholder("···")
+        .width(Length::Fixed(46.0)),
     ]
-    .spacing(6);
-    if document.is_read_only() {
-        controls = controls.push(button("Open full file").on_press(Message::OpenDocument {
-            path: std::path::PathBuf::from(document.path().as_str()),
-            disposition: OpenDisposition::Pinned,
-            force_full: true,
-        }));
-    }
-
-    let status = format!(
-        "{}  ·  {} lines  ·  {}{}",
-        grammar.display_name,
-        content.line_count(),
-        if document.is_read_only() {
-            "read-only"
-        } else {
-            "editable"
-        },
-        if document.is_recovered() {
-            "  ·  recovered"
-        } else {
-            ""
-        },
-    );
-    let mut body = column![tabs, controls].spacing(8);
+    .height(layout::EDITOR_BREADCRUMB_HEIGHT)
+    .align_y(iced::Alignment::Center)
+    .padding([0.0, theme.metrics.space_3]);
+    let tabs = container(tabs)
+        .height(layout::EDITOR_TAB_HEIGHT)
+        .width(Fill)
+        .style(panel_style(theme.tokens, theme.tokens.panel));
+    let breadcrumb = container(breadcrumb)
+        .height(layout::EDITOR_BREADCRUMB_HEIGHT)
+        .width(Fill)
+        .style(panel_style(theme.tokens, theme.tokens.canvas));
+    let mut body = column![tabs, breadcrumb].spacing(0);
     if let Some((document_id, _, items)) = app.language.completion()
         && document_id == active_id
     {
@@ -1175,7 +1245,7 @@ fn editor_canvas<'a>(app: &'a StruktApp, theme: &strukt_ui::UiTheme) -> Element<
             .spacing(4),
         );
     }
-    body = body.push(editor).push(text(status).size(12));
+    body = body.push(editor);
     if let Some(error) = &app.editor_error {
         body = body.push(text(format!("Editor error: {error}")));
     }
@@ -1421,49 +1491,58 @@ pub(super) fn terminal_drawer(
 
     let enabled = app.capabilities.is_enabled(CapabilityId::TERMINAL);
     let has_workspace = app.workspace.is_some();
-    let mut tabs = row![].spacing(4);
+    let mut tabs = row![].spacing(0);
     for tab in app.terminal.workspace().tabs() {
         tabs = tabs.push(
-            button(text(tab.name().to_owned()).size(12))
-                .on_press(Message::ActivateTerminalTab(tab.id())),
+            strukt_ui::list_row_owned(
+                tab.name().to_owned(),
+                app.terminal
+                    .workspace()
+                    .active_tab()
+                    .map(strukt_terminal::TerminalTab::id)
+                    == Some(tab.id()),
+                Some(Message::ActivateTerminalTab(tab.id())),
+                theme,
+            )
+            .width(Length::Shrink),
         );
     }
 
     let controls = row![
-        text("TERMINAL  ·  LOCAL").size(12),
-        strukt_ui::quiet_button("Terminal", None, theme),
-        strukt_ui::quiet_button("Problems", Some(Message::ShowProblemsDrawer), theme),
+        text("Terminal ·").size(12),
+        text_input("dev", &app.terminal_tab_name)
+            .on_input(Message::TerminalTabNameChanged)
+            .on_submit(Message::RenameTerminalTab)
+            .width(Length::Fixed(120.0)),
         tabs,
         Space::new().width(Fill),
-        button("New").on_press_maybe((enabled && has_workspace).then_some(Message::NewTerminal)),
-        button("Split →").on_press_maybe(
+        strukt_ui::quiet_button(
+            "+",
+            (enabled && has_workspace).then_some(Message::NewTerminal),
+            theme,
+        )
+        .width(Length::Shrink),
+        strukt_ui::quiet_button(
+            "⇥",
             (enabled && app.terminal.workspace().active_tab().is_some())
                 .then_some(Message::SplitTerminal(SplitAxis::Vertical)),
-        ),
-        button("Split ↓").on_press_maybe(
-            (enabled && app.terminal.workspace().active_tab().is_some())
-                .then_some(Message::SplitTerminal(SplitAxis::Horizontal)),
-        ),
-        strukt_ui::quiet_button("Split view", Some(Message::PromoteTerminalToSplit), theme),
-        strukt_ui::quiet_button("Full canvas", Some(Message::PromoteTerminalToFull), theme),
-        strukt_ui::quiet_button("Close view", Some(Message::CloseTerminalPlacement), theme),
+            theme,
+        )
+        .width(Length::Shrink),
+        strukt_ui::quiet_button("!", Some(Message::ShowProblemsDrawer), theme)
+            .width(Length::Shrink),
+        strukt_ui::quiet_button("⌘↑", Some(Message::PromoteTerminalToSplit), theme)
+            .width(Length::Shrink),
+        strukt_ui::quiet_button("×", Some(Message::CloseTerminalPlacement), theme)
+            .width(Length::Shrink),
     ]
+    .height(layout::TERMINAL_DRAWER_HEADER_HEIGHT)
     .align_y(iced::Alignment::Center)
-    .spacing(6);
+    .spacing(theme.metrics.space_1)
+    .padding([0.0, theme.metrics.space_3]);
 
-    let mut content = column![controls].spacing(6);
+    let mut content = column![controls].spacing(0);
     if let Some(tab) = app.terminal.workspace().active_tab() {
-        content = content.push(
-            row![
-                text_input("Terminal name", &app.terminal_tab_name)
-                    .on_input(Message::TerminalTabNameChanged)
-                    .on_submit(Message::RenameTerminalTab)
-                    .width(Length::Fixed(180.0)),
-                button("Rename").on_press(Message::RenameTerminalTab),
-                text(format!("{} pane workspace", count_layout_panes(tab.root()))).size(12),
-            ]
-            .spacing(6),
-        );
         content = content.push(terminal_layout(app, tab.root(), tab.focused_pane(), tokens));
     } else {
         content = content.push(
@@ -1531,8 +1610,7 @@ pub(super) fn terminal_drawer(
     }
 
     container(content)
-        .padding(8)
-        .height(Length::Fixed(330.0))
+        .height(Length::Fixed(theme.metrics.drawer_height))
         .style(panel_style(tokens, tokens.terminal_background))
         .into()
 }
@@ -1723,13 +1801,4 @@ fn terminal_pane(
             },
         ))
         .into()
-}
-
-fn count_layout_panes(node: &LayoutNode) -> usize {
-    match node {
-        LayoutNode::Pane(_) => 1,
-        LayoutNode::Split { first, second, .. } => {
-            count_layout_panes(first) + count_layout_panes(second)
-        }
-    }
 }

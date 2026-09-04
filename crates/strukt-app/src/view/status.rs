@@ -2,6 +2,7 @@ use iced::widget::{Space, row, text};
 use iced::{Alignment, Element, Fill};
 use strukt_ui::{BadgeKind, ChromeRole, UiTheme, badge, chrome};
 
+use super::layout::STATUS_STRIP_HEIGHT;
 use crate::app::{Message, StruktApp};
 use crate::remote::RemoteStatus;
 
@@ -40,7 +41,7 @@ pub(super) fn strip(app: &StruktApp, theme: &UiTheme) -> Element<'static, Messag
     .align_y(Alignment::Center)
     .spacing(theme.metrics.space_3);
     chrome(content, theme, ChromeRole::Status)
-        .height(25)
+        .height(STATUS_STRIP_HEIGHT)
         .padding([0.0, theme.metrics.space_2])
         .into()
 }

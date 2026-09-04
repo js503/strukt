@@ -3,6 +3,7 @@ use iced::{Element, Fill, Length};
 use strukt_shell::Activity;
 use strukt_ui::{ChromeRole, Icon, UiTheme, activity_rail_item, chrome};
 
+use super::layout::ACTIVITY_RAIL_WIDTH;
 use crate::app::{Message, StruktApp};
 
 pub(super) fn rail(app: &StruktApp, theme: &UiTheme) -> Element<'static, Message> {
@@ -39,7 +40,7 @@ pub(super) fn rail(app: &StruktApp, theme: &UiTheme) -> Element<'static, Message
     .spacing(theme.metrics.space_1);
 
     container(chrome(content, theme, ChromeRole::Panel))
-        .width(Length::Fixed(48.0))
+        .width(Length::Fixed(ACTIVITY_RAIL_WIDTH))
         .height(Fill)
         .into()
 }
