@@ -17,6 +17,7 @@ pub(super) fn sidebar<'a>(app: &'a StruktApp, theme: &UiTheme) -> Element<'a, Me
         panel_header("SEARCH", theme),
         text_input("Search workspace", &app.search_query)
             .on_input(Message::SearchChanged)
+            .style(super::text_input_style(theme))
             .padding(theme.metrics.space_2),
         strukt_ui::quiet_button(
             filters,

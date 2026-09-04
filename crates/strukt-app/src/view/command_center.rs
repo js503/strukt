@@ -71,6 +71,7 @@ pub(super) fn overlay<'a>(app: &'a StruktApp, theme: &UiTheme) -> Element<'a, Me
             .id(input_id())
             .on_input(Message::CommandQueryChanged)
             .on_submit(Message::ExecuteCommandIndex(0))
+            .style(super::text_input_style(theme))
             .padding(theme.metrics.space_2),
         divider(theme),
         scrollable(results).height(Length::Fixed(360.0)),

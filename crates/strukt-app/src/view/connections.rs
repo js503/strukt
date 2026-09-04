@@ -15,6 +15,7 @@ pub(super) fn sidebar<'a>(app: &'a StruktApp, theme: &UiTheme) -> Element<'a, Me
         panel_header("CONNECTIONS", theme),
         text_input("Filter or enter SSH host alias", &app.remote.alias_input)
             .on_input(Message::RemoteAliasChanged)
+            .style(super::text_input_style(theme))
             .padding(theme.metrics.space_2),
     ]
     .spacing(theme.metrics.space_1);

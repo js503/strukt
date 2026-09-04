@@ -3,7 +3,7 @@ use strukt_theme::{ThemeMode, ThemeRegistry, ThemeTokens};
 use strukt_ui::{
     BadgeKind, ChromeRole, ComponentState, Emphasis, Icon, SelectionState, UiTheme,
     activity_rail_item, badge, button_appearance, chrome_appearance, divider, list_row_appearance,
-    state_appearance, toolbar_group,
+    pick_list_appearance, state_appearance, text_input_appearance, toolbar_group,
 };
 
 fn color(red: u8, green: u8, blue: u8) -> Color {
@@ -57,6 +57,14 @@ fn component_states_resolve_from_semantic_tokens_in_both_modes() {
         );
 
         let focused = button_appearance(&ui, Emphasis::Standard, ComponentState::Focused);
+        assert_eq!(
+            focused.background,
+            color(
+                tokens.panel_active.red,
+                tokens.panel_active.green,
+                tokens.panel_active.blue
+            )
+        );
         assert_eq!(
             focused.focus,
             color(tokens.focus.red, tokens.focus.green, tokens.focus.blue)
@@ -133,4 +141,26 @@ fn quiet_precision_metrics_drive_component_geometry() {
     assert!((ui.metrics.control_height - 28.0).abs() < f32::EPSILON);
     assert!((ui.metrics.row_height - 27.0).abs() < f32::EPSILON);
     assert!(ui.metrics.radius_small <= ui.metrics.radius_medium);
+}
+
+#[test]
+fn compact_inputs_use_quiet_surfaces_until_focused() {
+    let resolved = ThemeRegistry::with_builtins()
+        .resolve(&strukt_theme::ThemeId::quiet_precision(), ThemeMode::Dark);
+    let ui = UiTheme::from(resolved);
+
+    let input = text_input_appearance(&ui, iced::widget::text_input::Status::Active);
+    assert_eq!(input.background, iced::Background::Color(color(23, 26, 29)));
+    assert_eq!(input.border.width, 1.0);
+    assert_eq!(input.border.color, color(48, 54, 59));
+
+    let focused = text_input_appearance(
+        &ui,
+        iced::widget::text_input::Status::Focused { is_hovered: false },
+    );
+    assert_eq!(focused.border.color, color(128, 183, 170));
+
+    let pick = pick_list_appearance(&ui, iced::widget::pick_list::Status::Active);
+    assert_eq!(pick.background, iced::Background::Color(color(23, 26, 29)));
+    assert_eq!(pick.border.color, color(48, 54, 59));
 }

@@ -1,4 +1,4 @@
-use iced::Color;
+use iced::{Background, Border, Color};
 use strukt_theme::{ResolvedTheme, Rgb, ThemeMetricsV1, ThemeTokens};
 
 #[derive(Clone, Debug)]
@@ -72,7 +72,9 @@ pub fn button_appearance(
 ) -> ComponentAppearance {
     let tokens = theme.tokens;
     let background = match (emphasis, state) {
-        (_, ComponentState::Hovered | ComponentState::Pressed) => tokens.panel_active,
+        (_, ComponentState::Hovered | ComponentState::Focused | ComponentState::Pressed) => {
+            tokens.panel_active
+        }
         (Emphasis::Strong, _) => tokens.accent,
         _ => tokens.panel,
     };
@@ -164,6 +166,63 @@ pub fn state_appearance(theme: &UiTheme, kind: crate::StateKind) -> StateAppeara
 #[must_use]
 pub const fn semantic_color(rgb: Rgb) -> Color {
     Color::from_rgb8(rgb.red, rgb.green, rgb.blue)
+}
+
+#[must_use]
+pub fn text_input_appearance(
+    theme: &UiTheme,
+    status: iced::widget::text_input::Status,
+) -> iced::widget::text_input::Style {
+    let tokens = theme.tokens;
+    let focused = matches!(status, iced::widget::text_input::Status::Focused { .. });
+    iced::widget::text_input::Style {
+        background: Background::Color(color(tokens.panel)),
+        border: Border {
+            color: color(if focused { tokens.focus } else { tokens.border }),
+            width: 1.0,
+            radius: theme.metrics.radius_small.into(),
+        },
+        icon: color(tokens.text_muted),
+        placeholder: color(tokens.text_muted),
+        value: color(
+            if matches!(status, iced::widget::text_input::Status::Disabled) {
+                tokens.text_muted
+            } else {
+                tokens.text_primary
+            },
+        ),
+        selection: color(tokens.editor_selection),
+    }
+}
+
+#[must_use]
+pub fn pick_list_appearance(
+    theme: &UiTheme,
+    status: iced::widget::pick_list::Status,
+) -> iced::widget::pick_list::Style {
+    let tokens = theme.tokens;
+    let active = !matches!(status, iced::widget::pick_list::Status::Active);
+    iced::widget::pick_list::Style {
+        text_color: color(tokens.text_primary),
+        placeholder_color: color(tokens.text_muted),
+        handle_color: color(tokens.text_muted),
+        background: Background::Color(color(if active {
+            tokens.panel_active
+        } else {
+            tokens.panel
+        })),
+        border: Border {
+            color: color(
+                if matches!(status, iced::widget::pick_list::Status::Opened { .. }) {
+                    tokens.focus
+                } else {
+                    tokens.border
+                },
+            ),
+            width: 1.0,
+            radius: theme.metrics.radius_small.into(),
+        },
+    }
 }
 
 pub(crate) const fn color(rgb: Rgb) -> Color {

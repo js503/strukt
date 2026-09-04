@@ -124,6 +124,22 @@ fn panel_style(tokens: ThemeTokens, background: Rgb) -> impl Fn(&iced::Theme) ->
     }
 }
 
+fn text_input_style(
+    theme: &strukt_ui::UiTheme,
+) -> impl Fn(&iced::Theme, iced::widget::text_input::Status) -> iced::widget::text_input::Style + 'static
+{
+    let theme = theme.clone();
+    move |_, status| strukt_ui::text_input_appearance(&theme, status)
+}
+
+fn pick_list_style(
+    theme: &strukt_ui::UiTheme,
+) -> impl Fn(&iced::Theme, iced::widget::pick_list::Status) -> iced::widget::pick_list::Style + 'static
+{
+    let theme = theme.clone();
+    move |_, status| strukt_ui::pick_list_appearance(&theme, status)
+}
+
 pub fn view(app: &StruktApp) -> Element<'_, Message> {
     shell::view(app)
 }
@@ -223,6 +239,7 @@ fn explorer<'a>(app: &'a StruktApp, theme: &strukt_ui::UiTheme) -> Element<'a, M
                     explorer_action_message,
                 )
                 .placeholder("···")
+                .style(pick_list_style(theme))
                 .width(Length::Fixed(46.0)),
             ]
             .height(41)
@@ -1104,6 +1121,7 @@ fn editor_canvas<'a>(app: &'a StruktApp, theme: &strukt_ui::UiTheme) -> Element<
                 language: (language != "auto").then(|| language.to_owned()),
             },
         )
+        .style(pick_list_style(theme))
         .width(Length::Fixed(92.0)),
         pick_list(editor_actions, None::<EditorAction>, move |action| match action {
             EditorAction::Save => Message::SaveDocument {
@@ -1130,6 +1148,7 @@ fn editor_canvas<'a>(app: &'a StruktApp, theme: &strukt_ui::UiTheme) -> Element<
             },
         })
         .placeholder("···")
+        .style(pick_list_style(theme))
         .width(Length::Fixed(46.0)),
     ]
     .height(layout::EDITOR_BREADCRUMB_HEIGHT)
@@ -1513,6 +1532,7 @@ pub(super) fn terminal_drawer(
         text_input("dev", &app.terminal_tab_name)
             .on_input(Message::TerminalTabNameChanged)
             .on_submit(Message::RenameTerminalTab)
+            .style(text_input_style(theme))
             .width(Length::Fixed(120.0)),
         tabs,
         Space::new().width(Fill),
