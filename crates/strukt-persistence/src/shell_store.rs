@@ -8,7 +8,7 @@ use strukt_workspace::WorkspaceState;
 use thiserror::Error;
 
 pub const SHELL_CONTRIBUTION_ID: &str = "shell";
-pub const SHELL_SCHEMA_VERSION: u16 = 1;
+pub const SHELL_SCHEMA_VERSION: u16 = 2;
 
 const SIDEBAR_MIN: u16 = 180;
 const SIDEBAR_MAX: u16 = 640;
@@ -97,7 +97,7 @@ impl ShellSnapshotV1 {
         &self,
         available_surfaces: &BTreeSet<SurfaceId>,
     ) -> Result<ShellState, ShellStoreError> {
-        if self.schema_version != SHELL_SCHEMA_VERSION {
+        if !matches!(self.schema_version, 1 | SHELL_SCHEMA_VERSION) {
             return Err(ShellStoreError::UnsupportedSchema(self.schema_version));
         }
         let activity = parse_activity(&self.active_activity)?;
@@ -117,20 +117,37 @@ impl ShellSnapshotV1 {
         state.theme_id = theme_id;
         state.theme_mode = self.theme_mode;
         state.canvas = canvas;
-        state.sidebar.width = self.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+        let legacy = self.schema_version == 1;
+        state.sidebar.width = migrate_legacy_metric(legacy, self.sidebar_width, 256, 218)
+            .clamp(SIDEBAR_MIN, SIDEBAR_MAX);
         state.sidebar.surface = activity.sidebar_surface().filter(|surface| {
             available_surfaces.is_empty() || available_surfaces.contains(surface)
         });
         state.sidebar.visible = self.sidebar_visible && state.sidebar.surface.is_some();
         state.explorer_visible = state.sidebar.visible;
-        state.context.width = self.context_width.clamp(CONTEXT_MIN, CONTEXT_MAX);
+        state.context.width = migrate_legacy_metric(legacy, self.context_width, 320, 235)
+            .clamp(CONTEXT_MIN, CONTEXT_MAX);
         state.context.visible = self.context_visible;
         state.context_visible = self.context_visible;
-        state.drawer.height = self.drawer_height.clamp(DRAWER_MIN, DRAWER_MAX);
+        state.drawer.height = migrate_legacy_metric(legacy, self.drawer_height, 280, 205)
+            .clamp(DRAWER_MIN, DRAWER_MAX);
         state.drawer.surface = drawer_available.then_some(drawer_surface).flatten();
         state.drawer.visible = self.drawer_visible && drawer_available;
         state.drawer_visible = state.drawer.visible;
         Ok(state)
+    }
+}
+
+const fn migrate_legacy_metric(
+    legacy: bool,
+    value: u16,
+    old_default: u16,
+    new_default: u16,
+) -> u16 {
+    if legacy && value == old_default {
+        new_default
+    } else {
+        value
     }
 }
 

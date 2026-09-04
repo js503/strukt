@@ -78,6 +78,23 @@ fn restoration_clamps_geometry_and_falls_back_from_missing_surfaces() {
 }
 
 #[test]
+fn legacy_prototype_defaults_migrate_to_quiet_precision_geometry() {
+    let mut snapshot = ShellSnapshotV1::from_state(&ShellState::default());
+    snapshot.schema_version = 1;
+    snapshot.sidebar_width = 256;
+    snapshot.context_width = 320;
+    snapshot.drawer_height = 280;
+
+    let restored = snapshot
+        .restore(&available())
+        .expect("restore legacy shell");
+
+    assert_eq!(restored.sidebar.width, 218);
+    assert_eq!(restored.context.width, 235);
+    assert_eq!(restored.drawer.height, 205);
+}
+
+#[test]
 fn unsupported_or_malformed_shell_contributions_are_rejected() {
     let mut unsupported = ShellSnapshotV1::from_state(&ShellState::default());
     unsupported.schema_version = SHELL_SCHEMA_VERSION + 1;

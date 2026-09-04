@@ -55,12 +55,12 @@ impl Default for ShellState {
             sidebar: PanelState {
                 visible: true,
                 surface: Activity::Files.sidebar_surface(),
-                width: 256,
+                width: 218,
             },
             context: PanelState {
                 visible: false,
                 surface: None,
-                width: 320,
+                width: 235,
             },
             canvas: CanvasLayout::Single {
                 primary: Activity::Files.canvas_surface(),
@@ -68,7 +68,7 @@ impl Default for ShellState {
             drawer: DrawerState {
                 surface: Some(SurfaceId::trusted("terminal.local.primary")),
                 visible: false,
-                height: 280,
+                height: 205,
             },
             focus_region: FocusRegion::Canvas,
             reduced_motion: true,

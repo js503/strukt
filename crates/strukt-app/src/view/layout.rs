@@ -1,4 +1,5 @@
 pub const WORKSPACE_BAR_HEIGHT: f32 = 40.0;
+pub const WORKSPACE_BAR_BOUNDARY_BADGES: usize = 0;
 pub const ACTIVITY_RAIL_WIDTH: f32 = 48.0;
 pub const STATUS_STRIP_HEIGHT: f32 = 25.0;
 pub const EDITOR_TAB_HEIGHT: f32 = 33.0;

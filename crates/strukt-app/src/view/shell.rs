@@ -2,7 +2,7 @@ use iced::widget::{Space, column, container, row, stack, text};
 use iced::{Alignment, Element, Fill, Length};
 use strukt_shell::{Activity, CanvasLayout};
 use strukt_theme::ThemeRegistry;
-use strukt_ui::{BadgeKind, ChromeRole, UiTheme, badge, chrome, quiet_button};
+use strukt_ui::{ChromeRole, UiTheme, chrome, quiet_button, semantic_color};
 
 use crate::app::{Message, StruktApp};
 use crate::remote::RemoteStatus;
@@ -88,38 +88,44 @@ pub(super) fn view(app: &StruktApp) -> Element<'_, Message> {
 }
 
 fn workspace_bar(app: &StruktApp, theme: &UiTheme) -> Element<'static, Message> {
-    let (scope, boundary, boundary_detail, kind) =
-        if app.remote.status == RemoteStatus::Disconnected {
-            let scope = app.workspace.as_ref().map_or_else(
-                || "No folder open".to_owned(),
-                |workspace| {
-                    format!(
-                        "{} / {}",
-                        workspace.root.display_name(),
-                        workspace.root.path().display()
-                    )
-                },
-            );
-            (scope, "LOCAL", String::new(), BadgeKind::Neutral)
-        } else {
-            (
-                app.remote
-                    .root_label
-                    .clone()
-                    .unwrap_or_else(|| "Remote workspace".to_owned()),
-                "REMOTE",
-                app.remote
-                    .host_label
-                    .clone()
-                    .unwrap_or_else(|| "REMOTE".to_owned()),
-                BadgeKind::Remote,
-            )
-        };
+    debug_assert_eq!(super::layout::WORKSPACE_BAR_BOUNDARY_BADGES, 0);
+    let (identity, identity_color) = if app.remote.status == RemoteStatus::Disconnected {
+        let scope = app.workspace.as_ref().map_or_else(
+            || "No folder open".to_owned(),
+            |workspace| {
+                let parent = workspace
+                    .root
+                    .path()
+                    .parent()
+                    .and_then(std::path::Path::file_name)
+                    .and_then(std::ffi::OsStr::to_str)
+                    .unwrap_or("workspace");
+                format!("{parent} / {}", workspace.root.display_name())
+            },
+        );
+        (
+            format!("local / {scope}"),
+            semantic_color(theme.tokens.text_muted),
+        )
+    } else {
+        let host = app
+            .remote
+            .host_label
+            .clone()
+            .unwrap_or_else(|| "SSH host".to_owned());
+        let root = app
+            .remote
+            .root_label
+            .clone()
+            .unwrap_or_else(|| "Remote workspace".to_owned());
+        (
+            format!("remote / {host} / {root}"),
+            semantic_color(theme.tokens.connection_remote),
+        )
+    };
     let content = row![
         text("strukt").size(14),
-        badge(boundary, kind, theme),
-        text(boundary_detail).size(12),
-        text(scope).size(12),
+        text(identity).size(12).color(identity_color),
         Space::new().width(Fill),
         quiet_button(command_prompt(), Some(Message::ToggleCommandCenter), theme,)
             .width(Length::Fixed(360.0)),

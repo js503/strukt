@@ -30,3 +30,13 @@ fn theme_toggle_switches_between_builtin_modes() {
 
     assert_eq!(state.theme_mode, ThemeMode::Light);
 }
+
+#[test]
+fn default_composition_uses_the_north_star_geometry() {
+    let state = ShellState::default();
+
+    assert_eq!(state.sidebar.width, 218);
+    assert_eq!(state.context.width, 235);
+    assert_eq!(state.drawer.height, 205);
+    assert!(!state.context.visible);
+}
