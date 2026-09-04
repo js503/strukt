@@ -355,7 +355,7 @@ mod tests {
             ignored: false,
         });
 
-        assert_eq!(label, "    main.rs");
+        assert_eq!(label, "    ◇ main.rs");
     }
 
     #[test]

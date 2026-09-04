@@ -1,5 +1,5 @@
 use iced::widget::{Button, button, text};
-use iced::{Background, Border, Fill, Theme};
+use iced::{Background, Border, Element, Fill, Theme};
 
 use crate::{SelectionState, UiTheme, list_row_appearance};
 
@@ -23,14 +23,15 @@ pub fn list_row_owned<Message: Clone + 'static>(
     list_row_content(text(label), selected, on_press, theme)
 }
 
-fn list_row_content<'a, Message: Clone + 'a>(
-    label: iced::widget::Text<'a>,
+#[must_use]
+pub fn list_row_content<'a, Message: Clone + 'a>(
+    content: impl Into<Element<'a, Message>>,
     selected: bool,
     on_press: Option<Message>,
     theme: &UiTheme,
 ) -> Button<'a, Message> {
     let owned_theme = theme.clone();
-    button(label)
+    button(content)
         .height(theme.metrics.row_height)
         .width(Fill)
         .padding([0.0, theme.metrics.space_2])

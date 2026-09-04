@@ -3,7 +3,7 @@ use strukt_theme::{ThemeMode, ThemeRegistry, ThemeTokens};
 use strukt_ui::{
     BadgeKind, ChromeRole, ComponentState, Emphasis, Icon, SelectionState, UiTheme,
     activity_rail_item, badge, button_appearance, chrome_appearance, command_button, divider,
-    list_row_appearance, pick_list_appearance, quiet_pick_list_appearance,
+    list_row_appearance, list_row_content, pick_list_appearance, quiet_pick_list_appearance,
     quiet_text_input_appearance, state_appearance, text_input_appearance, toolbar_group,
 };
 
@@ -26,6 +26,12 @@ fn navigation_and_supporting_builders_share_the_component_contract() {
     let _command = command_button(
         "Search files, commands, sessions…",
         "⌘K",
+        Some(Message::Select),
+        &ui,
+    );
+    let _rich_row = list_row_content(
+        iced::widget::row![iced::widget::text("Command"), iced::widget::text("⌘K")],
+        false,
         Some(Message::Select),
         &ui,
     );

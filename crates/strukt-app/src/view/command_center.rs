@@ -1,4 +1,4 @@
-use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
+use iced::widget::{Space, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Fill, Length};
 use strukt_ui::{BadgeKind, ChromeRole, UiTheme, badge, chrome, divider};
 
@@ -46,10 +46,14 @@ pub(super) fn overlay<'a>(app: &'a StruktApp, theme: &UiTheme) -> Element<'a, Me
         ]
         .spacing(theme.metrics.space_1);
         results = results.push(
-            button(label)
-                .width(Fill)
-                .padding(theme.metrics.space_2)
-                .on_press_maybe(enabled.then_some(Message::ExecuteCommandIndex(index))),
+            strukt_ui::list_row_content(
+                label,
+                false,
+                enabled.then_some(Message::ExecuteCommandIndex(index)),
+                theme,
+            )
+            .height(Length::Shrink)
+            .padding(theme.metrics.space_2),
         );
     }
     if !has_command_matches && resource_count == 0 {

@@ -271,8 +271,8 @@ pub(crate) fn file_entry_label(entry: &FileEntry) -> String {
         |name| name.to_string_lossy().into_owned(),
     );
     let marker = match entry.kind {
-        FileKind::Directory => "▸ ",
-        FileKind::File => "",
+        FileKind::Directory => "⌄ ",
+        FileKind::File => "◇ ",
         FileKind::Symlink => "↗ ",
     };
     format!("{indent}{marker}{name}")
