@@ -2,8 +2,9 @@ use iced::Color;
 use strukt_theme::{ThemeMode, ThemeRegistry, ThemeTokens};
 use strukt_ui::{
     BadgeKind, ChromeRole, ComponentState, Emphasis, Icon, SelectionState, UiTheme,
-    activity_rail_item, badge, button_appearance, chrome_appearance, divider, list_row_appearance,
-    pick_list_appearance, state_appearance, text_input_appearance, toolbar_group,
+    activity_rail_item, badge, button_appearance, chrome_appearance, command_button, divider,
+    list_row_appearance, pick_list_appearance, state_appearance, text_input_appearance,
+    toolbar_group,
 };
 
 fn color(red: u8, green: u8, blue: u8) -> Color {
@@ -22,6 +23,11 @@ fn navigation_and_supporting_builders_share_the_component_contract() {
     let ui = UiTheme::from(resolved);
 
     let _activity = activity_rail_item(Icon::Files, "Files", true, Some(Message::Select), &ui);
+    let _command = command_button(
+        "Search files, commands, sessions…",
+        Some(Message::Select),
+        &ui,
+    );
     let _toolbar = toolbar_group::<Message>(iced::widget::text("Tools"), &ui);
     let _badge = badge::<Message>("Remote", BadgeKind::Remote, &ui);
     let _divider = divider::<Message>(&ui);

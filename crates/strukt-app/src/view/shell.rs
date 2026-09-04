@@ -2,12 +2,12 @@ use iced::widget::{Space, column, container, row, stack, text};
 use iced::{Alignment, Element, Fill, Length};
 use strukt_shell::{Activity, CanvasLayout};
 use strukt_theme::ThemeRegistry;
-use strukt_ui::{ChromeRole, UiTheme, chrome, quiet_button, semantic_color};
+use strukt_ui::{ChromeRole, UiTheme, chrome, command_button, semantic_color};
 
 use crate::app::{Message, StruktApp};
 use crate::remote::RemoteStatus;
 
-use super::layout::WORKSPACE_BAR_HEIGHT;
+use super::layout::{COMMAND_CONTROL_WIDTH, WORKSPACE_BAR_HEIGHT};
 use super::{
     activity, command_center, connections, context, files, primary_canvas, remote_workspace,
     search, sessions, settings, source_control, status,
@@ -127,8 +127,8 @@ fn workspace_bar(app: &StruktApp, theme: &UiTheme) -> Element<'static, Message> 
         text("strukt").size(14),
         text(identity).size(12).color(identity_color),
         Space::new().width(Fill),
-        quiet_button(command_prompt(), Some(Message::ToggleCommandCenter), theme,)
-            .width(Length::Fixed(360.0)),
+        command_button(command_prompt(), Some(Message::ToggleCommandCenter), theme,)
+            .width(Length::Fixed(COMMAND_CONTROL_WIDTH)),
     ]
     .align_y(Alignment::Center)
     .spacing(theme.metrics.space_2);
