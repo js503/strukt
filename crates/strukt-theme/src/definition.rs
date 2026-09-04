@@ -356,11 +356,11 @@ impl ThemeMetricsV1 {
             space_4: 16.0,
             radius_small: 3.0,
             radius_medium: 6.0,
-            control_height: 32.0,
-            row_height: 28.0,
-            sidebar_width: 256.0,
-            context_width: 320.0,
-            drawer_height: 280.0,
+            control_height: 28.0,
+            row_height: 27.0,
+            sidebar_width: 218.0,
+            context_width: 235.0,
+            drawer_height: 205.0,
         }
     }
 }

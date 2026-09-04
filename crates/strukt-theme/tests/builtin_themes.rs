@@ -1,4 +1,22 @@
-use strukt_theme::{ThemeMode, ThemeTokens};
+use strukt_theme::{Rgb, ThemeMode, ThemeTokens, quiet_precision_definition};
+
+#[test]
+fn quiet_precision_matches_the_approved_mock_palette_and_density() {
+    let tokens = ThemeTokens::builtin(ThemeMode::Dark);
+    let definition = quiet_precision_definition();
+
+    assert_eq!(tokens.canvas, Rgb::new(18, 21, 24));
+    assert_eq!(tokens.panel, Rgb::new(23, 26, 29));
+    assert_eq!(tokens.panel_active, Rgb::new(34, 39, 43));
+    assert_eq!(tokens.border, Rgb::new(48, 54, 59));
+    assert_eq!(tokens.text_primary, Rgb::new(232, 235, 237));
+    assert_eq!(tokens.text_muted, Rgb::new(146, 154, 161));
+    assert_eq!(tokens.accent, Rgb::new(128, 183, 170));
+    assert_eq!(definition.metrics.sidebar_width, 218.0);
+    assert_eq!(definition.metrics.context_width, 235.0);
+    assert_eq!(definition.metrics.drawer_height, 205.0);
+    assert_eq!(definition.metrics.row_height, 27.0);
+}
 
 #[test]
 fn light_and_dark_themes_have_distinct_surfaces() {
