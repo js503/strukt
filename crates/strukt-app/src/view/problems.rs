@@ -78,7 +78,7 @@ pub(super) fn drawer(app: &StruktApp, theme: &UiTheme) -> Element<'static, Messa
     chrome(
         column![header, scrollable(problems).height(Fill)].spacing(theme.metrics.space_2),
         theme,
-        ChromeRole::ActivePanel,
+        ChromeRole::Canvas,
     )
     .padding(theme.metrics.space_2)
     .height(Length::Fixed(f32::from(app.shell.drawer.height)))

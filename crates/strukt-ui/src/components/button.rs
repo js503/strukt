@@ -111,7 +111,7 @@ fn themed_button<'a, Message: Clone + 'a>(
     emphasis: Emphasis,
 ) -> Button<'a, Message> {
     let owned_theme = theme.clone();
-    button(text(label).width(Fill))
+    button(text(label))
         .height(theme.metrics.control_height)
         .padding([0.0, theme.metrics.space_2])
         .on_press_maybe(on_press)
