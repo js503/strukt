@@ -127,8 +127,13 @@ fn workspace_bar(app: &StruktApp, theme: &UiTheme) -> Element<'static, Message> 
         text("strukt").size(14),
         text(identity).size(12).color(identity_color),
         Space::new().width(Fill),
-        command_button(command_prompt(), Some(Message::ToggleCommandCenter), theme,)
-            .width(Length::Fixed(COMMAND_CONTROL_WIDTH)),
+        command_button(
+            "Search files, commands, sessions…",
+            command_shortcut(),
+            Some(Message::ToggleCommandCenter),
+            theme,
+        )
+        .width(Length::Fixed(COMMAND_CONTROL_WIDTH)),
     ]
     .align_y(Alignment::Center)
     .spacing(theme.metrics.space_2);
@@ -138,13 +143,13 @@ fn workspace_bar(app: &StruktApp, theme: &UiTheme) -> Element<'static, Message> 
         .into()
 }
 
-const fn command_prompt() -> &'static str {
+const fn command_shortcut() -> &'static str {
     #[cfg(target_os = "macos")]
     {
-        "Search files, commands, sessions…                 ⌘K"
+        "⌘K"
     }
     #[cfg(not(target_os = "macos"))]
     {
-        "Search files, commands, sessions…             Ctrl+K"
+        "Ctrl+K"
     }
 }

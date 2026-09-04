@@ -25,6 +25,7 @@ fn navigation_and_supporting_builders_share_the_component_contract() {
     let _activity = activity_rail_item(Icon::Files, "Files", true, Some(Message::Select), &ui);
     let _command = command_button(
         "Search files, commands, sessions…",
+        "⌘K",
         Some(Message::Select),
         &ui,
     );
@@ -42,6 +43,7 @@ fn component_states_resolve_from_semantic_tokens_in_both_modes() {
         let tokens = ThemeTokens::builtin(mode);
 
         let quiet = button_appearance(&ui, Emphasis::Quiet, ComponentState::Resting);
+        assert_eq!(quiet.background, Color::TRANSPARENT);
         assert_eq!(
             quiet.text,
             color(
@@ -107,6 +109,10 @@ fn component_states_resolve_from_semantic_tokens_in_both_modes() {
         );
         assert_eq!(
             selected.focus,
+            color(tokens.accent.red, tokens.accent.green, tokens.accent.blue)
+        );
+        assert_eq!(
+            selected.text,
             color(tokens.accent.red, tokens.accent.green, tokens.accent.blue)
         );
 

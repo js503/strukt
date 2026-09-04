@@ -47,16 +47,8 @@ fn list_row_content<'a, Message: Clone + 'a>(
                 background: Some(Background::Color(appearance.background)),
                 text_color: appearance.text,
                 border: Border {
-                    color: if state == SelectionState::Selected {
-                        appearance.focus
-                    } else {
-                        appearance.border
-                    },
-                    width: if state == SelectionState::Selected {
-                        2.0
-                    } else {
-                        0.0
-                    },
+                    color: appearance.border,
+                    width: 0.0,
                     radius: owned_theme.metrics.radius_small.into(),
                 },
                 ..button::Style::default()

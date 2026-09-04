@@ -9,8 +9,9 @@ use accessibility::{LogicalShortcut, PlatformShortcut};
 use layout::{
     ACTIVITY_RAIL_WIDTH, CANVAS_OUTER_PADDING, COMMAND_CONTROL_WIDTH, EDITOR_BREADCRUMB_HEIGHT,
     EDITOR_PERMANENT_TOOLBAR_ROWS, EDITOR_TAB_GAP, EDITOR_TAB_HEIGHT,
-    EXPLORER_PERMANENT_ACTION_ROWS, STATUS_STRIP_BOUNDARY_BADGES, STATUS_STRIP_HEIGHT,
-    TERMINAL_DRAWER_HEADER_HEIGHT, WORKSPACE_BAR_BOUNDARY_BADGES, WORKSPACE_BAR_HEIGHT,
+    EXPLORER_PERMANENT_ACTION_ROWS, INITIAL_WINDOW_HEIGHT, INITIAL_WINDOW_WIDTH,
+    STATUS_STRIP_BOUNDARY_BADGES, STATUS_STRIP_HEIGHT, TERMINAL_DRAWER_HEADER_HEIGHT,
+    WORKSPACE_BAR_BOUNDARY_BADGES, WORKSPACE_BAR_HEIGHT,
 };
 use responsive::{ResponsiveComposition, ResponsivePolicy};
 use strukt_ui::ACTIVITY_SELECTION_INDICATOR_WIDTH;
@@ -69,6 +70,10 @@ fn responsive_composition_preserves_canvas_and_collapses_supporting_regions_firs
 
 #[test]
 fn shell_geometry_matches_the_promoteable_drawer_north_star() {
+    assert_eq!(
+        (INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT),
+        (1_440.0, 900.0)
+    );
     assert!((WORKSPACE_BAR_HEIGHT - 40.0).abs() <= 2.0);
     assert!((COMMAND_CONTROL_WIDTH - 300.0).abs() < f32::EPSILON);
     assert!((ACTIVITY_RAIL_WIDTH - 48.0).abs() <= 2.0);

@@ -26,10 +26,23 @@ pub fn primary_button<'a, Message: Clone + 'a>(
 #[must_use]
 pub fn command_button<'a, Message: Clone + 'a>(
     label: &'a str,
+    shortcut: &'a str,
     on_press: Option<Message>,
     theme: &UiTheme,
 ) -> Button<'a, Message> {
-    themed_button(label, on_press, theme, Emphasis::Standard)
+    let owned_theme = theme.clone();
+    button(
+        row![
+            text(label).size(12),
+            Space::new().width(Fill),
+            text(shortcut).size(11),
+        ]
+        .align_y(iced::Alignment::Center),
+    )
+    .height(theme.metrics.control_height)
+    .padding([0.0, theme.metrics.space_2])
+    .on_press_maybe(on_press)
+    .style(move |_: &Theme, status| style(&owned_theme, Emphasis::Standard, status))
 }
 
 #[must_use]

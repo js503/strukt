@@ -87,7 +87,7 @@ mod connections;
 mod context;
 mod editor;
 mod files;
-mod layout;
+pub(crate) mod layout;
 mod problems;
 mod remote_workspace;
 mod responsive;

@@ -1,6 +1,6 @@
 use iced::widget::{Space, column, row, scrollable, text};
 use iced::{Alignment, Element, Fill, Length};
-use strukt_ui::{ChromeRole, StateKind, UiTheme, chrome, quiet_button, state_panel};
+use strukt_ui::{ChromeRole, UiTheme, chrome, quiet_button};
 
 use crate::app::{Message, StruktApp};
 use crate::language::{DiagnosticSeverity, ProblemFilter};
@@ -37,12 +37,14 @@ pub(super) fn drawer(app: &StruktApp, theme: &UiTheme) -> Element<'static, Messa
         ));
     }
     if app.language.visible_problems().is_empty() {
-        problems = problems.push(state_panel(
-            "No problems",
-            "No diagnostics in synchronized files.",
-            StateKind::Success,
-            theme,
-        ));
+        problems = problems.push(
+            column![
+                text("No problems").size(12),
+                text("No diagnostics in synchronized files.").size(11),
+            ]
+            .padding(theme.metrics.space_3)
+            .spacing(theme.metrics.space_1),
+        );
     }
     let header = row![
         text("PROBLEMS").size(11),

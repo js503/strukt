@@ -73,10 +73,11 @@ pub fn button_appearance(
     let tokens = theme.tokens;
     let background = match (emphasis, state) {
         (_, ComponentState::Hovered | ComponentState::Focused | ComponentState::Pressed) => {
-            tokens.panel_active
+            color(tokens.panel_active)
         }
-        (Emphasis::Strong, _) => tokens.accent,
-        _ => tokens.panel,
+        (Emphasis::Strong, _) => color(tokens.accent),
+        (Emphasis::Quiet, _) => Color::TRANSPARENT,
+        _ => color(tokens.panel),
     };
     let text = match (emphasis, state) {
         (_, ComponentState::Disabled) => tokens.text_muted,
@@ -92,7 +93,7 @@ pub fn button_appearance(
         (Emphasis::Standard, _) => tokens.border,
     };
     ComponentAppearance {
-        background: color(background),
+        background,
         text: color(text),
         border: if matches!(
             (emphasis, state),
@@ -118,10 +119,10 @@ pub fn list_row_appearance(theme: &UiTheme, state: SelectionState) -> ComponentA
         }
         SelectionState::Resting | SelectionState::Disabled => tokens.panel,
     };
-    let text = if state == SelectionState::Disabled {
-        tokens.text_muted
-    } else {
-        tokens.text_primary
+    let text = match state {
+        SelectionState::Disabled => tokens.text_muted,
+        SelectionState::Selected => tokens.accent,
+        _ => tokens.text_primary,
     };
     ComponentAppearance {
         background: color(background),

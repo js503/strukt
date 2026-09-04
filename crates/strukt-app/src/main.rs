@@ -107,6 +107,10 @@ fn main() -> iced::Result {
         view::view,
     )
     .title("strukt")
+    .window_size(iced::Size::new(
+        view::layout::INITIAL_WINDOW_WIDTH,
+        view::layout::INITIAL_WINDOW_HEIGHT,
+    ))
     .subscription(StruktApp::subscription)
     .theme(StruktApp::theme)
     .run()

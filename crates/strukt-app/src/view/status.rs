@@ -18,7 +18,9 @@ pub(super) fn strip(app: &StruktApp, theme: &UiTheme) -> Element<'static, Messag
             .as_deref()
             .map_or_else(|| "remote".to_owned(), |host| format!("remote · {host}"))
     };
-    let terminal = if app.shell.drawer.visible {
+    let drawer = if app.language.problems_visible() {
+        "Problems open"
+    } else if app.shell.drawer.visible {
         "Terminal open"
     } else {
         "Terminal closed"
@@ -27,7 +29,7 @@ pub(super) fn strip(app: &StruktApp, theme: &UiTheme) -> Element<'static, Messag
     let content = row![
         text(boundary).size(11),
         text(format!("{} errors", counts.errors)).size(11),
-        text(terminal).size(11),
+        text(drawer).size(11),
         Space::new().width(Fill),
         text(editor_position)
             .size(11)
