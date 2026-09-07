@@ -85,7 +85,7 @@ mod activity;
 mod command_center;
 mod connections;
 mod context;
-mod editor;
+pub(crate) mod editor;
 mod files;
 pub(crate) mod layout;
 mod problems;
@@ -260,6 +260,7 @@ fn explorer<'a>(app: &'a StruktApp, theme: &strukt_ui::UiTheme) -> Element<'a, M
         .spacing(0),
     )
     .width(Length::Fixed(f32::from(app.shell.sidebar.width)))
+    .padding(1)
     .style(panel_style(tokens, tokens.panel))
     .into()
 }
@@ -364,6 +365,10 @@ fn primary_canvas<'a>(
 ) -> Element<'a, Message> {
     let content: Element<'_, Message> = if terminal::is_primary_canvas(app) {
         terminal::canvas(app, tokens, theme)
+    } else if editor::is_primary_canvas(app) {
+        editor::canvas(app, theme)
+    } else if sessions::is_primary_canvas(app) {
+        sessions::canvas(app, theme)
     } else if app.shell.active_activity == Activity::Connections {
         connections::canvas(app, theme)
     } else if app.remote.status != RemoteStatus::Disconnected
@@ -389,7 +394,7 @@ fn primary_canvas<'a>(
     } else if app.quick_open_visible {
         quick_open_canvas(app).into()
     } else if app.shell.active_activity == Activity::Sessions {
-        sessions::canvas(app)
+        sessions::canvas(app, theme)
     } else if app
         .editor
         .as_ref()
@@ -596,6 +601,8 @@ pub(super) fn connection_workspace_canvas(app: &StruktApp) -> Element<'_, Messag
                     ),
                 ],
                 text_editor(&app.remote.document_content)
+                    .font(iced::Font::MONOSPACE)
+                    .size(13)
                     .on_action(Message::RemoteDocumentAction)
                     .height(Fill),
             ]
@@ -698,14 +705,26 @@ pub(super) fn connection_workspace_canvas(app: &StruktApp) -> Element<'_, Messag
     clippy::too_many_lines,
     reason = "the session canvas keeps its hierarchy and active pane projection together"
 )]
-pub(super) fn session_detail_canvas(app: &StruktApp) -> Element<'_, Message> {
+pub(super) fn session_detail_canvas<'a>(
+    app: &'a StruktApp,
+    theme: &strukt_ui::UiTheme,
+) -> Element<'a, Message> {
     let health = app.sessions.health();
-    let health_label = session_health_label(health);
-    let health_color = match health {
-        ClientHealth::Ready => app_theme(app).session_live,
-        ClientHealth::Stopped | ClientHealth::Failed => app_theme(app).session_stopped,
-        ClientHealth::Stale => app_theme(app).session_stale,
-        ClientHealth::Connecting => app_theme(app).session_active,
+    let button = |label: &'static str| strukt_ui::quiet_button(label, None, theme);
+    let health_label = if app.session_error.is_some() {
+        "Operation failed"
+    } else {
+        session_health_label(health)
+    };
+    let health_color = if app.session_error.is_some() {
+        theme.tokens.diagnostic_error
+    } else {
+        match health {
+            ClientHealth::Ready => app_theme(app).session_live,
+            ClientHealth::Stopped | ClientHealth::Failed => app_theme(app).session_stopped,
+            ClientHealth::Stale => app_theme(app).session_stale,
+            ClientHealth::Connecting => app_theme(app).session_active,
+        }
     };
     let ready = health == ClientHealth::Ready && !app.sessions.request_in_flight();
     let capabilities = app
@@ -779,7 +798,8 @@ pub(super) fn session_detail_canvas(app: &StruktApp) -> Element<'_, Message> {
         button("Detach")
             .on_press_maybe((ready && capabilities.detach).then_some(Message::DetachSessions)),
     ]
-    .spacing(6);
+    .spacing(6)
+    .padding([0.0, theme.metrics.space_3]);
     if app.sessions.request_in_flight() {
         controls = controls.push(text("Working…"));
     }
@@ -946,28 +966,66 @@ pub(super) fn session_detail_canvas(app: &StruktApp) -> Element<'_, Message> {
             "Restart running pane {pane}? Its current process will be replaced."
         )),
     };
+    let pane_controls: Element<'_, Message> =
+        if app.session_tools_visible && app.sessions.selected_pane().is_some() {
+            pane_input.into()
+        } else {
+            Space::new().height(Length::Shrink).into()
+        };
+    let management_controls: Element<'_, Message> =
+        if app.session_tools_visible && app.sessions.selected_session().is_some() {
+            scrollable(hierarchy_actions)
+                .height(Length::Fixed(96.0))
+                .into()
+        } else {
+            Space::new().height(Length::Shrink).into()
+        };
+
+    let header = row![
+        text(location).size(13),
+        text(provider_summary)
+            .size(11)
+            .color(semantic_color(theme.tokens.text_muted)),
+        Space::new().width(Fill),
+        strukt_ui::quiet_button(
+            if app.session_tools_visible {
+                "Hide tools"
+            } else {
+                "Session tools"
+            },
+            Some(Message::ToggleSessionTools),
+            theme,
+        ),
+        text(health_label)
+            .size(11)
+            .color(semantic_color(health_color)),
+    ]
+    .height(layout::TERMINAL_DRAWER_HEADER_HEIGHT)
+    .align_y(iced::Alignment::Center)
+    .spacing(theme.metrics.space_2)
+    .padding([0.0, theme.metrics.space_3]);
 
     column![
-        row![
-            text("Persistent sessions").size(22),
-            Space::new().width(Fill),
-            text(health_label).color(semantic_color(health_color))
-        ],
-        text(format!("{location}  ·  {provider_summary}")),
-        text(if app.sessions.remote_host().is_some() {
-            "Remote PTYs continue in the strukt session service after SSH disconnects; Explorer remains available from the activity rail."
+        container(header)
+            .width(Fill)
+            .style(panel_style(theme.tokens, theme.tokens.panel)),
+        if app.session_tools_visible {
+            provider_selector
         } else {
-            "Local PTYs continue in strukt-sessiond after the app detaches."
-        }),
-        provider_selector,
+            Space::new().into()
+        },
+        container(screen)
+            .padding(theme.metrics.space_3)
+            .width(Fill)
+            .height(Fill)
+            .style(panel_style(theme.tokens, theme.tokens.terminal_background)),
         controls,
-        hierarchy_actions,
-        pane_input,
+        pane_controls,
+        management_controls,
         confirmation,
         notices,
-        container(screen).padding(10).width(Fill).height(Fill),
     ]
-    .spacing(10)
+    .spacing(0)
     .into()
 }
 
@@ -1010,11 +1068,19 @@ fn app_theme(app: &StruktApp) -> ThemeTokens {
     ThemeTokens::builtin(app.shell.theme_mode)
 }
 
+fn editor_canvas<'a>(app: &'a StruktApp, theme: &strukt_ui::UiTheme) -> Element<'a, Message> {
+    editor_surface(app, theme, false)
+}
+
 #[expect(
     clippy::too_many_lines,
-    reason = "the native editor canvas keeps tab, toolbar, find, status, and close-dialog composition together"
+    reason = "the native editor keeps tab, toolbar, find, status, and close-dialog composition together"
 )]
-fn editor_canvas<'a>(app: &'a StruktApp, theme: &strukt_ui::UiTheme) -> Element<'a, Message> {
+fn editor_surface<'a>(
+    app: &'a StruktApp,
+    theme: &strukt_ui::UiTheme,
+    compact: bool,
+) -> Element<'a, Message> {
     debug_assert_eq!(layout::EDITOR_PERMANENT_TOOLBAR_ROWS, 0);
     if let Some(notice) = &app.document_notice {
         return document_notice_canvas(notice).into();
@@ -1086,6 +1152,8 @@ fn editor_canvas<'a>(app: &'a StruktApp, theme: &strukt_ui::UiTheme) -> Element<
         strukt_theme::ThemeMode::Dark => iced::highlighter::Theme::Base16Ocean,
     };
     let editor = text_editor(content)
+        .font(iced::Font::MONOSPACE)
+        .size(13)
         .height(Fill)
         .highlight(grammar.iced_token, highlighter_theme);
     let editor = if document.is_read_only() {
@@ -1115,7 +1183,7 @@ fn editor_canvas<'a>(app: &'a StruktApp, theme: &strukt_ui::UiTheme) -> Element<
         editor_actions.push(EditorAction::Back);
     }
     let breadcrumb = row![
-        text(document.path().as_str().replace('/', " › "))
+        text(if compact { String::new() } else { document.path().as_str().replace('/', " › ") })
             .size(11)
             .color(semantic_color(theme.tokens.text_muted)),
         Space::new().width(Fill),
@@ -1162,15 +1230,39 @@ fn editor_canvas<'a>(app: &'a StruktApp, theme: &strukt_ui::UiTheme) -> Element<
     .height(layout::EDITOR_BREADCRUMB_HEIGHT)
     .align_y(iced::Alignment::Center)
     .padding([0.0, theme.metrics.space_3]);
+    let mut breadcrumb = Some(breadcrumb);
+    if compact {
+        tabs = tabs
+            .push(Space::new().width(Fill))
+            .push(breadcrumb.take().unwrap())
+            .push(strukt_ui::quiet_button(
+                "Split",
+                Some(Message::PromoteSupportingEditorToSplit),
+                theme,
+            ))
+            .push(strukt_ui::quiet_button(
+                "Full",
+                Some(Message::PromoteSupportingEditorToFull),
+                theme,
+            ))
+            .push(strukt_ui::quiet_button(
+                "×",
+                Some(Message::CloseSupportingEditorPlacement),
+                theme,
+            ));
+    }
     let tabs = container(tabs)
         .height(layout::EDITOR_TAB_HEIGHT)
         .width(Fill)
         .style(panel_style(theme.tokens, theme.tokens.panel));
-    let breadcrumb = container(breadcrumb)
+    let breadcrumb = container(breadcrumb.unwrap_or_else(|| row![]))
         .height(layout::EDITOR_BREADCRUMB_HEIGHT)
         .width(Fill)
         .style(panel_style(theme.tokens, theme.tokens.canvas));
-    let mut body = column![tabs, breadcrumb].spacing(0);
+    let mut body = column![tabs].spacing(0);
+    if !compact {
+        body = body.push(breadcrumb);
+    }
     if let Some((document_id, _, items)) = app.language.completion()
         && document_id == active_id
     {

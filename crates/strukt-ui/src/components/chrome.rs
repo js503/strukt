@@ -35,8 +35,9 @@ pub fn chrome<'a, Message: 'a>(
 
 #[must_use]
 pub fn panel_header<'a, Message: 'a>(label: &'a str, theme: &UiTheme) -> Container<'a, Message> {
-    chrome(text(label), theme, ChromeRole::Panel)
+    container(text(label).size(11))
         .height(theme.metrics.control_height)
+        .center_y(theme.metrics.control_height)
         .padding([0.0, theme.metrics.space_3])
 }
 

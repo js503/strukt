@@ -8,7 +8,7 @@ use strukt_workspace::WorkspaceState;
 use thiserror::Error;
 
 pub const SHELL_CONTRIBUTION_ID: &str = "shell";
-pub const SHELL_SCHEMA_VERSION: u16 = 2;
+pub const SHELL_SCHEMA_VERSION: u16 = 4;
 
 const SIDEBAR_MIN: u16 = 180;
 const SIDEBAR_MAX: u16 = 640;
@@ -30,6 +30,10 @@ pub enum PersistedCanvasLayout {
     },
 }
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "the snapshot preserves independent user presentation preferences"
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ShellSnapshotV1 {
     pub schema_version: u16,
@@ -44,8 +48,14 @@ pub struct ShellSnapshotV1 {
     pub drawer_height: u16,
     pub theme_id: String,
     pub theme_mode: ThemeMode,
+    #[serde(default = "legacy_reduced_motion_default")]
+    pub reduced_motion: bool,
     #[serde(flatten)]
     extensions: BTreeMap<String, Value>,
+}
+
+const fn legacy_reduced_motion_default() -> bool {
+    true
 }
 
 impl ShellSnapshotV1 {
@@ -82,6 +92,7 @@ impl ShellSnapshotV1 {
             drawer_height: state.drawer.height.clamp(DRAWER_MIN, DRAWER_MAX),
             theme_id: state.theme_id.as_str().to_owned(),
             theme_mode: state.theme_mode,
+            reduced_motion: state.reduced_motion,
             extensions: BTreeMap::new(),
         }
     }
@@ -97,7 +108,7 @@ impl ShellSnapshotV1 {
         &self,
         available_surfaces: &BTreeSet<SurfaceId>,
     ) -> Result<ShellState, ShellStoreError> {
-        if !matches!(self.schema_version, 1 | SHELL_SCHEMA_VERSION) {
+        if !matches!(self.schema_version, 1 | 2 | 3 | SHELL_SCHEMA_VERSION) {
             return Err(ShellStoreError::UnsupportedSchema(self.schema_version));
         }
         let activity = parse_activity(&self.active_activity)?;
@@ -116,6 +127,7 @@ impl ShellSnapshotV1 {
         state.active_activity = activity;
         state.theme_id = theme_id;
         state.theme_mode = self.theme_mode;
+        state.reduced_motion = self.reduced_motion;
         state.canvas = canvas;
         let legacy = self.schema_version == 1;
         state.sidebar.width = migrate_legacy_metric(legacy, self.sidebar_width, 256, 218)

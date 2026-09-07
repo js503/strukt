@@ -39,12 +39,4 @@ impl ResponsivePolicy {
             context: context_requested && width >= self.context_min_width,
         }
     }
-
-    pub const fn reduced_motion() -> bool {
-        true
-    }
-
-    pub const fn transition_duration_ms() -> u16 {
-        0
-    }
 }

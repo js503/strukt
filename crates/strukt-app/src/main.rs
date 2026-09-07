@@ -107,6 +107,10 @@ fn main() -> iced::Result {
         view::view,
     )
     .title("strukt")
+    .settings(iced::Settings {
+        default_text_size: iced::Pixels(13.0),
+        ..iced::Settings::default()
+    })
     .window_size(iced::Size::new(
         view::layout::INITIAL_WINDOW_WIDTH,
         view::layout::INITIAL_WINDOW_HEIGHT,
@@ -118,6 +122,17 @@ fn main() -> iced::Result {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn session_tools_are_opt_in_and_do_not_change_selection() {
+        let mut app = super::StruktApp::default();
+        assert!(!app.session_tools_visible);
+        let selected = app.sessions.selected_session();
+        let _ = app.update(super::app::Message::ToggleSessionTools);
+        assert!(app.session_tools_visible);
+        assert_eq!(app.sessions.selected_session(), selected);
+        let _ = app.update(super::app::Message::ToggleSessionTools);
+        assert!(!app.session_tools_visible);
+    }
     use std::path::PathBuf;
     use std::time::Duration;
 
@@ -260,6 +275,10 @@ mod tests {
         assert!(contract.actions.contains(&"Detach"));
         assert!(contract.actions.contains(&"Rename"));
         assert!(contract.actions.contains(&"Terminate"));
+        assert_eq!(
+            contract.stable_links,
+            &["Files", "Source Control", "Problems"]
+        );
         assert_ne!(contract.close_label, contract.terminate_label);
     }
 
@@ -684,10 +703,15 @@ mod tests {
 
         let _ = app.update(Message::SelectActivity(Activity::Settings));
         let _ = app.update(Message::SetThemeMode(strukt_theme::ThemeMode::Light));
+        let _ = app.update(Message::SetReducedMotion(true));
 
         assert_eq!(app.shell.active_activity, Activity::Settings);
         assert_eq!(app.shell.theme_mode, strukt_theme::ThemeMode::Light);
         assert_eq!(app.shell.theme_id, theme_id);
+        assert!(app.shell.reduced_motion);
+
+        let _ = app.update(Message::SetReducedMotion(false));
+        assert!(!app.shell.reduced_motion);
     }
 
     #[test]
@@ -977,6 +1001,83 @@ mod tests {
         });
         assert_eq!(app.editor.as_ref().unwrap().document_count(), 1);
         assert!(app.editor.as_ref().unwrap().view_state().tabs[0].pinned);
+    }
+
+    #[test]
+    fn opening_a_file_from_the_session_deck_uses_the_supporting_editor_drawer() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&project))));
+        let root = app.workspace.as_ref().unwrap().root.path().to_path_buf();
+
+        let _ = app.update(Message::DocumentOpened {
+            workspace_root: root,
+            path: "src/main.rs".into(),
+            disposition: OpenDisposition::Preview,
+            result: Ok(text_document("fn main() {}", "disk", false)),
+        });
+
+        assert!(app.shell.drawer_visible);
+        assert_eq!(
+            app.shell
+                .drawer
+                .surface
+                .as_ref()
+                .map(strukt_shell::SurfaceId::as_str),
+            Some(crate::app::EDITOR_SUPPORTING_SURFACE_ID)
+        );
+        assert_eq!(app.shell.canvas.primary().as_str(), "sessions");
+    }
+
+    #[test]
+    fn restored_document_preserves_the_persisted_supporting_surface_placement() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&project))));
+        let root = app.workspace.as_ref().unwrap().root.path().to_path_buf();
+        app.shell.drawer_visible = false;
+        app.shell.drawer.visible = false;
+        app.editor_restore_pending.insert("src/main.rs".to_owned());
+
+        let _ = app.update(Message::DocumentOpened {
+            workspace_root: root,
+            path: "src/main.rs".into(),
+            disposition: OpenDisposition::Pinned,
+            result: Ok(text_document("fn main() {}", "disk", false)),
+        });
+
+        assert!(!app.shell.drawer_visible);
+        assert!(!app.shell.drawer.visible);
+        assert_eq!(app.shell.canvas.primary().as_str(), "sessions");
+    }
+
+    #[test]
+    fn supporting_editor_promotion_never_activates_hidden_terminal_input() {
+        let project = tempdir().unwrap();
+        let mut app = StruktApp::default();
+        let _ = app.update(Message::WorkspaceOpened(Ok(open_workspace(&project))));
+        let root = app.workspace.as_ref().unwrap().root.path().to_path_buf();
+        let _ = app.update(Message::NewTerminal);
+        let _ = app.update(Message::DocumentOpened {
+            workspace_root: root,
+            path: "src/main.rs".into(),
+            disposition: OpenDisposition::Preview,
+            result: Ok(text_document("fn main() {}", "disk", false)),
+        });
+        app.terminal_input_active = true;
+
+        let _ = app.update(Message::PromoteSupportingEditorToFull);
+
+        assert!(!app.terminal_input_active);
+        assert_eq!(
+            app.shell.canvas.primary().as_str(),
+            crate::app::EDITOR_SUPPORTING_SURFACE_ID
+        );
+
+        let _ = app.update(Message::DemoteSupportingEditorToDrawer);
+        assert!(!app.terminal_input_active);
+        assert_eq!(app.shell.canvas.primary().as_str(), "sessions");
+        assert!(app.shell.drawer_visible);
     }
 
     #[test]

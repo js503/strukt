@@ -16,6 +16,9 @@ fn available() -> BTreeSet<SurfaceId> {
     [
         surface("files"),
         surface("files.sidebar"),
+        surface("sessions"),
+        surface("sessions.sidebar"),
+        surface("editor.supporting"),
         surface("terminal.local.primary"),
         surface("problems"),
     ]
@@ -29,6 +32,7 @@ fn shell_snapshot_round_trips_ids_and_bounded_geometry_only() {
     state.sidebar.width = 400;
     state.context.width = 480;
     state.drawer.height = 360;
+    state.reduced_motion = true;
     state.apply(ShellAction::OpenDrawer(surface("problems")));
     state.apply(ShellAction::PromoteDrawerToSplit { ratio: 0.65 });
 
@@ -44,6 +48,7 @@ fn shell_snapshot_round_trips_ids_and_bounded_geometry_only() {
     assert_eq!(restored.sidebar.width, 400);
     assert_eq!(restored.context.width, 480);
     assert_eq!(restored.drawer.height, 360);
+    assert!(restored.reduced_motion);
     assert_eq!(restored.canvas, state.canvas);
 }
 
@@ -70,7 +75,7 @@ fn restoration_clamps_geometry_and_falls_back_from_missing_surfaces() {
     assert_eq!(
         restored.canvas,
         CanvasLayout::Single {
-            primary: surface("files"),
+            primary: surface("sessions"),
         }
     );
     assert!(restored.drawer.surface.is_none());
@@ -92,6 +97,41 @@ fn legacy_prototype_defaults_migrate_to_quiet_precision_geometry() {
     assert_eq!(restored.sidebar.width, 218);
     assert_eq!(restored.context.width, 235);
     assert_eq!(restored.drawer.height, 205);
+}
+
+#[test]
+fn pre_v4_shell_preserves_explicit_composition() {
+    let mut snapshot = ShellSnapshotV1::from_state(&ShellState::default());
+    snapshot.schema_version = 3;
+    snapshot.active_activity = "search".to_owned();
+    snapshot.canvas = PersistedCanvasLayout::Single {
+        primary: "search".to_owned(),
+    };
+    snapshot.drawer_surface = Some("terminal.local.primary".to_owned());
+    snapshot.drawer_visible = true;
+    let mut encoded = serde_json::to_value(&snapshot).expect("encode pre-v4 snapshot");
+    encoded
+        .as_object_mut()
+        .expect("snapshot object")
+        .remove("reduced_motion");
+    let snapshot: ShellSnapshotV1 =
+        serde_json::from_value(encoded).expect("decode legacy snapshot");
+
+    let restored = snapshot.restore(&available()).expect("restore M5.5 shell");
+
+    assert_eq!(restored.active_activity, strukt_shell::Activity::Search);
+    assert_eq!(
+        restored.canvas,
+        CanvasLayout::Single {
+            primary: surface("search"),
+        }
+    );
+    assert!(restored.drawer.visible);
+    assert!(restored.reduced_motion);
+    assert_eq!(
+        restored.drawer.surface.as_ref().map(SurfaceId::as_str),
+        Some("terminal.local.primary")
+    );
 }
 
 #[test]

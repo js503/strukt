@@ -67,6 +67,7 @@ pub(crate) const TERMINAL_SMOKE_SUCCESS: &str =
     "strukt terminal smoke: pty, unicode, ansi, resize, isolation, bounds, and restore passed";
 pub(crate) const LANGUAGE_SMOKE_SUCCESS: &str = "strukt language smoke: discovery, sync, diagnostics, completion, hover, definition, cancellation, shutdown, and restore passed";
 pub(crate) const M2_INTEGRATION_SMOKE_SUCCESS: &str = "strukt M2 integration smoke: files, editor, terminal, language, persistence, isolation, and stopped restore passed";
+pub(crate) const EDITOR_SUPPORTING_SURFACE_ID: &str = "editor.supporting";
 
 pub(crate) fn built_in_shell_surfaces() -> BTreeSet<SurfaceId> {
     let activities = [
@@ -85,6 +86,7 @@ pub(crate) fn built_in_shell_surfaces() -> BTreeSet<SurfaceId> {
         .flatten()
         .chain([
             SurfaceId::new("terminal.local.primary").expect("built-in surface id"),
+            SurfaceId::new(EDITOR_SUPPORTING_SURFACE_ID).expect("built-in surface id"),
             SurfaceId::new("problems").expect("built-in surface id"),
             SurfaceId::new("workspace.context").expect("built-in surface id"),
         ])
@@ -247,6 +249,7 @@ pub struct StruktApp {
     pub shell: ShellState,
     pub(crate) viewport_width: u32,
     pub workspace: Option<WorkspaceState>,
+    pub(crate) repository_branch: Option<String>,
     pub files: Vec<FileEntry>,
     pub file_warnings: Vec<String>,
     pub filesystem_truncated: bool,
@@ -282,6 +285,7 @@ pub struct StruktApp {
     pub terminal_error: Option<String>,
     pub(crate) sessions: SessionSurfaces,
     pub session_error: Option<String>,
+    pub session_tools_visible: bool,
     pub remote: RemoteSurfaces,
     pub(crate) remote_runtime: Option<RemoteRuntime>,
     remote_store: Option<RemoteStore>,
@@ -294,12 +298,12 @@ pub struct StruktApp {
     pub pending_terminal_close: Option<TerminalPaneId>,
     pub pending_terminal_paste: Option<(TerminalPaneId, String)>,
     pub pending_terminal_link: Option<String>,
-    terminal_input_active: bool,
+    pub(crate) terminal_input_active: bool,
     terminal_migrated_to_sessions: bool,
     editor_scroll_lines: HashMap<DocumentId, f32>,
     editor_restore_active: Option<String>,
     editor_restore_tabs: HashMap<String, EditorTabSnapshot>,
-    editor_restore_pending: HashSet<String>,
+    pub(crate) editor_restore_pending: HashSet<String>,
     launch_mode: LaunchMode,
     store: Option<WorkspaceStore>,
     pub(crate) recovery_store: Option<EditorRecoveryStore>,
@@ -412,6 +416,7 @@ pub enum Message {
     CommandResourceSelected(CommandResource),
     CommandSelected(CommandId),
     ToggleCommandCenter,
+    ToggleSessionTools,
     CommandQueryChanged(String),
     ExecuteCommandIndex(usize),
     SelectActivity(Activity),
@@ -463,6 +468,7 @@ pub enum Message {
     ToggleExplorer,
     ToggleTheme,
     SetThemeMode(ThemeMode),
+    SetReducedMotion(bool),
     OpenFolder,
     FolderPicked(Option<PathBuf>),
     WorkspaceOpened(Result<OpenedWorkspace, String>),
@@ -484,6 +490,10 @@ pub enum Message {
     PromoteTerminalToFull,
     DemoteTerminalToDrawer,
     CloseTerminalPlacement,
+    PromoteSupportingEditorToSplit,
+    PromoteSupportingEditorToFull,
+    DemoteSupportingEditorToDrawer,
+    CloseSupportingEditorPlacement,
     RestartTerminal(TerminalPaneId),
     RequestCloseTerminal(TerminalPaneId),
     ResolveCloseTerminal(bool),
@@ -1170,6 +1180,7 @@ impl StruktApp {
             shell: ShellState::default(),
             viewport_width: 1_280,
             workspace: None,
+            repository_branch: None,
             files: Vec::new(),
             file_warnings: Vec::new(),
             filesystem_truncated: false,
@@ -1208,6 +1219,7 @@ impl StruktApp {
             terminal_error: None,
             sessions: SessionSurfaces::default(),
             session_error: None,
+            session_tools_visible: false,
             remote: RemoteSurfaces::default(),
             remote_runtime: None,
             remote_store: RemoteStore::platform_default().ok(),
@@ -1349,6 +1361,10 @@ impl StruktApp {
                 self.shell
                     .apply(ShellAction::Focus(FocusRegion::CommandCenter));
                 return iced::widget::operation::focus(crate::view::command_center_input_id());
+            }
+            Message::ToggleSessionTools => {
+                self.session_tools_visible = !self.session_tools_visible;
+                return Task::none();
             }
             Message::CommandQueryChanged(query) => {
                 if self.command_center_visible {
@@ -2578,6 +2594,34 @@ impl StruktApp {
                 self.terminal_input_active = false;
                 return Task::none();
             }
+            Message::PromoteSupportingEditorToSplit => {
+                self.shell
+                    .apply(ShellAction::PromoteDrawerToSplit { ratio: 0.62 });
+                self.terminal_input_active = false;
+                return Task::none();
+            }
+            Message::PromoteSupportingEditorToFull => {
+                self.shell.apply(ShellAction::PromoteDrawerToFull);
+                self.terminal_input_active = false;
+                return Task::none();
+            }
+            Message::DemoteSupportingEditorToDrawer => {
+                self.shell.apply(ShellAction::DemotePromotedSurface);
+                self.terminal_input_active = false;
+                return Task::none();
+            }
+            Message::CloseSupportingEditorPlacement => {
+                let editor_surface =
+                    SurfaceId::new(EDITOR_SUPPORTING_SURFACE_ID).expect("built-in surface id");
+                if self.shell.canvas.contains(&editor_surface) {
+                    self.shell.apply(ShellAction::DemotePromotedSurface);
+                }
+                if self.shell.drawer_visible {
+                    self.shell.apply(ShellAction::ToggleDrawer);
+                }
+                self.terminal_input_active = false;
+                return Task::none();
+            }
             Message::StartTerminal(pane) => {
                 if self.workspace.is_none() || !self.capabilities.is_enabled(CapabilityId::TERMINAL)
                 {
@@ -2775,6 +2819,7 @@ impl StruktApp {
                 return Task::none();
             }
             Message::WorkspaceOpened(Ok(mut opened)) => {
+                self.repository_branch = opened.repository_branch.clone();
                 let terminal_restore = terminal_contribution(&opened.state).ok().flatten();
                 let restored_shell = shell_contribution(&opened.state)
                     .ok()
@@ -3115,6 +3160,14 @@ impl StruktApp {
                                     }
                                     self.document_notice = None;
                                     self.editor_error = None;
+                                    if !was_restore
+                                        && self.shell.canvas.primary().as_str() == "sessions"
+                                    {
+                                        self.shell.apply(ShellAction::OpenDrawer(
+                                            SurfaceId::new(EDITOR_SUPPORTING_SURFACE_ID)
+                                                .expect("built-in surface id"),
+                                        ));
+                                    }
                                     if was_restore
                                         && let Some(active_path) = &self.editor_restore_active
                                         && let Some(active) = editor
@@ -4549,11 +4602,15 @@ impl StruktApp {
             Message::ToggleExplorer => Some(ShellAction::ToggleExplorer),
             Message::ToggleTheme => Some(ShellAction::ToggleTheme),
             Message::SetThemeMode(mode) => Some(ShellAction::SetThemeMode(mode)),
+            Message::SetReducedMotion(reduced_motion) => {
+                Some(ShellAction::SetReducedMotion(reduced_motion))
+            }
             Message::OpenFolder
             | Message::WindowResized(_)
             | Message::CommandResourceSelected(_)
             | Message::CommandSelected(_)
             | Message::ToggleCommandCenter
+            | Message::ToggleSessionTools
             | Message::CommandQueryChanged(_)
             | Message::ExecuteCommandIndex(_)
             | Message::RemoteAliasChanged(_)
@@ -4610,6 +4667,10 @@ impl StruktApp {
             | Message::PromoteTerminalToFull
             | Message::DemoteTerminalToDrawer
             | Message::CloseTerminalPlacement
+            | Message::PromoteSupportingEditorToSplit
+            | Message::PromoteSupportingEditorToFull
+            | Message::DemoteSupportingEditorToDrawer
+            | Message::CloseSupportingEditorPlacement
             | Message::RestartTerminal(_)
             | Message::RequestCloseTerminal(_)
             | Message::ResolveCloseTerminal(_)
@@ -4823,7 +4884,7 @@ impl StruktApp {
                         return self.update(Message::ToggleCommandCenter);
                     }
                     Key::Character("b") => Some(ShellAction::ToggleExplorer),
-                    Key::Character("j") => Some(ShellAction::ToggleDrawer),
+                    Key::Character("j") => return self.update(Message::ShowTerminalDrawer),
                     Key::Character("\\") => Some(ShellAction::ToggleContext),
                     Key::Character("p") => {
                         return self.update(Message::ToggleQuickOpen);

@@ -143,8 +143,9 @@ their own bounded padding.
 - The accent is limited to active selection indicators, focus, status, syntax,
   and genuinely primary actions. It never fills every file row or ordinary
   toolbar action.
-- Activity items are icon-first, visually unboxed at rest, and use a narrow active
-  indicator plus a subtle selected background.
+- Activity items are icon-first and visually unboxed at rest. Selection uses a
+  square background spanning the full 48-pixel rail width; no separate accent bar
+  is rendered.
 - Explorer rows are flat, compact tree rows. File operations live in the header,
   an overflow surface, or contextual commands rather than a permanent grid of
   large buttons.
@@ -201,6 +202,13 @@ competing for attention.
 - A single internally licensed vector icon family supplies navigation and action
   symbols. Icons do not mix emoji, arbitrary Unicode approximations, and unrelated
   visual families.
+- Activity icons use one canonical vector geometry in both resting and selected
+  states. Selection must not swap to an alternate glyph or a second icon family.
+- The selected activity icon transitions from its flat outline into a restrained
+  2.5D top-down treatment: the canonical face tilts into a shallow three-quarter
+  plane, exposes two crisp depth planes, and receives one fine upper-edge
+  highlight. Glow, blur, soft drop shadows, and decorative looping motion are
+  prohibited.
 - Icon-only controls require an accessible name, tooltip, focus treatment, and
   keyboard path.
 - Destructive or security-sensitive actions retain explicit text labels.
@@ -218,7 +226,8 @@ competing for attention.
 
 ### Motion
 
-- State transitions use restrained 120–180 millisecond motion.
+- Activity-icon selection uses a restrained 180-millisecond transition. Other
+  state transitions remain within 120–180 milliseconds.
 - Motion communicates spatial change, focus, drawer promotion, or state
   replacement; it is not decorative.
 - Reduced-motion preferences eliminate nonessential transitions while preserving
@@ -245,8 +254,10 @@ surface they affect or in the command center.
 
 The stable activity rail contains contributions for Files, Search, Source Control,
 Sessions, Connections, Extensions, and Settings when their capabilities are
-available. The active item uses a restrained indicator instead of a fully filled
-button.
+available. Each contribution occupies a 48-by-48-pixel target. The selected item
+uses a subtle square background spanning the rail, with no inset card, rounded
+tile, or side indicator. Its icon transitions continuously from the same flat
+vector geometry into the approved 2.5D top-down state.
 
 An unavailable capability removes or explicitly disables its contribution
 according to the capability contract. The shell never leaves an empty placeholder.

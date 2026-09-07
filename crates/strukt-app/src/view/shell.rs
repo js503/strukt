@@ -2,15 +2,18 @@ use iced::widget::{Space, column, container, row, stack, text};
 use iced::{Alignment, Element, Fill, Length};
 use strukt_shell::{Activity, CanvasLayout};
 use strukt_theme::ThemeRegistry;
-use strukt_ui::{ChromeRole, UiTheme, chrome, command_button, semantic_color};
+use strukt_ui::{
+    BRAND_IDENTITY_SLOT_WIDTH, ChromeRole, UiTheme, brand_mark, chrome, command_button,
+    semantic_color,
+};
 
 use crate::app::{Message, StruktApp};
 use crate::remote::RemoteStatus;
 
 use super::layout::{COMMAND_CONTROL_WIDTH, WORKSPACE_BAR_HEIGHT};
 use super::{
-    activity, command_center, connections, context, files, primary_canvas, remote_workspace,
-    search, sessions, settings, source_control, status,
+    activity, command_center, connections, context, editor, files, primary_canvas,
+    remote_workspace, search, sessions, settings, source_control, status,
 };
 use super::{responsive::ResponsivePolicy, terminal};
 
@@ -23,8 +26,6 @@ pub(super) fn view(app: &StruktApp) -> Element<'_, Message> {
         app.shell.sidebar.visible,
         app.shell.context.visible,
     );
-    let _reduced_motion = ResponsivePolicy::reduced_motion();
-    let _transition_duration_ms = ResponsivePolicy::transition_duration_ms();
     let sidebar = match app.shell.active_activity {
         Activity::Connections => connections::sidebar(app, &theme),
         Activity::Search => search::sidebar(app, &theme),
@@ -53,6 +54,17 @@ pub(super) fn view(app: &StruktApp) -> Element<'_, Message> {
         container(Space::new()).width(Length::Shrink).into()
     };
     let canvas = match &app.shell.canvas {
+        CanvasLayout::Split { ratio, .. } if editor::is_secondary_canvas(app) => {
+            let primary_width = if *ratio <= 0.5 { 50 } else { 62 };
+            let secondary_width = 100_u16.saturating_sub(primary_width).max(1);
+            row![
+                container(primary_canvas(app, tokens, &theme))
+                    .width(Length::FillPortion(primary_width)),
+                container(editor::canvas(app, &theme)).width(Length::FillPortion(secondary_width)),
+            ]
+            .height(Fill)
+            .into()
+        }
         CanvasLayout::Split { ratio, .. } if terminal::is_secondary_canvas(app) => {
             let primary_width = if *ratio <= 0.5 { 50 } else { 62 };
             let secondary_width = 100_u16.saturating_sub(primary_width).max(1);
@@ -68,10 +80,21 @@ pub(super) fn view(app: &StruktApp) -> Element<'_, Message> {
         _ => primary_canvas(app, tokens, &theme),
     };
     let body = row![activity::rail(app, &theme), sidebar, canvas, context_panel,].height(Fill);
+    let supporting_surface: Element<'_, Message> = if app.language.problems_visible() {
+        terminal::drawer(app, tokens, &theme)
+    } else if editor::is_drawer(app) {
+        if app.shell.drawer_visible {
+            editor::drawer(app, &theme)
+        } else {
+            container(Space::new()).height(Length::Shrink).into()
+        }
+    } else {
+        terminal::drawer(app, tokens, &theme)
+    };
     let workspace = column![
         workspace_bar(app, &theme),
         body,
-        terminal::drawer(app, tokens, &theme),
+        supporting_surface,
         status::strip(app, &theme),
     ]
     .height(Fill);
@@ -124,7 +147,9 @@ fn workspace_bar(app: &StruktApp, theme: &UiTheme) -> Element<'static, Message> 
         )
     };
     let content = row![
-        text("strukt").size(14),
+        container(brand_mark(app.shell.reduced_motion, theme))
+            .width(Length::Fixed(BRAND_IDENTITY_SLOT_WIDTH))
+            .center_x(Length::Fixed(BRAND_IDENTITY_SLOT_WIDTH)),
         text(identity).size(12).color(identity_color),
         Space::new().width(Fill),
         command_button(
@@ -133,12 +158,16 @@ fn workspace_bar(app: &StruktApp, theme: &UiTheme) -> Element<'static, Message> 
             Some(Message::ToggleCommandCenter),
             theme,
         )
-        .width(Length::Fixed(COMMAND_CONTROL_WIDTH)),
+        .width(Length::Fixed(COMMAND_CONTROL_WIDTH))
+        .height(WORKSPACE_BAR_HEIGHT - 2.0),
     ]
     .align_y(Alignment::Center)
     .spacing(theme.metrics.space_2);
-    container(chrome(content, theme, ChromeRole::Panel))
+    // The painted surface owns the entire header; padding belongs inside it.
+    // An outer fixed-height wrapper leaves an unpainted strip below the row.
+    chrome(content, theme, ChromeRole::Panel)
         .height(WORKSPACE_BAR_HEIGHT)
+        .center_y(WORKSPACE_BAR_HEIGHT)
         .padding([0.0, theme.metrics.space_3])
         .into()
 }

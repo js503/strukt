@@ -1,4 +1,4 @@
-use strukt_shell::{Activity, ShellAction, ShellState};
+use strukt_shell::{Activity, CanvasLayout, ShellAction, ShellState, SurfaceId};
 use strukt_theme::ThemeMode;
 
 #[test]
@@ -35,8 +35,21 @@ fn theme_toggle_switches_between_builtin_modes() {
 fn default_composition_uses_the_north_star_geometry() {
     let state = ShellState::default();
 
+    assert_eq!(state.active_activity, Activity::Sessions);
+    assert_eq!(
+        state.sidebar.surface,
+        Some(SurfaceId::new("sessions.sidebar").expect("valid surface"))
+    );
+    assert_eq!(
+        state.canvas,
+        CanvasLayout::Single {
+            primary: SurfaceId::new("sessions").expect("valid surface"),
+        }
+    );
     assert_eq!(state.sidebar.width, 218);
     assert_eq!(state.context.width, 235);
     assert_eq!(state.drawer.height, 205);
     assert!(!state.context.visible);
+    assert!(!state.drawer.visible);
+    assert!(!state.reduced_motion);
 }

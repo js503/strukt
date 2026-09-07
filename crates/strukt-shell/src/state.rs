@@ -15,6 +15,7 @@ pub enum ShellAction {
     ToggleExplorer,
     ToggleTheme,
     SetThemeMode(ThemeMode),
+    SetReducedMotion(bool),
     OpenDrawer(SurfaceId),
     PromoteDrawerToSplit { ratio: f32 },
     PromoteDrawerToFull,
@@ -46,7 +47,7 @@ pub struct ShellState {
 impl Default for ShellState {
     fn default() -> Self {
         Self {
-            active_activity: Activity::Files,
+            active_activity: Activity::Sessions,
             explorer_visible: true,
             context_visible: false,
             drawer_visible: false,
@@ -54,7 +55,7 @@ impl Default for ShellState {
             theme_id: ThemeId::quiet_precision(),
             sidebar: PanelState {
                 visible: true,
-                surface: Activity::Files.sidebar_surface(),
+                surface: Activity::Sessions.sidebar_surface(),
                 width: 218,
             },
             context: PanelState {
@@ -63,15 +64,15 @@ impl Default for ShellState {
                 width: 235,
             },
             canvas: CanvasLayout::Single {
-                primary: Activity::Files.canvas_surface(),
+                primary: Activity::Sessions.canvas_surface(),
             },
             drawer: DrawerState {
-                surface: Some(SurfaceId::trusted("terminal.local.primary")),
+                surface: Some(SurfaceId::trusted("editor.supporting")),
                 visible: false,
                 height: 205,
             },
             focus_region: FocusRegion::Canvas,
-            reduced_motion: true,
+            reduced_motion: false,
             promotion: None,
         }
     }
@@ -109,6 +110,9 @@ impl ShellState {
                 };
             }
             ShellAction::SetThemeMode(mode) => self.theme_mode = mode,
+            ShellAction::SetReducedMotion(reduced_motion) => {
+                self.reduced_motion = reduced_motion;
+            }
             ShellAction::OpenDrawer(surface) => {
                 self.drawer.surface = Some(surface);
                 self.drawer.visible = true;
@@ -185,10 +189,19 @@ impl ShellState {
     }
 
     fn select_activity(&mut self, activity: Activity) {
+        let session_deck_active = self.canvas.primary().as_str() == "sessions"
+            || self
+                .promotion
+                .as_ref()
+                .is_some_and(|promotion| promotion.prior_canvas.primary().as_str() == "sessions");
         self.active_activity = activity;
         self.sidebar.surface = activity.sidebar_surface();
         self.sidebar.visible = true;
         self.explorer_visible = true;
+        if activity == Activity::Files && session_deck_active {
+            self.focus_region = FocusRegion::Canvas;
+            return;
+        }
         self.canvas = CanvasLayout::Single {
             primary: activity.canvas_surface(),
         };

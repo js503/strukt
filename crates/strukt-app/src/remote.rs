@@ -3,6 +3,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use iced::widget::text_editor;
 use strukt_language::{FrameDecoder, FrameLimits, IncomingMessage, encode_frame, parse_message};
@@ -54,6 +55,7 @@ pub struct RemoteSurfaces {
     pub search_input: String,
     pub search_results: Vec<String>,
     pub git_summary: Option<String>,
+    pub connection_latency_ms: Option<u128>,
     pub task_executable: String,
     pub task_arguments_json: String,
     pub task_consent: Option<String>,
@@ -65,6 +67,7 @@ pub struct RemoteSurfaces {
     pub install_consent: Option<String>,
     pub records: Vec<RemoteConnectionRecord>,
     pending_artifact: Option<HelperArtifact>,
+    connection_started_at: Option<Instant>,
     generation: u64,
     operation_in_flight: bool,
 }
@@ -86,6 +89,7 @@ impl Default for RemoteSurfaces {
             search_input: String::new(),
             search_results: Vec::new(),
             git_summary: None,
+            connection_latency_ms: None,
             task_executable: String::new(),
             task_arguments_json: "[]".into(),
             task_consent: None,
@@ -97,6 +101,7 @@ impl Default for RemoteSurfaces {
             install_consent: None,
             records: Vec::new(),
             pending_artifact: None,
+            connection_started_at: None,
             generation: 0,
             operation_in_flight: false,
         }
@@ -128,6 +133,8 @@ impl RemoteSurfaces {
         let executable = discover_ssh()?;
         self.generation = self.generation.saturating_add(1).max(1);
         self.status = RemoteStatus::Connecting;
+        self.connection_started_at = Some(Instant::now());
+        self.connection_latency_ms = None;
         self.error = None;
         self.files.clear();
         self.selected_path = None;
@@ -237,6 +244,10 @@ impl RemoteSurfaces {
         if completion.generation != self.generation {
             return false;
         }
+        self.connection_latency_ms = self
+            .connection_started_at
+            .take()
+            .map(|started| started.elapsed().as_millis());
         match &completion.result {
             Ok(runtime) => {
                 self.status = RemoteStatus::Ready;
@@ -549,6 +560,8 @@ impl RemoteSurfaces {
         self.capabilities.clear();
         self.search_results.clear();
         self.git_summary = None;
+        self.connection_latency_ms = None;
+        self.connection_started_at = None;
         self.task_consent = None;
         self.task_output.clear();
         self.language_status = None;

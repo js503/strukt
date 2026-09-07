@@ -49,6 +49,29 @@ pub(super) fn canvas(app: &StruktApp, theme: &UiTheme) -> Element<'static, Messa
             ),
         ]
         .spacing(theme.metrics.space_2),
+        text("Motion").size(16),
+        text("Reduce interface animation while preserving selected states.").size(12),
+        row![
+            quiet_button(
+                if app.shell.reduced_motion {
+                    "✓ Reduced motion"
+                } else {
+                    "Reduced motion"
+                },
+                Some(Message::SetReducedMotion(true)),
+                theme,
+            ),
+            quiet_button(
+                if app.shell.reduced_motion {
+                    "Normal motion"
+                } else {
+                    "✓ Normal motion"
+                },
+                Some(Message::SetReducedMotion(false)),
+                theme,
+            ),
+        ]
+        .spacing(theme.metrics.space_2),
         text("Layout").size(16),
         row![
             quiet_button("Toggle sidebar", Some(Message::ToggleExplorer), theme),

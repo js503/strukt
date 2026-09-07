@@ -24,6 +24,36 @@ fn activity_selection_updates_contextual_sidebar_and_canvas_owner() {
 }
 
 #[test]
+fn files_changes_the_sidebar_without_replacing_the_session_canvas() {
+    let mut state = ShellState::default();
+    state.apply(ShellAction::SelectActivity(Activity::Files));
+
+    assert_eq!(state.active_activity, Activity::Files);
+    assert_eq!(state.sidebar.surface, Some(surface("files.sidebar")));
+    assert_eq!(
+        state.canvas,
+        CanvasLayout::Single {
+            primary: surface("sessions"),
+        }
+    );
+}
+
+#[test]
+fn files_preserves_a_full_editor_promoted_from_the_session_deck() {
+    let mut state = ShellState::default();
+    let editor = surface("editor.supporting");
+    state.apply(ShellAction::OpenDrawer(editor.clone()));
+    state.apply(ShellAction::PromoteDrawerToFull);
+
+    state.apply(ShellAction::SelectActivity(Activity::Files));
+
+    assert_eq!(state.active_activity, Activity::Files);
+    assert_eq!(state.canvas.primary(), &editor);
+    state.apply(ShellAction::DemotePromotedSurface);
+    assert_eq!(state.canvas.primary(), &surface("sessions"));
+}
+
+#[test]
 fn drawer_promotion_preserves_surface_identity_and_demotes_to_prior_canvas() {
     let mut state = ShellState::default();
     let terminal = surface("terminal.local.primary");
@@ -37,7 +67,7 @@ fn drawer_promotion_preserves_surface_identity_and_demotes_to_prior_canvas() {
     assert_eq!(
         state.canvas,
         CanvasLayout::Split {
-            primary: surface("files"),
+            primary: surface("sessions"),
             secondary: terminal.clone(),
             ratio: 0.8,
         }
