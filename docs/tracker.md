@@ -22,6 +22,10 @@ Milestone order, dependencies, outcomes, and exit criteria are defined in
 | M8 | Integrated developer workflows | Post-alpha | Not created | Not created | Not created | Not created | Not created |
 # Quiet Session Deck refinement
 
+Review checkpoint: [draft PR #18](https://github.com/js503/strukt/pull/18).
+Fresh verification and unresolved merge blockers are recorded in
+[the review report](evidence/m5-5-pr-review.md). Not merge-ready.
+
 Logo D implemented: [Stillpoint plan and verification](plans/0015-stillpoint-logo.md).
 
 Active within M5.5: [approved north star](specs/0012-quiet-session-deck.md)
